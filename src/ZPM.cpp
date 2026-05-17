@@ -23,6 +23,7 @@ void show_help() {
     cout << "  reboot, r       Reboot system (zr)" << endl;
     cout << "  shutdown, s     Shutdown system (zs)" << endl;
     cout << "  uninstall       Uninstall ZPM (zuninstall)" << endl;
+    cout << "  run             Run programs using ZPM" << endl;
     cout << endl;
     cout << RED << "Options:" << RESET << endl;
     cout << "  --help, -h      Show this help message" << endl;
@@ -57,7 +58,8 @@ int main(int argc, char* argv[]) {
         else if (cmd == "reboot" || cmd == "r") target = "zr";
         else if (cmd == "shutdown" || cmd == "s") target = "zs";
         else if (cmd == "uninstall") target = "zuninstall";
-        else if (cmd == "help") target = "zelp";
+        else if (cmd == "help") target = "zhelp";
+        else if (cmd == "run") target = "zrun";
         else {
             cerr << "unknown command: " << cmd << "\n";
             cerr << "run 'zpm --help' to list all commands.\n";
@@ -107,6 +109,7 @@ int main(int argc, char* argv[]) {
         cout << "  reboot, r       Reboot system (zr)" << endl;
         cout << "  shutdown, s     Shutdown system (zs)" << endl;
         cout << "  uninstall       Uninstall ZPM (zuninstall)" << endl;
+        cout << "  run             Run programs using ZPM" << endl;
         cout << endl;
         cout << RED << "Options:" << RESET << endl;
         cout << "  --help, -h      Show this help message" << endl;
