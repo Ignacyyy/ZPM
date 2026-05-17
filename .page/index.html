@@ -1168,7 +1168,7 @@
 
 <script>
   function copyInstall() {
-    const cmd = 'sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Ignacyyy/ZPM/main%2C-APT%28debian%2Cubuntu.%29/INETINSTALL.sh)"';
+    const cmd = 'sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Ignacyyy/ZPM/main/INETINSTALL.sh)"';
     navigator.clipboard.writeText(cmd).then(() => {
       const btn = document.getElementById('copy-btn');
       btn.textContent = 'Copied!';
