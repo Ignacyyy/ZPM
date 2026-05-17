@@ -45,6 +45,7 @@ After installation, run `zhelp` to see the full guide.
 | `zr`           | Reboot system                                 |
 | `zs`           | Shutdown system                               |
 | `zuninstall`   | Uninstall ZPM                                 |
+| `zrun`         | Run programs using ZPM                        |
 
 ---
 
