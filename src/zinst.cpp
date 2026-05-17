@@ -7,6 +7,7 @@ using namespace std;
 const string LOG_PATH = "/tmp/zinst.log";
 
 volatile sig_atomic_t g_interrupted = 0;
+string g_flatpakFlag = ""; // --system lub --user, wykrywane w main()
 
 struct PackageResult {
     string name;
@@ -22,6 +23,18 @@ struct InstallTarget {
 
 // ─── signal ──────────────────────────────────────────────────────────────────
 void handleSigint(int) { g_interrupted = 1; }
+
+// ─── flatpak remote detection ─────────────────────────────────────────────────
+string getFlatpakRemoteFlag() {
+    // Sprawdź czy system remote z flathubem istnieje
+    if (system("flatpak remotes --system 2>/dev/null | grep -q flathub") == 0)
+        return "--system";
+    // Fallback na user
+    if (system("flatpak remotes --user 2>/dev/null | grep -q flathub") == 0)
+        return "--user";
+    // Brak flaga — flatpak użyje domyślnego
+    return "";
+}
 
 // ─── progress bar ─────────────────────────────────────────────────────────────
 void drawGlobalBar(float totalProgress, const string& task) {
@@ -97,7 +110,7 @@ bool isInstalledAPT(const string& pkg) {
 }
 
 bool isInstalledFlatpak(const string& pkg) {
-    string cmd = "flatpak list --columns=application | grep -Fx \"" + pkg + "\" >/dev/null 2>&1";
+    string cmd = "flatpak list " + g_flatpakFlag + " --columns=application | grep -Fx \"" + pkg + "\" >/dev/null 2>&1";
     return system(cmd.c_str()) == 0;
 }
 
@@ -107,8 +120,6 @@ bool isInstalledSnap(const string& pkg) {
 }
 
 bool aptPackageExists(const string& pkg) {
-    // apt-cache show returns 0 even for virtual packages with no install candidate.
-    // A dry-run install is the only reliable check.
     string cmd = "apt-get -y --simulate install " + pkg + " >/dev/null 2>&1";
     return system(cmd.c_str()) == 0;
 }
@@ -120,14 +131,20 @@ bool snapPackageExists(const string& pkg) {
 // Returns all Flatpak application IDs matching query (case-insensitive substring)
 vector<string> searchFlatpak(const string& query) {
     vector<string> results;
-    string cmd = "flatpak search --columns=application \"" + query + "\" 2>/dev/null";
+    string cmd = "flatpak search " + g_flatpakFlag + " --columns=application \"" + query + "\" 2>/dev/null";
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) return results;
 
     char buffer[256];
+    bool firstLine = true;
     while (fgets(buffer, sizeof(buffer), pipe)) {
         string line = buffer;
         line.erase(line.find_last_not_of(" \n\r\t") + 1);
+
+        // Pomiń nagłówek "Application" który flatpak czasem zwraca
+        if (firstLine && line == "Application") { firstLine = false; continue; }
+        firstLine = false;
+
         if (!line.empty()) results.push_back(line);
     }
     pclose(pipe);
@@ -146,15 +163,6 @@ vector<string> searchFlatpak(const string& query) {
 }
 
 // ─── NEW: pretty source-selection menu ────────────────────────────────────────
-//
-//  Package: mc
-//    1. APT:     exist (mc)
-//    2. Snap:    none
-//    3. Flatpak: exist (29 results)
-//    0. Skip
-//  Choose: _
-//
-// Returns one of: "apt", "flatpak", "snap", or "" (skip / no source)
 string chooseSourceMenu(const string& pkg,
                         bool aptAvail,
                         bool snapAvail,
@@ -165,7 +173,6 @@ string chooseSourceMenu(const string& pkg,
     bool flatpakAvail = !flatpakResults.empty();
     int  flatpakCount = static_cast<int>(flatpakResults.size());
 
-    // Build option list in a fixed display order: APT → Snap → Flatpak
     struct Option { int num; string key; };
     vector<Option> options;
     int idx = 1;
@@ -174,7 +181,6 @@ string chooseSourceMenu(const string& pkg,
     int snapNum    = -1;
     int flatpakNum = -1;
 
-    // ── header ────────────────────────────────────────────────────────────────
     cout << "\n" << BOLD << "Package: " << CYAN << pkg << RESET << "\n";
 
     // APT
@@ -185,10 +191,10 @@ string chooseSourceMenu(const string& pkg,
         options.push_back({aptNum, "apt"});
     } else {
         cout << RED << "none" << RESET << "\n";
-        idx++; // keep numbering stable (shown but not selectable)
+        idx++;
     }
 
-    // Snap — only show row if snap is installed on the system
+    // Snap
     if (snapSystemAvail) {
         cout << "  " << BOLD << idx << ". Snap:    " << RESET;
         if (snapAvail) {
@@ -201,7 +207,7 @@ string chooseSourceMenu(const string& pkg,
         idx++;
     }
 
-    // Flatpak — only show row if flatpak is installed on the system
+    // Flatpak
     if (flatpakSystemAvail) {
         cout << "  " << BOLD << idx << ". Flatpak: " << RESET;
         if (flatpakAvail) {
@@ -222,11 +228,10 @@ string chooseSourceMenu(const string& pkg,
         return "";
     }
 
-    // ── prompt ────────────────────────────────────────────────────────────────
     while (true) {
         cout << BOLD << "Choose: " << RESET;
         string input;
-        if (!getline(cin, input)) return "";   // EOF
+        if (!getline(cin, input)) return "";
         int choice = -1;
         try { choice = stoi(input); } catch (...) {}
 
@@ -264,26 +269,23 @@ string chooseFlatpakPackage(const vector<string>& packages, const string& query)
 
 
 // ─── progress renderer thread ────────────────────────────────────────────────
-// Redraws the bar every 80ms so it appears immediately even when the pipe
-// has no data yet (e.g. APT's "Reading package lists..." phase).
 struct BarState {
     atomic<float>  progress{0.0f};
     atomic<bool>   running{true};
-    string         label;          // written once before thread starts — no race
+    string         label;
 };
 
 static void* barThread(void* arg) {
     BarState* s = static_cast<BarState*>(arg);
     while (s->running.load()) {
         drawGlobalBar(s->progress.load(), s->label);
-        usleep(80000); // 80ms
+        usleep(80000);
     }
     return nullptr;
 }
 
 // ─── installers ───────────────────────────────────────────────────────────────
 
-// APT: use Status-Fd=3 — real percent from dlstatus/pmstatus lines
 int runAPTInstallWithProgress(const string& pkg, float startRange, float endRange) {
     string exitFile = "/tmp/zinst_apt_exit_" + to_string(getpid());
 
@@ -305,7 +307,6 @@ int runAPTInstallWithProgress(const string& pkg, float startRange, float endRang
     if (pid < 0) { close(pfd[0]); close(pfd[1]); return 1; }
     close(pfd[1]);
 
-    // Start render thread — shows bar immediately while pipe is silent
     BarState bs;
     bs.progress = startRange;
     bs.label    = "APT " + pkg + ": preparing...";
@@ -345,13 +346,9 @@ int runAPTInstallWithProgress(const string& pkg, float startRange, float endRang
     return WIFEXITED(wst) ? WEXITSTATUS(wst) : 1;
 }
 
-// Flatpak: parse "XX%" from output lines
-// Flatpak outputs NO progress lines during download — only start/end messages.
-// We run it in background and animate the bar with a time-based curve.
-// Bar grows fast at start, slows down, caps at 95% until process finishes.
 int runFlatpakInstallWithProgress(const string& pkg, float startRange, float endRange) {
     string exitFile = "/tmp/zinst_fp_exit_" + to_string(getpid());
-    string cmd = "flatpak install -y --noninteractive flathub "
+    string cmd = "flatpak install " + g_flatpakFlag + " -y --noninteractive flathub "
                  + pkg + " >> " + LOG_PATH + " 2>&1; echo $? > " + exitFile;
 
     pid_t pid = fork();
@@ -362,11 +359,7 @@ int runFlatpakInstallWithProgress(const string& pkg, float startRange, float end
     if (pid < 0) return 1;
 
     float range = endRange - startRange;
-    // Animate: progress = startRange + range * (1 - 1/(1 + t/T))
-    // where T is "half-life" in seconds. At T seconds: 50%, at 3T: 75%, etc.
-    // We never reach endRange — only jump to it when process finishes.
-    // With T=20s: 10s→33%, 20s→50%, 40s→67%, 60s→75%, 120s→86%
-    const float T = 20.0f; // tune this — larger = slower fill
+    const float T = 20.0f;
     auto timeNow = []() -> float {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -377,10 +370,10 @@ int runFlatpakInstallWithProgress(const string& pkg, float startRange, float end
     while (true) {
         if (g_interrupted) { kill(pid, SIGTERM); waitpid(pid, nullptr, 0); return 130; }
         if (waitpid(pid, nullptr, WNOHANG) == pid) break;
-        usleep(100000); // 100ms
+        usleep(100000);
         float t = timeNow() - t0;
-        float frac = 1.0f - 1.0f / (1.0f + t / T); // hyperbolic, never reaches 1
-        float gp = startRange + range * frac * 0.95f; // cap at 95% of range
+        float frac = 1.0f - 1.0f / (1.0f + t / T);
+        float gp = startRange + range * frac * 0.95f;
         drawGlobalBar(gp, "Flatpak " + pkg + ": installing...");
     }
 
@@ -389,7 +382,6 @@ int runFlatpakInstallWithProgress(const string& pkg, float startRange, float end
     return exitCode;
 }
 
-// Snap: parse "CUR MB / TOT MB" → percent; fallback to line-tick
 int runSnapInstallWithProgress(const string& pkg, float startRange, float endRange) {
     string exitFile = "/tmp/zinst_snap_exit_" + to_string(getpid());
     string cmd = "snap install " + pkg + " 2>&1; echo $? > " + exitFile;
@@ -456,7 +448,6 @@ int runSnapInstallWithProgress(const string& pkg, float startRange, float endRan
 int main(int argc, char* argv[]) {
     zpm_update::checkForUpdates();
     signal(SIGINT, handleSigint);
-    // Disable stdout buffering so progress bar updates appear immediately
     setvbuf(stdout, nullptr, _IONBF, 0);
 
     bool           showHelp       = false;
@@ -467,6 +458,15 @@ int main(int argc, char* argv[]) {
 
     bool hasFlatpak = (system("command -v flatpak >/dev/null 2>&1") == 0);
     bool hasSnap    = (system("command -v snap    >/dev/null 2>&1") == 0);
+
+    // Wykryj flatpak remote raz na starcie
+    if (hasFlatpak) {
+        g_flatpakFlag = getFlatpakRemoteFlag();
+        if (g_flatpakFlag.empty()) {
+            cout << YELLOW << "Warning: No flathub remote found for flatpak (tried --system and --user).\n" << RESET;
+            hasFlatpak = false; // traktuj jako brak flatpaka
+        }
+    }
 
     for (int i = 1; i < argc; ++i) {
         string arg = argv[i];
@@ -490,7 +490,6 @@ int main(int argc, char* argv[]) {
         cout << "  --version, -v  Show version information\n";
         cout << "  --help,    -h  Show this help message\n";
         return 0;
-       
     }
 
     if (showVersion) {
@@ -536,7 +535,6 @@ int main(int argc, char* argv[]) {
         } else if (source == "snap") {
             targets.push_back({pkg, false, true});
         } else if (source == "flatpak") {
-            // If there's an exact match use it directly, else let user pick
             bool exactMatch = false;
             for (const auto& c : flatpakFound)
                 if (c == pkg) { exactMatch = true; break; }
@@ -544,7 +542,6 @@ int main(int argc, char* argv[]) {
             string selected = exactMatch ? pkg : chooseFlatpakPackage(flatpakFound, pkg);
             if (!selected.empty()) targets.push_back({selected, true, false});
         }
-        // source == "" → skip
     }
 
     if (targets.empty()) {

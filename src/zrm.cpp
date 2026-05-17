@@ -6,6 +6,7 @@ using namespace std;
 const string LOG_PATH = "/tmp/zrm.log";
 
 volatile sig_atomic_t g_interrupted = 0;
+string g_flatpakFlag = ""; // --system lub --user, wykrywane w main()
 
 struct PackageResult {
     string name;
@@ -16,6 +17,15 @@ struct PackageResult {
 // ─── signal ──────────────────────────────────────────────────────────────────
 void handleSigint(int) { g_interrupted = 1; }
 
+// ─── flatpak remote detection ─────────────────────────────────────────────────
+string getFlatpakRemoteFlag() {
+    if (system("flatpak remotes --system 2>/dev/null | grep -q flathub") == 0)
+        return "--system";
+    if (system("flatpak remotes --user 2>/dev/null | grep -q flathub") == 0)
+        return "--user";
+    return "";
+}
+
 // ─── progress bar ─────────────────────────────────────────────────────────────
 void drawGlobalBar(float pct, const string& task) {
     struct winsize w;
@@ -24,7 +34,7 @@ void drawGlobalBar(float pct, const string& task) {
         termWidth = w.ws_col;
 
     const int barWidth = max(10, min(40, termWidth / 3));
-    const int visualPrefixLen = 27 + barWidth; // "Remove Progress: [" = 18 + "] XXX% | " = 9
+    const int visualPrefixLen = 27 + barWidth;
     const int taskMaxLen = max(1, termWidth - visualPrefixLen);
 
     string taskTrimmed = task;
@@ -85,7 +95,7 @@ bool isInstalledAPT(const string& pkg) {
 }
 
 bool isInstalledFlatpak(const string& pkg) {
-    string cmd = "flatpak list --columns=application | grep -Fx \"" + pkg + "\" >/dev/null 2>&1";
+    string cmd = "flatpak list " + g_flatpakFlag + " --columns=application | grep -Fx \"" + pkg + "\" >/dev/null 2>&1";
     return system(cmd.c_str()) == 0;
 }
 
@@ -123,7 +133,6 @@ static bool parsePmStatus(const string& line, float& pct, string& msg) {
 
 // ─── removers ─────────────────────────────────────────────────────────────────
 
-// APT remove: use Status-Fd=3 for real percent
 int runAPTRemoveWithProgress(const string& pkg, bool purge,
                               float startRange, float endRange) {
     string exitFile = "/tmp/zrm_apt_exit_" + to_string(getpid());
@@ -179,10 +188,9 @@ int runAPTRemoveWithProgress(const string& pkg, bool purge,
     return WIFEXITED(wst) ? WEXITSTATUS(wst) : 1;
 }
 
-// Flatpak remove: no progress output — time-based animation
 int runFlatpakRemoveWithProgress(const string& pkg, float startRange, float endRange) {
     string exitFile = "/tmp/zrm_fp_exit_" + to_string(getpid());
-    string cmd = "flatpak uninstall -y --delete-data " + pkg
+    string cmd = "flatpak uninstall " + g_flatpakFlag + " -y --delete-data " + pkg
                  + " >> " + LOG_PATH + " 2>&1; echo $? > " + exitFile;
 
     pid_t pid = fork();
@@ -193,7 +201,7 @@ int runFlatpakRemoveWithProgress(const string& pkg, float startRange, float endR
     if (pid < 0) return 1;
 
     float range = endRange - startRange;
-    const float T = 10.0f; // removal is faster than install
+    const float T = 10.0f;
     auto timeNow = []() -> float {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -216,7 +224,6 @@ int runFlatpakRemoveWithProgress(const string& pkg, float startRange, float endR
     return exitCode;
 }
 
-// Snap remove: fast, just animate
 int runSnapRemoveWithProgress(const string& pkg, float startRange, float endRange) {
     string exitFile = "/tmp/zrm_snap_exit_" + to_string(getpid());
     string cmd = "snap remove " + pkg + " >> " + LOG_PATH + " 2>&1; echo $? > " + exitFile;
@@ -255,13 +262,17 @@ int runSnapRemoveWithProgress(const string& pkg, float startRange, float endRang
 // ─── installed Flatpak list ───────────────────────────────────────────────────
 vector<string> getInstalledFlatpaks(const string& query = "") {
     vector<string> results;
-    string cmd = "flatpak list --columns=application 2>/dev/null";
+    string cmd = "flatpak list " + g_flatpakFlag + " --columns=application 2>/dev/null";
     FILE* p = popen(cmd.c_str(), "r");
     if (!p) return results;
     char buf[256];
+    bool firstLine = true;
     while (fgets(buf, sizeof(buf), p)) {
         string line = buf;
         line.erase(line.find_last_not_of(" \n\r\t") + 1);
+        // Pomiń nagłówek "Application"
+        if (firstLine && line == "Application") { firstLine = false; continue; }
+        firstLine = false;
         if (!line.empty()) results.push_back(line);
     }
     pclose(p);
@@ -280,14 +291,6 @@ vector<string> getInstalledFlatpaks(const string& query = "") {
 }
 
 // ─── removal source menu ──────────────────────────────────────────────────────
-//
-//  Package: obs-studio
-//    1. APT:     installed
-//    2. Snap:    none
-//    3. Flatpak: installed
-//    0. Skip
-//  Choose: _
-//
 string chooseRemoveMenu(const string& pkg,
                         bool aptInstalled,
                         bool snapInstalled,
@@ -359,7 +362,6 @@ string chooseRemoveMenu(const string& pkg,
     }
 }
 
-// Flatpak: pick which installed app(s) to remove
 vector<string> chooseFlatpakToRemove(const vector<string>& installed, const string& query) {
     if (installed.empty()) {
         cout << YELLOW << "No installed Flatpak packages";
@@ -408,6 +410,15 @@ int main(int argc, char* argv[]) {
     bool hasFlatpak = (system("command -v flatpak >/dev/null 2>&1") == 0);
     bool hasSnap    = (system("command -v snap    >/dev/null 2>&1") == 0);
 
+    // Wykryj flatpak remote raz na starcie
+    if (hasFlatpak) {
+        g_flatpakFlag = getFlatpakRemoteFlag();
+        if (g_flatpakFlag.empty()) {
+            cout << YELLOW << "Warning: No flathub remote found for flatpak (tried --system and --user).\n" << RESET;
+            hasFlatpak = false;
+        }
+    }
+
     for (int i = 1; i < argc; ++i) {
         string arg = argv[i];
         if      (arg == "--help"    || arg == "-h") showHelp = true;
@@ -454,7 +465,6 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // sudo required only for actual removal operations
     if (geteuid() != 0) {
         cout << RED << "Run with sudo!\n" << RESET;
         return 1;
@@ -478,8 +488,6 @@ int main(int argc, char* argv[]) {
         bool aptInst     = isInstalledAPT(pkg);
         bool snapInst    = hasSnap    && isInstalledSnap(pkg);
 
-        // For Flatpak: if pkg looks like an app-id use it directly,
-        // otherwise search installed apps
         bool flatpakInst = false;
         vector<string> flatpakMatches;
         if (hasFlatpak) {
@@ -500,7 +508,6 @@ int main(int argc, char* argv[]) {
         } else if (source == "snap") {
             targets.push_back({pkg, false, true, false});
         } else if (source == "flatpak") {
-            // May need to pick from multiple matching app-ids
             vector<string> toRemove;
             if (flatpakMatches.size() == 1) {
                 toRemove = flatpakMatches;
@@ -510,7 +517,6 @@ int main(int argc, char* argv[]) {
             for (const auto& fp : toRemove)
                 targets.push_back({fp, true, false, false});
         }
-        // source == "" → skip
     }
 
     if (targets.empty()) {
@@ -541,8 +547,6 @@ int main(int argc, char* argv[]) {
         if (targets[i].useFlatpak) {
             int st = runFlatpakRemoveWithProgress(p, startRange, endRange);
             if (st == 130) { cout << "\n" << YELLOW << "Cancelled.\n" << RESET; return 130; }
-            // Don't trust exit code — flatpak exits 1 on dbus-launch errors even
-            // when removal succeeded. Verify by checking installation status.
             bool stillInstalled = isInstalledFlatpak(p);
             drawGlobalBar(endRange, "Flatpak " + p + (!stillInstalled ? ": done" : ": failed"));
             if (!stillInstalled) {
