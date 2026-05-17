@@ -22,6 +22,7 @@ int main() {
     std::cout << "  " << GREEN << "zs" << RESET << "         - Shutdown system (sudo)" << std::endl;
     std::cout << "  " << GREEN << "zupgr" << RESET << "      - Update ZPM itself (sudo)" << std::endl;
     std::cout << "  " << GREEN << "zuninstall" << RESET << " - Uninstall ZPM (sudo)" << std::endl;
+    std::cout << "  " << GREEN << "zrun" << RESET << "       - Run programs" << std::endl;
 
     // global options
     std::cout << "\n" << BOLD << "Common options:" << RESET << std::endl;
