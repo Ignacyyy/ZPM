@@ -443,7 +443,7 @@ int main(int argc, char* argv[]) {
         }
 
         system(("rm -rf " + temp).c_str());
-
+        arm::recompile();
         cout << CYAN
              << "\nPre-release update complete! Version: "
              << latest_pre
@@ -562,6 +562,8 @@ int main(int argc, char* argv[]) {
     remove((TARGET + "/PREVERSION.txt").c_str());
 
     system(("rm -rf " + temp).c_str());
+
+arm::recompile();
 
     cout << GREEN
          << "\nUpdate complete! Version: "
