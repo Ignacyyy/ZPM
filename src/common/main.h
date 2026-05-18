@@ -33,7 +33,7 @@
 #include "colors.h"     // colors
 #include "update.h"     // updates
 #include "version.h"    // version (VERSION.txt)
-
+#include "arm-recompile.h" // zupgr ARM recompile
 
 
 
