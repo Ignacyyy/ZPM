@@ -7,6 +7,23 @@ int main() {
     std::cout << RED << "Zielina Package Manager (ZPM) " << RESET << "v" << zpm_version::version() << std::endl;
     std::cout << "https://github.com/Ignacyyy/ZPM\n" << std::endl;
 
+    // ARM support + config info
+    std::cout << BOLD << RED << "ZPM Configuration:" << RESET << std::endl;
+    std::cout << "  Config file: /opt/ZPM/zielina.conf" << std::endl;
+    std::cout << "  Used for runtime behavior and update settings" << std::endl;
+    std::cout << std::endl;
+    std::cout << BOLD << " Options:" << RESET << std::endl;
+    std::cout << "  update-info=true/false" << std::endl;
+    std::cout << "     shows update notifications in ZPM tools" << std::endl;
+    std::cout << "  arm-recompile=true/false" << std::endl;
+    std::cout << "     enables ARM recompilation during updates (experimental)" << std::endl;
+    std::cout << std::endl;
+    std::cout << BOLD << RED << "ARM support:" << RESET << std::endl;
+    std::cout << "  ZPM supports ARM (aarch64 / armhf) systems" << std::endl;
+    std::cout << "  ARM mode does NOT affect normal usage" << std::endl;
+    std::cout << "  It only controls optional rebuild step during updates" << std::endl;
+    std::cout << std::endl;
+
     // commands
     std::cout << BOLD << "Commands:" << RESET << std::endl;
     std::cout << "  " << GREEN << "zhelp" << RESET << "      - Show this help message" << std::endl;
