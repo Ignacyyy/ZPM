@@ -20,7 +20,7 @@ cleanup() {
 
     if [ "$exit_code" -ne 0 ]; then
         echo ""
-        echo "Installation FAILED (exit code: $exit_code)$(printf '%*s' $((14 - ${#exit_code})) '')║"
+        echo "Installation FAILED (exit code: $exit_code)$(printf '%*s' $((14 - ${#exit_code})) '')"
         echo "See full log: $LOG$(printf '%*s' $((30 - ${#LOG})) '')"
     fi
 
