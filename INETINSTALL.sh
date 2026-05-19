@@ -215,31 +215,29 @@ echo "===== ZPM ARM Compatibility ====="
 ARCH=$(uname -m)
 if [[ "$ARCH" == arm* ]] || [[ "$ARCH" == aarch64* ]]; then
     info "ARM architecture detected ($ARCH). Recompilation is necessary."
+    info "If you don't choose to recompile, ZPM will not work."
     ask rec "Recompile ZPM for ARM?"
+else
+    info "Architecture: $ARCH (non-ARM). Recompilation is optional."
+    ask rec "Recompile ZPM from source anyway?"
 fi
 
 if [ "$rec" = "y" ]; then
     BUILD_SCRIPT="$TARGET/src/build.sh"
-
     if [ ! -f "$BUILD_SCRIPT" ]; then
         die "build.sh not found at: $BUILD_SCRIPT"
     fi
-
     if [ ! -x "$BUILD_SCRIPT" ]; then
         chmod +x "$BUILD_SCRIPT" || die "Could not make build.sh executable."
     fi
-
     info "Recompiling ZPM (this may take a while)..."
     cd "$TARGET/src" || die "Failed to enter $TARGET/src"
-
     if bash build.sh >> "$LOG" 2>&1; then
         ok "Recompilation complete."
     else
         warn "Recompilation failed. Check the log for details: $LOG"
         warn "The pre-compiled binaries (if any) will be used instead."
     fi
-
-    info "Cleaning temporary build files..."
     cd "$TARGET" || true
 else
     info "Skipping recompilation."
