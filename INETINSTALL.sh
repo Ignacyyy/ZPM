@@ -251,7 +251,7 @@ rm -rf "$TMP"
 
 echo ""
 echo "Installation complete!"
-
+echo "type zhelp to gain more info about ZPM"
 printf  "Version : %-34s\n" "$VERSION_CLEAN"
 printf  "Path    : %-34s\n" "$TARGET"
 printf  "Log     : %-34s\n" "$LOG"
