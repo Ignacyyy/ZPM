@@ -219,8 +219,7 @@ if [[ "$ARCH" == arm* ]] || [[ "$ARCH" == aarch64* ]]; then
     info "If you don't choose to recompile, ZPM will not work."
     ask rec "Recompile ZPM for ARM?"
 else
-    info "Architecture: $ARCH (non-ARM). Recompilation is optional."
-    ask rec "Recompile ZPM from source anyway?"
+    info "Architecture: $ARCH (non-ARM). Skipping recompilation."
 fi
 
 if [ "$rec" = "y" ]; then
@@ -240,8 +239,6 @@ if [ "$rec" = "y" ]; then
         warn "The pre-compiled binaries (if any) will be used instead."
     fi
     cd "$TARGET" || true
-else
-    info "Skipping recompilation."
 fi
 
 # ── WRITE VERSION ─────────────────────────────────────────────────────────────
