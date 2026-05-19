@@ -11,7 +11,6 @@ readonly REQUIRED_DEPS=(curl git wget python3 g++ sudo)
 # ── LOGGING ───────────────────────────────────────────────────────────────────
 exec > >(tee -a "$LOG") 2>&1
 echo "===== ZPM Internet Installer ====="
-echo ""
 
 # ── CLEANUP TRAP ──────────────────────────────────────────────────────────────
 cleanup() {
