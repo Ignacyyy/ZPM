@@ -34,6 +34,7 @@
 #include "update.h"     // updates
 #include "version.h"    // version (VERSION.txt)
 #include "arm-recompile.h" // zupgr ARM recompile
+#include "zhelp-default-page.h" // zhelp default page
 
 
 
