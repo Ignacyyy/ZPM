@@ -215,11 +215,7 @@ echo "===== ZPM ARM Compatibility ====="
 ARCH=$(uname -m)
 if [[ "$ARCH" == arm* ]] || [[ "$ARCH" == aarch64* ]]; then
     info "ARM architecture detected ($ARCH). Recompilation is necessary."
-    info "if you don't choose to recompile ZPM will not work."
     ask rec "Recompile ZPM for ARM?"
-else
-    info "Architecture: $ARCH (non-ARM). Recompilation is optional."
-    ask rec "Recompile ZPM from source anyway?"
 fi
 
 if [ "$rec" = "y" ]; then
