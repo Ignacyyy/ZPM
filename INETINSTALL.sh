@@ -212,6 +212,7 @@ fi
 echo ""
 echo "===== ZPM ARM Compatibility ====="
 
+rec="n"
 ARCH=$(uname -m)
 if [[ "$ARCH" == arm* ]] || [[ "$ARCH" == aarch64* ]]; then
     info "ARM architecture detected ($ARCH). Recompilation is necessary."
