@@ -12,9 +12,7 @@
 
 namespace arm {
     inline void recompile() {
-
-        std::cout << "\033[33m[ARM-DEBUG] ARM-recompile\033[0m\n";
-
+        
         std::ifstream conf("/opt/ZPM/zielina.conf");
         if (!conf.is_open()) {
             std::cout << "\033[31m[ARM-DEBUG] ERROR: can't open /opt/ZPM/zielina.conf!\033[0m\n";
