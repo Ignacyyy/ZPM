@@ -88,53 +88,33 @@ for dep in "${REQUIRED_DEPS[@]}"; do
 done
 echo ""
 
-# Check which deps are already installed
-MISSING_DEPS=()
-for dep in "${REQUIRED_DEPS[@]}"; do
-    if ! command -v "$dep" &>/dev/null && ! dpkg -s "$dep" &>/dev/null 2>&1; then
-        MISSING_DEPS+=("$dep")
-    fi
-done
+ask dep "Install dependencies?"
 
-if [ ${#MISSING_DEPS[@]} -eq 0 ]; then
-    ok "All dependencies are already installed."
+if [ "$dep" = "y" ]; then
+    export DEBIAN_FRONTEND=noninteractive
+
+    # ── WAIT FOR APT LOCK ──
+    local_wait=0
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+        info "Waiting for dpkg lock... (${local_wait}s)"
+        sleep 2
+        local_wait=$((local_wait + 2))
+        if [ "$local_wait" -ge 60 ]; then
+            die "dpkg lock held for over 60s. Another process may be using apt."
+        fi
+    done
+
+    info "Updating package lists..."
+    apt-get update -y >> "$LOG" 2>&1 \
+        || die "apt-get update failed. Check your internet connection."
+
+    info "Installing dependencies..."
+    apt-get install -y "${REQUIRED_DEPS[@]}" >> "$LOG" 2>&1 \
+        || die "Failed to install dependencies."
+
+    ok "Dependencies installed successfully."
 else
-    echo "Missing packages: ${MISSING_DEPS[*]}"
-    ask dep "Install missing dependencies?"
-
-    if [ "$dep" = "y" ]; then
-        export DEBIAN_FRONTEND=noninteractive
-
-        # ── WAIT FOR APT LOCK ──
-        local_wait=0
-        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-            info "Waiting for dpkg lock... (${local_wait}s)"
-            sleep 2
-            local_wait=$((local_wait + 2))
-            if [ "$local_wait" -ge 60 ]; then
-                die "dpkg lock held for over 60s. Another process may be using apt."
-            fi
-        done
-
-        # ── FIX BROKEN STATE ──
-        info "Checking for broken package state..."
-        dpkg --configure -a >> "$LOG" 2>&1 || true
-        apt-get -f install -y >> "$LOG" 2>&1 || true
-
-        # ── UPDATE ──
-        info "Updating package lists..."
-        apt-get update -y >> "$LOG" 2>&1 \
-            || die "apt-get update failed. Check your internet connection."
-
-        # ── INSTALL MISSING ONLY ──
-        info "Installing missing packages: ${MISSING_DEPS[*]}"
-        apt-get install -y "${MISSING_DEPS[@]}" >> "$LOG" 2>&1 \
-            || die "Failed to install dependencies: ${MISSING_DEPS[*]}"
-
-        ok "Dependencies installed successfully."
-    else
-        warn "Skipping dependency installation. The build may fail if packages are missing."
-    fi
+    warn "Skipping dependency installation. The build may fail if packages are missing."
 fi
 
 # ── INSTALL TO TARGET ─────────────────────────────────────────────────────────
@@ -189,14 +169,13 @@ fi
 echo ""
 echo "===== ZPM ARM Compatibility ====="
 
+rec="n"
 ARCH=$(uname -m)
 if [[ "$ARCH" == arm* ]] || [[ "$ARCH" == aarch64* ]]; then
     info "ARM architecture detected ($ARCH). Recompilation is necessary."
-    info "If you don't choose to recompile, ZPM will not work."
     ask rec "Recompile ZPM for ARM?"
 else
-    info "Architecture: $ARCH (non-ARM). Recompilation is optional."
-    ask rec "Recompile ZPM from source anyway?"
+    info "Architecture: $ARCH (non-ARM). Skipping recompilation."
 fi
 
 if [ "$rec" = "y" ]; then
@@ -221,8 +200,6 @@ if [ "$rec" = "y" ]; then
     fi
 
     cd "$TARGET" || true
-else
-    info "Skipping recompilation."
 fi
 
 # ── CLEAN PREVERSION STATE ────────────────────────────────────────────────────
@@ -230,7 +207,7 @@ rm -f "$TARGET/PREVERSION.txt" 2>/dev/null || true
 
 # ── DONE ──────────────────────────────────────────────────────────────────────
 echo ""
-
 echo "Installation complete!"
+echo "type zhelp to gain more info about ZPM"
 printf  "Path    : %-34s\n" "$TARGET"
 printf  "Log     : %-34s\n" "$LOG"
