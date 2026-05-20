@@ -1,3 +1,11 @@
+ZPM v1.9
+Program updates: (General)
+- zhelp new UI, 
+- extended arm support
+- fix INETINSTALL.sh
+- fix INSTALL.sh
+
+
 ZPM v1.8
 Program updates: (General)
 - zhelp new UI, 
