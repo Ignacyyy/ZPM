@@ -5,7 +5,7 @@ set -euo pipefail
 readonly LOG="/tmp/ZMP_INETINSTALL.log"
 readonly TMP="/tmp/ZMP_INETINSTALL_$$"
 readonly TARGET="/opt/ZPM"
-readonly GITHUB_REPO="Ignacyyy/ZPM"
+readonly GITHUB_REPO="https://github.com/Zielina-Konrad-productions/ZPM"
 readonly REQUIRED_DEPS=(curl git wget python3 g++ sudo)
 
 # ── LOGGING ───────────────────────────────────────────────────────────────────
