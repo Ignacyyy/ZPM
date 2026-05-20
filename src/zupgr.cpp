@@ -21,14 +21,13 @@ string exec(const char* cmd) {
 
 // ───────────────────────── VERSION ─────────────────────────
 
-// Pobiera najnowszy stabilny release (nie-prerelease)
 string get_latest_version() {
 
     string cmd =
-        "curl -fsSL -H 'User-Agent: ZPM' "
-        "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases/latest"
-        " | grep '\"tag_name\"' | head -1"
-        " | sed 's/.*\"v\\([0-9.]*\\)\".*/\\1/'";
+    "curl -fsSL -H 'User-Agent: ZPM' "
+    "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases/latest"
+    " | grep '\"tag_name\"' | head -1"
+    " | sed 's/.*\"v\\([0-9.]*\\)\".*/\\1/'";
 
     string v = exec(cmd.c_str());
 
@@ -38,17 +37,16 @@ string get_latest_version() {
     return v;
 }
 
-// Pobiera najnowszy prerelease
 string get_latest_prerelease_version() {
 
     string cmd =
-        "curl -fsSL -H 'User-Agent: ZPM' "
-        "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases"
-        " | python3 -c \""
-        "import sys, json; "
-        "releases = json.load(sys.stdin); "
-        "pre = [r for r in releases if r.get('prerelease', False)]; "
-        "print(pre[0]['tag_name'].lstrip('v') if pre else '')\"";
+    "curl -fsSL -H 'User-Agent: ZPM' "
+    "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases"
+    " | python3 -c \""
+    "import sys, json; "
+    "releases = json.load(sys.stdin); "
+    "pre = [r for r in releases if r.get('prerelease', False)]; "
+    "print(pre[0]['tag_name'].lstrip('v') if pre else '')\"";
 
     string v = exec(cmd.c_str());
 
@@ -78,7 +76,6 @@ string get_installed_version() {
     return v.empty() ? "none" : v;
 }
 
-// Odczytuje zainstalowaną wersję pre
 string get_installed_preversion() {
 
     FILE* f = fopen("/opt/ZPM/PREVERSION.txt", "r");
@@ -106,27 +103,21 @@ void print_banner() {
 }
 
 // ───────────────────────── INSTALL ─────────────────────────
-
 bool install_from_dir(const string& src) {
 
     cout << "Installing to " << TARGET << "...\n";
 
-    string backup_conf = "/tmp/zielina.conf.backup";
+    string user_conf    = TARGET + "/zielina.conf";
+    string backup_conf  = "/tmp/zielina.conf.backup";
 
-    // Backup configu jeśli istnieje
-    if (access((TARGET + "/zielina.conf").c_str(), F_OK) == 0) {
-
-        string backup_cmd =
-            "cp " + TARGET + "/zielina.conf " + backup_conf;
-
-        system(backup_cmd.c_str());
-    }
+    // Backup user configu jeśli istnieje
+    if (access(user_conf.c_str(), F_OK) == 0)
+        system(("cp " + user_conf + " " + backup_conf).c_str());
 
     // Usuń starą instalację
     if (system(("rm -rf " + TARGET).c_str()) != 0)
         return false;
 
-    // Utwórz nową
     if (system(("mkdir -p " + TARGET).c_str()) != 0)
         return false;
 
@@ -134,47 +125,35 @@ bool install_from_dir(const string& src) {
     if (system(("cp -r " + src + "/. " + TARGET + "/").c_str()) != 0)
         return false;
 
-    // Przywróć config
+    // Przywróć user config (nadpisuje to co przyszło z repo)
     if (access(backup_conf.c_str(), F_OK) == 0) {
-
-        string restore_cmd =
-            "cp " + backup_conf + " " + TARGET + "/zielina.conf";
-
-        system(restore_cmd.c_str());
-
+        system(("cp " + backup_conf + " " + user_conf).c_str());
         remove(backup_conf.c_str());
     }
 
     string bin = TARGET + "/bin";
 
-    // chmod +x
-    string chmod_cmd =
-        "find " + bin + " -type f -exec chmod +x {} +";
-
+    string chmod_cmd = "find " + bin + " -type f -exec chmod +x {} +";
     system(chmod_cmd.c_str());
 
     cout << "Updating symlinks in /usr/bin/...\n";
 
-    // Usuń stare symlinki
     string rm_links =
-        "find /usr/bin -maxdepth 1 -type l | while read -r link; do "
-        "  dest=$(readlink \"$link\"); "
-        "  if echo \"$dest\" | grep -q '^" + TARGET + "/bin/'; then "
-        "    rm -f \"$link\"; "
-        "  fi; "
-        "done";
-
+    "find /usr/bin -maxdepth 1 -type l | while read -r link; do "
+    "  dest=$(readlink \"$link\"); "
+    "  if echo \"$dest\" | grep -q '^" + TARGET + "/bin/'; then "
+    "    rm -f \"$link\"; "
+    "  fi; "
+    "done";
     system(rm_links.c_str());
 
-    // Utwórz nowe
     string ln_cmd =
-        "if [ -d " + bin + " ] && [ -n \"$(ls -A " + bin + " 2>/dev/null)\" ]; then "
-        "  for f in " + bin + "/*; do "
-        "    [ -f \"$f\" ] || continue; "
-        "    ln -sf \"$f\" /usr/bin/\"$(basename $f)\"; "
-        "  done; "
-        "fi";
-
+    "if [ -d " + bin + " ] && [ -n \"$(ls -A " + bin + " 2>/dev/null)\" ]; then "
+    "  for f in " + bin + "/*; do "
+    "    [ -f \"$f\" ] || continue; "
+    "    ln -sf \"$f\" /usr/bin/\"$(basename $f)\"; "
+    "  done; "
+    "fi";
     system(ln_cmd.c_str());
 
     return true;
@@ -206,7 +185,7 @@ int main(int argc, char* argv[]) {
             experimental = true;
     }
 
-// ── HELP / VERSION ─────────────────────────────
+    // ── HELP / VERSION ─────────────────────────────
 
     if (help && version) {
 
@@ -218,14 +197,14 @@ int main(int argc, char* argv[]) {
 
         cout << YELLOW << "--help" << RESET << "\n";
         cout << RED << "Usage: " << RESET
-             << argv[0]
-             << " [options] or zpm upgr/upgrade [options]\n\n";
+        << argv[0]
+        << " [options] or zpm upgr/upgrade [options]\n\n";
 
         cout << RED << "Options:" << RESET << "\n";
-        cout << "  --help,    -h   Show this help message\n";
-        cout << "  --version, -v   Show version information\n";
-        cout << "  --force,   -f   Force reinstall even if already up to date\n";
-        cout << "  --experimental, -ex  update ZPM to prerelease versions\n";
+        cout << "  --help,         -h   Show this help message\n";
+        cout << "  --version,      -v   Show version information\n";
+        cout << "  --force,        -f   Force reinstall even if already up to date\n";
+        cout << "  --experimental, -ex  Update ZPM to prerelease versions\n";
 
         return 0;
     }
@@ -242,14 +221,14 @@ int main(int argc, char* argv[]) {
     if (help) {
 
         cout << RED << "Usage: " << RESET
-             << argv[0]
-             << " [options] or zpm upgr/upgrade [options]\n\n";
+        << argv[0]
+        << " [options] or zpm upgr/upgrade [options]\n\n";
 
         cout << "Options:\n";
-        cout << "  -h, --help      Show help\n";
-        cout << "  -v, --version   Show version\n";
-        cout << "  -f, --force     Force reinstall even if already up to date\n";
-        cout << "  --experimental, -ex  update ZPM to prerelease versions\n";
+        cout << "  -h, --help           Show help\n";
+        cout << "  -v, --version        Show version\n";
+        cout << "  -f, --force          Force reinstall even if already up to date\n";
+        cout << "  --experimental, -ex  Update ZPM to prerelease versions\n";
 
         cout << "\nChecks and installs updates for ZPM.\n";
 
@@ -269,17 +248,17 @@ int main(int argc, char* argv[]) {
 
     // ── VERSION CHECK ─────────────────────────────
 
-    string current        = get_installed_version();
-    string current_pre    = get_installed_preversion();
-    string latest         = get_latest_version();
-    string latest_pre     = get_latest_prerelease_version();
+    string current     = get_installed_version();
+    string current_pre = get_installed_preversion();
+    string latest      = get_latest_version();
+    string latest_pre  = get_latest_prerelease_version();
 
     if (latest.empty()) {
 
         cout << RED
-             << "ERROR: Could not fetch latest version. "
-             << "Check your internet connection.\n"
-             << RESET;
+        << "ERROR: Could not fetch latest version. "
+        << "Check your internet connection.\n"
+        << RESET;
 
         return 1;
     }
@@ -287,42 +266,42 @@ int main(int argc, char* argv[]) {
     bool is_pre_installed = (current_pre != "none");
 
     string installed_ver =
-        is_pre_installed ? current_pre : current;
+    is_pre_installed ? current_pre : current;
 
     // STATUS
 
     if (installed_ver == "none") {
 
         cout << YELLOW
-             << "Installed:               none\n"
-             << RESET;
+        << "Installed:               none\n"
+        << RESET;
 
     } else if (is_pre_installed) {
 
         cout << CYAN
-             << "Installed:               "
-             << installed_ver
-             << " [pre-release]\n"
-             << RESET;
+        << "Installed:               "
+        << installed_ver
+        << " [pre-release]\n"
+        << RESET;
 
     } else {
 
         cout << GREEN
-             << "Installed:               "
-             << installed_ver
-             << " [stable]\n"
-             << RESET;
+        << "Installed:               "
+        << installed_ver
+        << " [stable]\n"
+        << RESET;
     }
 
     cout << GREEN
-         << "Latest    (stable):      "
-         << latest
-         << RESET << "\n";
+    << "Latest    (stable):      "
+    << latest
+    << RESET << "\n";
 
     cout << CYAN
-         << "Latest    (pre-release): "
-         << (latest_pre.empty() ? "none" : latest_pre)
-         << RESET << "\n\n";
+    << "Latest    (pre-release): "
+    << (latest_pre.empty() ? "none" : latest_pre)
+    << RESET << "\n\n";
 
     // ── PRE-RELEASE ─────────────────────────────
 
@@ -331,40 +310,39 @@ int main(int argc, char* argv[]) {
         if (latest_pre.empty()) {
 
             cout << RED
-                 << "ERROR: Could not fetch latest pre-release version.\n"
-                 << RESET;
+            << "ERROR: Could not fetch latest pre-release version.\n"
+            << RESET;
 
             return 1;
         }
 
         cout << CYAN
-             << "[EXPERIMENTAL] Pre-release mode active.\n"
-             << RESET;
+        << "[EXPERIMENTAL] Pre-release mode active.\n"
+        << RESET;
 
         if (current_pre == latest_pre && current_pre != "none") {
 
             if (!force) {
 
                 cout << GREEN
-                     << "Already on latest pre-release.\n"
-                     << RESET;
+                << "Already on latest pre-release.\n"
+                << RESET;
 
                 return 0;
             }
 
             cout << YELLOW
-                 << "Already on latest pre-release, but --force specified. Reinstalling...\n"
-                 << RESET;
+            << "Already on latest pre-release, but --force specified. Reinstalling...\n"
+            << RESET;
         }
 
         cout << CYAN
-             << "Pre-release update available: v"
-             << latest_pre
-             << ". Continue? [Y/n]: "
-             << RESET;
+        << "Pre-release update available: v"
+        << latest_pre
+        << ". Continue? [Y/n]: "
+        << RESET;
 
         string ans;
-
         getline(cin, ans);
 
         if (!(ans.empty() || ans == "y" || ans == "Y")) {
@@ -374,25 +352,20 @@ int main(int argc, char* argv[]) {
             return 0;
         }
 
-        string temp =
-            "/tmp/zupgr_" + to_string(time(nullptr));
-
-        string archive =
-            temp + "/zpm.tar.gz";
+        string temp    = "/tmp/zupgr_" + to_string(time(nullptr));
+        string archive = temp + "/zpm.tar.gz";
 
         system(("mkdir -p " + temp).c_str());
 
         string url =
-            "https://github.com/Ignacyyy/ZPM/archive/refs/tags/v"
-            + latest_pre + ".tar.gz";
+        "https://github.com/Ignacyyy/ZPM/archive/refs/tags/v"
+        + latest_pre + ".tar.gz";
 
-        cout << "Downloading pre-release v"
-             << latest_pre << "...\n";
+        cout << "Downloading pre-release v" << latest_pre << "...\n";
 
         if (system(("curl -fsSL -o " + archive + " " + url).c_str()) != 0) {
 
             cout << RED << "Download failed!\n" << RESET;
-
             system(("rm -rf " + temp).c_str());
 
             return 1;
@@ -403,21 +376,19 @@ int main(int argc, char* argv[]) {
         if (system(("tar -xzf " + archive + " -C " + temp).c_str()) != 0) {
 
             cout << RED << "Extract failed!\n" << RESET;
-
             system(("rm -rf " + temp).c_str());
 
             return 1;
         }
 
         string extracted =
-            exec(("find " + temp + " -mindepth 1 -maxdepth 1 -type d | head -1").c_str());
+        exec(("find " + temp + " -mindepth 1 -maxdepth 1 -type d | head -1").c_str());
 
         extracted.erase(remove(extracted.begin(), extracted.end(), '\n'), extracted.end());
 
         if (extracted.empty()) {
 
             cout << RED << "No extracted folder found!\n" << RESET;
-
             system(("rm -rf " + temp).c_str());
 
             return 1;
@@ -426,29 +397,26 @@ int main(int argc, char* argv[]) {
         if (!install_from_dir(extracted)) {
 
             cout << RED << "Installation failed.\n" << RESET;
-
             system(("rm -rf " + temp).c_str());
 
             return 1;
         }
 
-        FILE* pvf =
-            fopen((TARGET + "/PREVERSION.txt").c_str(), "w");
+        FILE* pvf = fopen((TARGET + "/PREVERSION.txt").c_str(), "w");
 
         if (pvf) {
-
             fprintf(pvf, "%s\n", latest_pre.c_str());
-
             fclose(pvf);
         }
 
         system(("rm -rf " + temp).c_str());
         arm::recompile();
+
         cout << CYAN
-             << "\nPre-release update complete! Version: "
-             << latest_pre
-             << "\n"
-             << RESET;
+        << "\nPre-release update complete! Version: "
+        << latest_pre
+        << "\n"
+        << RESET;
 
         return 0;
     }
@@ -460,29 +428,28 @@ int main(int argc, char* argv[]) {
         if (!force) {
 
             cout << GREEN
-                 << "Already up to date.\n"
-                 << RESET;
+            << "Already up to date.\n"
+            << RESET;
 
             return 0;
         }
 
         cout << YELLOW
-             << "Already up to date, but --force specified. Reinstalling...\n"
-             << RESET;
+        << "Already up to date, but --force specified. Reinstalling...\n"
+        << RESET;
 
     } else if (is_pre_installed) {
 
         cout << YELLOW
-             << "Currently on pre-release. Downgrading to stable v"
-             << latest
-             << ".\n"
-             << RESET;
+        << "Currently on pre-release. Downgrading to stable v"
+        << latest
+        << ".\n"
+        << RESET;
     }
 
     cout << RED << "Continue? [Y/n]: " << RESET;
 
     string ans;
-
     getline(cin, ans);
 
     if (!(ans.empty() || ans == "y" || ans == "Y")) {
@@ -492,24 +459,20 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    string temp =
-        "/tmp/zupgr_" + to_string(time(nullptr));
-
-    string archive =
-        temp + "/zpm.tar.gz";
+    string temp    = "/tmp/zupgr_" + to_string(time(nullptr));
+    string archive = temp + "/zpm.tar.gz";
 
     system(("mkdir -p " + temp).c_str());
 
     string url =
-        "https://github.com/Ignacyyy/ZPM/archive/refs/tags/v"
-        + latest + ".tar.gz";
+    "https://github.com/Ignacyyy/ZPM/archive/refs/tags/v"
+    + latest + ".tar.gz";
 
     cout << "Downloading v" << latest << "...\n";
 
     if (system(("curl -fsSL -o " + archive + " " + url).c_str()) != 0) {
 
         cout << RED << "Download failed!\n" << RESET;
-
         system(("rm -rf " + temp).c_str());
 
         return 1;
@@ -520,21 +483,19 @@ int main(int argc, char* argv[]) {
     if (system(("tar -xzf " + archive + " -C " + temp).c_str()) != 0) {
 
         cout << RED << "Extract failed!\n" << RESET;
-
         system(("rm -rf " + temp).c_str());
 
         return 1;
     }
 
     string extracted =
-        exec(("find " + temp + " -mindepth 1 -maxdepth 1 -type d | head -1").c_str());
+    exec(("find " + temp + " -mindepth 1 -maxdepth 1 -type d | head -1").c_str());
 
     extracted.erase(remove(extracted.begin(), extracted.end(), '\n'), extracted.end());
 
     if (extracted.empty()) {
 
         cout << RED << "No extracted folder found!\n" << RESET;
-
         system(("rm -rf " + temp).c_str());
 
         return 1;
@@ -543,33 +504,28 @@ int main(int argc, char* argv[]) {
     if (!install_from_dir(extracted)) {
 
         cout << RED << "Installation failed.\n" << RESET;
-
         system(("rm -rf " + temp).c_str());
 
         return 1;
     }
 
-    FILE* vf =
-        fopen((TARGET + "/VERSION.txt").c_str(), "w");
+    FILE* vf = fopen((TARGET + "/VERSION.txt").c_str(), "w");
 
     if (vf) {
-
         fprintf(vf, "%s\n", latest.c_str());
-
         fclose(vf);
     }
 
     remove((TARGET + "/PREVERSION.txt").c_str());
 
     system(("rm -rf " + temp).c_str());
-
-arm::recompile();
+    arm::recompile();
 
     cout << GREEN
-         << "\nUpdate complete! Version: "
-         << latest
-         << "\n"
-         << RESET;
+    << "\nUpdate complete! Version: "
+    << latest
+    << "\n"
+    << RESET;
 
     return 0;
 }
