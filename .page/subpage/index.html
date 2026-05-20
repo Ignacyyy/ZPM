@@ -1,0 +1,1327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pizdziac</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0f0a;
+      --surface: #111811;
+      --surface2: #162016;
+      --green: #4ade80;
+      --green-dim: #22c55e;
+      --green-dark: #16a34a;
+      --green-glow: rgba(74, 222, 128, 0.15);
+      --green-glow-strong: rgba(74, 222, 128, 0.3);
+      --text: #e2f5e2;
+      --text-dim: #6b8f6b;
+      --text-muted: #3a5c3a;
+      --border: rgba(74, 222, 128, 0.12);
+      --border-bright: rgba(74, 222, 128, 0.35);
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'Syne', sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      overflow-x: hidden;
+      min-height: 100vh;
+    }
+
+    /* GRID BACKGROUND */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(74,222,128,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(74,222,128,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* SCANLINES */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.05) 2px,
+        rgba(0,0,0,0.05) 4px
+      );
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* NAV */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 40px;
+      background: rgba(10,15,10,0.8);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-logo {
+      font-family: var(--sans);
+      font-weight: 800;
+      font-size: 1.4rem;
+      color: var(--green);
+      letter-spacing: -0.02em;
+      text-decoration: none;
+    }
+
+    .nav-logo span { color: var(--text-dim); font-weight: 400; font-size: 0.85rem; margin-left: 8px; vertical-align: middle; }
+
+    .nav-links {
+      display: flex;
+      gap: 32px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover { color: var(--green); }
+
+    .nav-github {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--green);
+      text-decoration: none;
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border: 1px solid var(--border-bright);
+      padding: 8px 16px;
+      transition: all 0.2s;
+    }
+
+    .nav-github:hover {
+      background: var(--green-glow);
+      box-shadow: 0 0 20px var(--green-glow-strong);
+    }
+
+    /* HERO */
+    .hero {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 120px 40px 80px;
+      text-align: center;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border-bright);
+      padding: 6px 16px;
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--green-dim);
+      margin-bottom: 40px;
+      animation: fadeInDown 0.6s ease both;
+    }
+
+    .badge-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .hero-ascii {
+      font-family: var(--mono);
+      font-size: 0.38rem;
+      line-height: 1.1;
+      color: var(--green-dark);
+      margin-bottom: 48px;
+      white-space: pre;
+      animation: fadeIn 1s ease 0.2s both;
+      letter-spacing: 0.05em;
+      text-shadow: 0 0 8px rgba(74,222,128,0.3);
+    }
+
+    .hero-title {
+      font-family: var(--sans);
+      font-size: clamp(3rem, 8vw, 6rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 0.95;
+      color: var(--text);
+      margin-bottom: 8px;
+      animation: fadeInUp 0.7s ease 0.3s both;
+    }
+
+    .hero-title .accent { color: var(--green); }
+
+    .hero-subtitle-line {
+      font-family: var(--mono);
+      font-size: clamp(0.75rem, 2vw, 1rem);
+      color: var(--text-dim);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 32px;
+      animation: fadeInUp 0.7s ease 0.4s both;
+    }
+
+    .hero-desc {
+      max-width: 560px;
+      font-size: 0.95rem;
+      color: var(--text-dim);
+      line-height: 1.7;
+      margin-bottom: 56px;
+      animation: fadeInUp 0.7s ease 0.5s both;
+    }
+
+    /* INSTALL BOX */
+    .install-box {
+      position: relative;
+      background: var(--surface);
+      border: 1px solid var(--border-bright);
+      padding: 0;
+      max-width: 700px;
+      width: 100%;
+      animation: fadeInUp 0.7s ease 0.6s both;
+      box-shadow: 0 0 60px rgba(74,222,128,0.08), inset 0 1px 0 rgba(74,222,128,0.1);
+    }
+
+    .install-box::before {
+      content: '';
+      position: absolute;
+      top: -1px; left: 10%; right: 10%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--green), transparent);
+    }
+
+    .install-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 20px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .install-bar-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+    }
+
+    .dot-red { background: #ff5f57; }
+    .dot-yellow { background: #febc2e; }
+    .dot-green-os { background: #28c840; }
+
+    .install-bar-title {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      letter-spacing: 0.1em;
+      margin-left: 8px;
+    }
+
+    .install-code {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px 24px;
+      gap: 16px;
+    }
+
+    .install-prompt {
+      color: var(--green-dim);
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+
+    .install-cmd {
+      flex: 1;
+      font-size: 0.78rem;
+      color: var(--text);
+      word-break: break-all;
+      line-height: 1.5;
+    }
+
+    .copy-btn {
+      background: var(--green-dark);
+      color: #000;
+      border: none;
+      padding: 10px 20px;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+
+    .copy-btn:hover {
+      background: var(--green);
+      box-shadow: 0 0 20px var(--green-glow-strong);
+    }
+
+    .copy-btn.copied {
+      background: #16a34a;
+      color: #fff;
+    }
+
+    .install-note {
+      padding: 12px 24px;
+      border-top: 1px solid var(--border);
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      display: flex;
+      gap: 16px;
+    }
+
+    .install-note span { color: var(--green-dark); }
+
+    /* TAGS */
+    .hero-tags {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 32px;
+      animation: fadeInUp 0.7s ease 0.7s both;
+    }
+
+    .tag {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      padding: 5px 14px;
+      font-size: 0.68rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    /* SECTION */
+    section {
+      position: relative;
+      z-index: 1;
+      padding: 100px 40px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .section-label {
+      font-size: 0.68rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--green-dark);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .section-label::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+      max-width: 200px;
+    }
+
+    .section-title {
+      font-family: var(--sans);
+      font-size: clamp(1.8rem, 4vw, 2.8rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: var(--text);
+      margin-bottom: 16px;
+    }
+
+    .section-desc {
+      color: var(--text-dim);
+      font-size: 0.9rem;
+      line-height: 1.7;
+      max-width: 500px;
+      margin-bottom: 60px;
+    }
+
+    /* COMMANDS GRID */
+    .commands-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+    }
+
+    .cmd-card {
+      background: var(--bg);
+      padding: 28px 28px;
+      position: relative;
+      overflow: hidden;
+      transition: background 0.2s;
+    }
+
+    .cmd-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 3px; height: 0;
+      background: var(--green);
+      transition: height 0.3s ease;
+    }
+
+    .cmd-card:hover { background: var(--surface); }
+    .cmd-card:hover::before { height: 100%; }
+
+    .cmd-name {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--green);
+      margin-bottom: 8px;
+      letter-spacing: 0.02em;
+    }
+
+    .cmd-desc {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    /* FEATURES */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 24px;
+      margin-top: 60px;
+    }
+
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 32px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s, transform 0.2s;
+    }
+
+    .feature-card:hover {
+      border-color: var(--border-bright);
+      transform: translateY(-3px);
+      box-shadow: 0 12px 40px rgba(74,222,128,0.06);
+    }
+
+    .feature-icon {
+      font-size: 1.5rem;
+      margin-bottom: 20px;
+      display: block;
+    }
+
+    .feature-title {
+      font-family: var(--sans);
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 12px;
+    }
+
+    .feature-desc {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      line-height: 1.7;
+    }
+
+    /* INFO BOX */
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      margin-top: 60px;
+    }
+
+    .info-item {
+      background: var(--bg);
+      padding: 28px 32px;
+    }
+
+    .info-label {
+      font-size: 0.65rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    .info-value {
+      font-size: 0.9rem;
+      color: var(--green);
+      font-weight: 500;
+    }
+
+    /* QUICK COMMANDS */
+    .quick-cmd {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-top: 60px;
+    }
+
+    .qcmd-row {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      border: 1px solid var(--border);
+      border-top: none;
+      background: var(--bg);
+      transition: background 0.15s;
+    }
+
+    .qcmd-row:first-child { border-top: 1px solid var(--border); }
+    .qcmd-row:hover { background: var(--surface); }
+
+    .qcmd-name {
+      padding: 16px 24px;
+      color: var(--green);
+      font-weight: 700;
+      font-size: 0.85rem;
+      border-right: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+    }
+
+    .qcmd-desc {
+      padding: 16px 24px;
+      color: var(--text-dim);
+      font-size: 0.8rem;
+      display: flex;
+      align-items: center;
+    }
+
+    /* UPDATE / UNINSTALL */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-top: 60px;
+    }
+
+    .cmd-block {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 28px;
+    }
+
+    .cmd-block-label {
+      font-size: 0.65rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+
+    .cmd-block-cmd {
+      font-family: var(--mono);
+      font-size: 0.9rem;
+      color: var(--green);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .cmd-block-copy {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.85rem;
+      padding: 4px;
+      transition: color 0.2s;
+    }
+
+    .cmd-block-copy:hover { color: var(--green); }
+
+    /* FOOTER */
+    footer {
+      position: relative;
+      z-index: 1;
+      border-top: 1px solid var(--border);
+      padding: 48px 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: gap;
+    }
+
+    .footer-left .logo {
+      font-family: var(--sans);
+      font-weight: 800;
+      font-size: 1.2rem;
+      color: var(--green);
+    }
+
+    .footer-left p {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 8px;
+    }
+
+    .footer-right {
+      display: flex;
+      gap: 24px;
+    }
+
+    .footer-right a {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      transition: color 0.2s;
+    }
+
+    .footer-right a:hover { color: var(--green); }
+
+    /* DIVIDER LINE */
+    .divider {
+      position: relative;
+      z-index: 1;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border-bright), transparent);
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    /* GLOWING ORB */
+    .glow-orb {
+      position: fixed;
+      width: 500px; height: 500px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(74,222,128,0.04) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+      top: 20%; left: 50%;
+      transform: translateX(-50%);
+    }
+
+    /* ANIMATIONS */
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes fadeInUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes fadeInDown { from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* CMD DRAWER — inline code under grid */
+    .cmd-src-hint {
+      font-size: 0.6rem;
+      color: var(--green-dark);
+      font-weight: 400;
+      margin-left: 6px;
+      opacity: 0.7;
+      transition: opacity 0.2s;
+    }
+    .cmd-card:hover .cmd-src-hint { opacity: 1; color: var(--green); }
+    .cmd-card { cursor: pointer; }
+    .cmd-card.active {
+      background: var(--surface2);
+      border-left: 3px solid var(--green);
+    }
+    .cmd-card.active::before { height: 100%; }
+
+    .cmd-drawer {
+      display: none;
+      margin-top: 2px;
+      border: 1px solid var(--border-bright);
+      background: var(--surface);
+      box-shadow: 0 0 40px rgba(74,222,128,0.07);
+      animation: fadeInUp 0.25s ease both;
+    }
+    .cmd-drawer.open { display: block; }
+
+    .cmd-drawer-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 20px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .cmd-drawer-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.8rem;
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    .cmd-drawer-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse 2s infinite;
+    }
+
+    .cmd-drawer-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .cmd-drawer-link {
+      font-size: 0.68rem;
+      color: var(--green-dark);
+      text-decoration: none;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      transition: color 0.2s;
+    }
+    .cmd-drawer-link:hover { color: var(--green); }
+
+    .cmd-drawer-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.85rem;
+      padding: 4px 8px;
+      font-family: var(--mono);
+      transition: color 0.2s;
+    }
+    .cmd-drawer-close:hover { color: var(--green); }
+
+    /* SOURCE CODE BROWSER — kept for styles reuse */
+    .src-browser {
+      margin-top: 60px;
+    }
+
+    .src-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px;
+      margin-bottom: 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .src-tab {
+      background: none;
+      border: 1px solid transparent;
+      border-bottom: none;
+      padding: 10px 18px;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      letter-spacing: 0.06em;
+      transition: all 0.2s;
+      position: relative;
+      bottom: -1px;
+    }
+
+    .src-tab:hover { color: var(--text-dim); }
+
+    .src-tab.active {
+      color: var(--green);
+      background: var(--surface);
+      border-color: var(--border);
+      border-bottom-color: var(--surface);
+    }
+
+    .src-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-top: none;
+      position: relative;
+    }
+
+    .src-panel-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 20px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .src-panel-filename {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .src-panel-filename::before {
+      content: '//';
+      color: var(--green-dark);
+    }
+
+    .src-panel-link {
+      font-size: 0.68rem;
+      color: var(--green-dark);
+      text-decoration: none;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      transition: color 0.2s;
+    }
+
+    .src-panel-link:hover { color: var(--green); }
+
+    .src-code {
+      padding: 28px 24px;
+      overflow-x: auto;
+      max-height: 560px;
+      overflow-y: auto;
+    }
+
+    .src-code pre {
+      margin: 0;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      line-height: 1.8;
+      color: var(--text);
+      white-space: pre;
+    }
+
+    .src-loading {
+      padding: 60px 24px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      letter-spacing: 0.1em;
+    }
+
+    .src-loading::before {
+      content: '▋';
+      color: var(--green);
+      animation: blink 1s infinite;
+      margin-right: 8px;
+    }
+
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+    .src-error {
+      padding: 40px 24px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+    }
+
+    .src-error a {
+      color: var(--green-dim);
+      text-decoration: none;
+    }
+
+    /* syntax colors */
+    .kw { color: #7dd3fc; }
+    .fn { color: #4ade80; }
+    .str { color: #fcd34d; }
+    .cmt { color: #3a5c3a; font-style: italic; }
+    .num { color: #f9a8d4; }
+    .pp { color: #c4b5fd; }
+    .type { color: #86efac; }
+
+    /* SCROLLBAR */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border-bright); }
+    ::-webkit-scrollbar-thumb:hover { background: var(--green-dark); }
+
+    /* RESPONSIVE */
+    @media (max-width: 768px) {
+      nav { padding: 16px 20px; }
+      .nav-links { display: none; }
+      section { padding: 60px 20px; }
+      .hero { padding: 100px 20px 60px; }
+      .hero-ascii { font-size: 0.28rem; }
+      .install-cmd { font-size: 0.65rem; }
+      .info-grid, .two-col { grid-template-columns: 1fr; }
+      .qcmd-row { grid-template-columns: 1fr; }
+      .qcmd-name { border-right: none; border-bottom: 1px solid var(--border); }
+      footer { flex-direction: column; gap: 24px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="glow-orb"></div>
+
+<!-- NAV -->
+<nav>
+  <a href="#" class="nav-logo">ZPM <span id="nav-version">...</span></a>
+  <ul class="nav-links">
+    <li><a href="#install">Install</a></li>
+    <li><a href="#commands">Commands</a></li>
+    <li><a href="#info">Info</a></li>
+  </ul>
+  <a href="https://github.com/Ignacyyy/ZPM" target="_blank" class="nav-github">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+    GitHub
+  </a>
+</nav>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-badge">
+    <span class="badge-dot"></span>
+    Stable <span class="dyn-version">...</span> — May 2026
+  </div>
+
+  <pre class="hero-ascii">
+       ↑↑    ↑↑↑
+      ↑↖↙↖↘↖ ↑↖↙←
+     ↗↙↑↑↙↑↑← ↖↑←
+    →↖↖↓↑↖↑↓↑ ↑↑↑
+    ↙↑↖↖↑↖←↙↓↑↖↑
+    ↑↑↖↖↗→↖↑↖↑→ ↙←
+     ↙↙↑↙↗↘↖↓↖↑ ↑↑
+     ↑↘↖↖←↑↗↓↖↑ ↖↑
+      ↑←↑←↖↖←↓↘↖←↑</pre>
+
+  <h1 class="hero-title">Zielina<br/><span class="accent">Package</span><br/>Manager</h1>
+  <p class="hero-subtitle-line">APT · Flatpak · Snap — One Interface</p>
+  <p class="hero-desc">
+    ZPM unifies your Linux package management into a single, fast, user-friendly CLI.
+    No more switching between APT, Flatpak, and Snap — just <code style="color:var(--green)">z*</code> commands.
+  </p>
+
+  <!-- INSTALL BOX -->
+  <div class="install-box" id="install">
+    <div class="install-bar">
+      <span class="install-bar-dot dot-red"></span>
+      <span class="install-bar-dot dot-yellow"></span>
+      <span class="install-bar-dot dot-green-os"></span>
+      <span class="install-bar-title">bash — install zpm</span>
+    </div>
+    <div class="install-code">
+      <span class="install-prompt">$</span>
+      <span class="install-cmd" id="install-cmd-text">sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Ignacyyy/ZPM/main/INETINSTALL.sh)"</span>
+      <button class="copy-btn" id="copy-btn" onclick="copyInstall()">Copy</button>
+    </div>
+    <div class="install-note">
+      <span>Requires:</span> curl · git · wget · sudo · python3 &nbsp;|&nbsp; <span>Platform:</span> Debian / Ubuntu (APT)
+    </div>
+  </div>
+
+  <div class="hero-tags">
+    <span class="tag">Open Source</span>
+    <span class="tag">MIT License</span>
+    <span class="tag">Debian / Ubuntu</span>
+    <span class="tag">C++</span>
+    <span class="tag dyn-version-tag">...</span>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- FEATURES -->
+<section>
+  <p class="section-label">Why ZPM</p>
+  <h2 class="section-title">One manager.<br/>All packages.</h2>
+  <p class="section-desc">Instead of remembering the syntax of three different tools — use one unified interface.</p>
+
+  <div class="features-grid">
+    <div class="feature-card">
+      <span class="feature-icon">⚡</span>
+      <h3 class="feature-title">One interface</h3>
+      <p class="feature-desc">APT, Flatpak and Snap managed from a single unified CLI. Simple commands with the <code style="color:var(--green)">z</code> prefix.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🔎</span>
+      <h3 class="feature-title">Fast search</h3>
+      <p class="feature-desc">The <code style="color:var(--green)">zsearch</code> command instantly finds a package without needing to know its exact source.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🛡️</span>
+      <h3 class="feature-title">MIT License</h3>
+      <p class="feature-desc">Fully open-source. Use, modify and distribute ZPM without restrictions.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">📦</span>
+      <h3 class="feature-title">Cache management</h3>
+      <p class="feature-desc">Built-in <code style="color:var(--green)">zclean</code> command for clearing package cache — fast and painless.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🔄</span>
+      <h3 class="feature-title">Auto-update</h3>
+      <p class="feature-desc">Update ZPM and system packages with a single command. Always up to date.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">💻</span>
+      <h3 class="feature-title">Written in C++</h3>
+      <p class="feature-desc">C++ core provides minimal overhead and fast startup. A shell wrapper completes the integration.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">▶️</span>
+      <h3 class="feature-title">Run packages</h3>
+      <p class="feature-desc">The <code style="color:var(--green)">zrun</code> command lets you launch an installed program directly through ZPM — no path hunting.</p>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- COMMANDS -->
+<section id="commands">
+  <p class="section-label">Commands</p>
+  <h2 class="section-title">Everything you need.</h2>
+  <p class="section-desc">Click a command to view its source code from GitHub.</p>
+
+  <div class="commands-grid" id="commands-grid">
+    <div class="cmd-card" onclick="openCmdCode(this,'zinst.cpp')">
+      <div class="cmd-name">zinst <span class="cmd-src-hint">{ }</span></div>
+      <div class="cmd-desc">Install a package from a chosen source (APT / Flatpak / Snap)</div>
+    </div>
+    <div class="cmd-card" onclick="openCmdCode(this,'zrm.cpp')">
+      <div class="cmd-name">zrm <span class="cmd-src-hint">{ }</span></div>
+      <div class="cmd-desc">Remove an installed package</div>
+    </div>
+    <div class="cmd-card" onclick="openCmdCode(this,'zsearch.cpp')">
+      <div class="cmd-name">zsearch <span class="cmd-src-hint">{ }</span></div>
+      <div class="cmd-desc">Search for a package by name or keyword</div>
+    </div>
+    <div class="cmd-card" onclick="openCmdCode(this,'zinfo.cpp')">
+      <div class="cmd-name">zinfo <span class="cmd-src-hint">{ }</span></div>
+      <div class="cmd-desc">Show detailed info about a package</div>
+    </div>
+    <div class="cmd-card" onclick="openCmdCode(this,'zlist.cpp')">
+      <div class="cmd-name">zlist <span class="cmd-src-hint">{ }</span></div>
+      <div class="cmd-desc">List all installed packages</div>
+    </div>
+    <div class="cmd-card" onclick="openCmdCode(this,'zupd.cpp')">
+      <div class="cmd-name">zupd <span class="cmd-src-hint">{ }</span></div>
+      <div class="cmd-desc">Update system packages</div>
+    </div>
+    <div class="cmd-card" onclick="openCmdCode(this,'zupgr.cpp')">
+      <div class="cmd-name">zupgr <span class="cmd-src-hint">{ }</span></div>
+      <div class="cmd-desc">Upgrade ZPM itself to the latest version</div>
+    </div>
+    <div class="cmd-card" onclick="openCmdCode(this,'zclean.cpp')">
+      <div class="cmd-name">zclean <span class="cmd-src-hint">{ }</span></div>
+      <div class="cmd-desc">Clear the package cache</div>
+    </div>
+    <div class="cmd-card" onclick="openCmdCode(this,'zhelp.cpp')">
+      <div class="cmd-name">zhelp <span class="cmd-src-hint">{ }</span></div>
+      <div class="cmd-desc">Display the full help guide</div>
+    </div>
+    <div class="cmd-card" onclick="openCmdCode(this,'zr.cpp')">
+      <div class="cmd-name">zr <span class="cmd-src-hint">{ }</span></div>
+      <div class="cmd-desc">Restart the system</div>
+    </div>
+    <div class="cmd-card" onclick="openCmdCode(this,'zs.cpp')">
+      <div class="cmd-name">zs <span class="cmd-src-hint">{ }</span></div>
+      <div class="cmd-desc">Shut down the system</div>
+    </div>
+    <div class="cmd-card" onclick="openCmdCode(this,'zuninstall.cpp')">
+      <div class="cmd-name">zuninstall <span class="cmd-src-hint">{ }</span></div>
+      <div class="cmd-desc">Uninstall ZPM from the system</div>
+    </div>
+    <div class="cmd-card" onclick="openCmdCode(this,'zrun.cpp')">
+      <div class="cmd-name">zrun <span class="cmd-src-hint">{ }</span></div>
+      <div class="cmd-desc">Run an installed package or program via ZPM</div>
+    </div>
+  </div>
+
+  <!-- inline code drawer -->
+  <div class="cmd-drawer" id="cmd-drawer">
+    <div class="cmd-drawer-bar">
+      <div class="cmd-drawer-title">
+        <span class="cmd-drawer-dot"></span>
+        <span id="cmd-drawer-name">—</span>
+      </div>
+      <div class="cmd-drawer-actions">
+        <a id="cmd-drawer-gh" href="#" target="_blank" class="cmd-drawer-link">View on GitHub ↗</a>
+        <button class="cmd-drawer-close" onclick="closeCmdCode()">✕</button>
+      </div>
+    </div>
+    <div class="src-code" id="cmd-drawer-code">
+      <div class="src-loading">Loading...</div>
+    </div>
+  </div>
+
+  <p style="margin-top:20px;font-size:0.75rem;color:var(--text-muted);">
+    You can also use: <code style="color:var(--text-dim)">zpm --help</code> or <code style="color:var(--text-dim)">ZPM --help</code> for the unified interface.
+  </p>
+</section>
+
+<div class="divider"></div>
+
+<!-- UPDATE / UNINSTALL -->
+<section>
+  <p class="section-label">ZPM Management</p>
+  <h2 class="section-title">Update.<br/>Uninstall.</h2>
+
+  <div class="two-col">
+    <div class="cmd-block">
+      <p class="cmd-block-label">Update ZPM</p>
+      <div class="cmd-block-cmd">
+        <span>sudo zupgr</span>
+        <button class="cmd-block-copy" onclick="copyText('sudo zupgr', this)" title="Copy">⎘</button>
+      </div>
+    </div>
+    <div class="cmd-block">
+      <p class="cmd-block-label">Uninstall ZPM</p>
+      <div class="cmd-block-cmd">
+        <span>sudo zuninstall</span>
+        <button class="cmd-block-copy" onclick="copyText('sudo zuninstall', this)" title="Copy">⎘</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- INFO -->
+<section id="info">
+  <p class="section-label">Specifications</p>
+  <h2 class="section-title">Technical details.</h2>
+
+  <div class="info-grid">
+    <div class="info-item">
+      <p class="info-label">Supported systems</p>
+      <p class="info-value">Debian / Ubuntu (APT)</p>
+    </div>
+    <div class="info-item">
+      <p class="info-label">Version</p>
+      <p class="info-value dyn-version">...</p>
+    </div>
+    <div class="info-item">
+      <p class="info-label">Install path</p>
+      <p class="info-value">/opt/ZPM</p>
+    </div>
+    <div class="info-item">
+      <p class="info-label">Command location</p>
+      <p class="info-value">/usr/bin/z* (symlinks)</p>
+    </div>
+    <div class="info-item">
+      <p class="info-label">License</p>
+      <p class="info-value">MIT</p>
+    </div>
+    <div class="info-item">
+      <p class="info-label">Language</p>
+      <p class="info-value">C++ (96%) + Shell (4%)</p>
+    </div>
+    <div class="info-item">
+      <p class="info-label">Dependencies</p>
+      <p class="info-value">git · curl · wget · sudo · python3</p>
+    </div>
+    <div class="info-item">
+      <p class="info-label">Repository</p>
+      <p class="info-value"><a href="https://github.com/Ignacyyy/ZPM" target="_blank" style="color:var(--green-dim);text-decoration:none;">github.com/Ignacyyy/ZPM</a></p>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-left">
+    <p class="logo">ZPM</p>
+    <p>Zielina Package Manager · MIT License · <span class="dyn-version">...</span></p>
+  </div>
+  <div class="footer-right">
+    <a href="https://github.com/Ignacyyy/ZPM" target="_blank">GitHub</a>
+    <a href="https://github.com/Ignacyyy/ZPM/releases" target="_blank">Releases</a>
+    <a href="https://github.com/Ignacyyy/ZPM/blob/main%2C-APT(debian%2Cubuntu.)/LICENSE" target="_blank">License</a>
+  </div>
+</footer>
+
+<script>
+  function copyInstall() {
+    const cmd = 'sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Ignacyyy/ZPM/main/INETINSTALL.sh)"';
+    navigator.clipboard.writeText(cmd).then(() => {
+      const btn = document.getElementById('copy-btn');
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'Copy';
+        btn.classList.remove('copied');
+      }, 2000);
+    });
+  }
+
+  // ── VERSION from VERSION.txt ─────────────────────────────────────
+  async function loadVersion() {
+    try {
+      const res = await fetch('https://raw.githubusercontent.com/Ignacyyy/ZPM/main/VERSION.txt');
+      if (!res.ok) throw new Error();
+      const ver = (await res.text()).trim();
+      const label = 'v' + ver;
+      document.getElementById('nav-version').textContent = label;
+      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = label + ' (stable)');
+      document.querySelectorAll('.dyn-version-tag').forEach(el => el.textContent = label + ' Stable');
+    } catch {
+      // fallback — leave placeholders as-is or fill static
+      const fallback = 'v1.6';
+      document.getElementById('nav-version').textContent = fallback;
+      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = fallback + ' (stable)');
+      document.querySelectorAll('.dyn-version-tag').forEach(el => el.textContent = fallback + ' Stable');
+    }
+  }
+  loadVersion();
+
+  function copyText(text, btn) {
+    navigator.clipboard.writeText(text).then(() => {
+      const original = btn.textContent;
+      btn.textContent = '✓';
+      btn.style.color = 'var(--green)';
+      setTimeout(() => {
+        btn.textContent = original;
+        btn.style.color = '';
+      }, 1800);
+    });
+  }
+
+  // ── INLINE CODE DRAWER ───────────────────────────────────────────
+  const RAW_BASE = 'https://raw.githubusercontent.com/Ignacyyy/ZPM/main/src/';
+  const GH_BASE  = 'https://github.com/Ignacyyy/ZPM/blob/main/src/';
+
+  let activeCard = null;
+  let fileCache  = {};
+
+  async function openCmdCode(card, filename) {
+    const drawer   = document.getElementById('cmd-drawer');
+    const nameEl   = document.getElementById('cmd-drawer-name');
+    const ghEl     = document.getElementById('cmd-drawer-gh');
+    const codeEl   = document.getElementById('cmd-drawer-code');
+
+    // toggle off if same card clicked again
+    if (activeCard === card && drawer.classList.contains('open')) {
+      closeCmdCode();
+      return;
+    }
+
+    // deactivate previous
+    if (activeCard) activeCard.classList.remove('active');
+    activeCard = card;
+    card.classList.add('active');
+
+    nameEl.textContent = filename;
+    ghEl.href = GH_BASE + filename;
+
+    // move drawer after the card's row in the grid
+    const grid = document.getElementById('commands-grid');
+    grid.after(drawer);
+
+    drawer.classList.add('open');
+    codeEl.innerHTML = '<div class="src-loading">Fetching ' + filename + '...</div>';
+
+    if (fileCache[filename]) {
+      renderCode(codeEl, fileCache[filename], filename);
+      drawer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      return;
+    }
+
+    try {
+      const res  = await fetch(RAW_BASE + filename);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const text = await res.text();
+      fileCache[filename] = text;
+      renderCode(codeEl, text, filename);
+    } catch(e) {
+      codeEl.innerHTML = `<div class="src-error">
+        File <b>${filename}</b> not found in the repo.<br>
+        <a href="${GH_BASE + filename}" target="_blank">View on GitHub ↗</a>
+      </div>`;
+    }
+
+    drawer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function closeCmdCode() {
+    const drawer = document.getElementById('cmd-drawer');
+    drawer.classList.remove('open');
+    if (activeCard) { activeCard.classList.remove('active'); activeCard = null; }
+  }
+
+  function renderCode(el, raw, name) {
+    const ext  = name.split('.').pop();
+    const html = ext === 'cpp' || ext === 'h' ? highlightCpp(raw) : escHtml(raw);
+    el.innerHTML = `<pre>${html}</pre>`;
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function highlightCpp(code) {
+    return code.split('\n').map(line => {
+      let l = escHtml(line);
+      const ciIdx = l.indexOf('//');
+      if (ciIdx !== -1) {
+        return applyInline(l.slice(0, ciIdx)) + `<span class="cmt">${l.slice(ciIdx)}</span>`;
+      }
+      return applyInline(l);
+    }).join('\n');
+  }
+
+  function applyInline(l) {
+    l = l.replace(/^(\s*)(#\w+)/g, '$1<span class="pp">$2</span>');
+    l = l.replace(/"([^"]*)"/g, '<span class="str">"$1"</span>');
+    const kws = /\b(int|void|bool|char|auto|const|return|if|else|while|for|do|switch|case|break|continue|struct|class|namespace|using|include|new|delete|nullptr|true|false|string|vector|map|cout|cin|endl|std|uint8_t|uint16_t|uint32_t|size_t)\b/g;
+    l = l.replace(kws, '<span class="kw">$1</span>');
+    l = l.replace(/\b([a-zA-Z_]\w*)\s*(?=\()/g, '<span class="fn">$1</span>');
+    l = l.replace(/\b(\d+)\b/g, '<span class="num">$1</span>');
+    return l;
+  }
+
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.style.opacity = '1';
+        e.target.style.transform = 'translateY(0)';
+      }
+    });
+  }, { threshold: 0.1 });
+
+  document.querySelectorAll('.cmd-card, .feature-card, .info-item, .cmd-block').forEach(el => {
+    el.style.opacity = '0';
+    el.style.transform = 'translateY(16px)';
+    el.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+    observer.observe(el);
+  });
+</script>
+
+</body>
+</html>
