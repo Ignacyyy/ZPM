@@ -65,7 +65,7 @@ sudo zuninstall
 
 | Property          | Value                          |
 |-------------------|--------------------------------|
-| Version           | 1.8                            |
+| Version           | 1.9                            |
 | Supported distros | Debian / Ubuntu (APT)          |
 | Installation path | `/opt/ZPM`                     |
 | Commands location | `/usr/bin/z*` (symbolic links) |
