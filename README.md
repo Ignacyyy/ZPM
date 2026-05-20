@@ -9,7 +9,7 @@
 ### Option 1 — Install from the internet (recommended)
 
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Ignacyyy/ZPM/main/INETINSTALL.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Zielina-Konrad-productions/ZPM/main/INETINSTALL.sh)"
 ```
 
 ### Option 2 — Manual install
