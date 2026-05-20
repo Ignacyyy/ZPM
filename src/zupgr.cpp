@@ -26,7 +26,7 @@ string get_latest_version() {
 
     string cmd =
         "curl -fsSL -H 'User-Agent: ZPM' "
-        "https://api.github.com/repos/Ignacyyy/ZPM/releases/latest"
+        "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases/latest"
         " | grep '\"tag_name\"' | head -1"
         " | sed 's/.*\"v\\([0-9.]*\\)\".*/\\1/'";
 
@@ -43,7 +43,7 @@ string get_latest_prerelease_version() {
 
     string cmd =
         "curl -fsSL -H 'User-Agent: ZPM' "
-        "https://api.github.com/repos/Ignacyyy/ZPM/releases"
+        "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases"
         " | python3 -c \""
         "import sys, json; "
         "releases = json.load(sys.stdin); "
