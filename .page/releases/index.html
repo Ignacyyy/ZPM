@@ -232,7 +232,7 @@
       var date = new Date(r.published_at).toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: 'numeric' });
       var badge = r.prerelease
         ? '<span class="release-badge badge-pre"><span class="badge-dot-sm"></span>Pre-release</span>'
-        : '<span class="release-badge badge-stable"><span class="badge-dot-sm"></span>Stable</span>';
+        : '<span class="release-badge badge-stable"><span class="badge-dot-sm"></span>Release</span>';
       var assets = r.assets && r.assets.length > 0
         ? r.assets.map(function(a) {
             return '<a class="asset-link" href="' + a.browser_download_url + '" download><span class="asset-icon">' + getIcon(a.name) + '</span><span>' + escHtml(a.name) + '</span><span class="asset-size">' + formatSize(a.size) + '</span></a>';
