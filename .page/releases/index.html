@@ -138,7 +138,7 @@
 <div class="page">
   <p class="page-label">ZPM Downloads</p>
   <h1 class="page-title">Releases.<br/><span class="accent">Download.</span></h1>
-  <p class="page-desc">All versions of Zielina Package Manager. Stable releases are tested and production-ready. Pre-releases may contain experimental features.</p>
+  <p class="page-desc">All versions of Zielina Package Manager. This is hobby project and may contain bugs. Pre-releases contain experimental features.</p>
 
   <div class="toggle-wrap">
     <div class="toggle-tabs">
@@ -182,10 +182,10 @@
       const ver = (await res.text()).trim();
       const label = 'v' + ver;
       document.getElementById('nav-version').textContent = label;
-      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = label + ' (stable)');
+      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = label);
     } catch {
       document.getElementById('nav-version').textContent = 'v1.6';
-      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = 'v1.6 (stable)');
+      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = 'v1.6');
     }
   }
 
