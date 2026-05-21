@@ -906,7 +906,7 @@
 <div class="hero">
   <div class="hero-badge">
     <span class="badge-dot"></span>
-    Stable <span class="dyn-version">...</span> — May 2026
+     <span class="dyn-version">...</span> — May 2026
   </div>
 
   <pre class="hero-ascii">
@@ -1189,14 +1189,14 @@
       const ver = (await res.text()).trim();
       const label = 'v' + ver;
       document.getElementById('nav-version').textContent = label;
-      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = label + ' (stable)');
-      document.querySelectorAll('.dyn-version-tag').forEach(el => el.textContent = label + ' Stable');
+      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = label );
+      document.querySelectorAll('.dyn-version-tag').forEach(el => el.textContent = label );
     } catch {
       // fallback — leave placeholders as-is or fill static
       const fallback = 'v1.6';
       document.getElementById('nav-version').textContent = fallback;
-      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = fallback + ' (stable)');
-      document.querySelectorAll('.dyn-version-tag').forEach(el => el.textContent = fallback + ' Stable');
+      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = fallback );
+      document.querySelectorAll('.dyn-version-tag').forEach(el => el.textContent = fallback );
     }
   }
   loadVersion();
