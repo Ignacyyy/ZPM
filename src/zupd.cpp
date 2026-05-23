@@ -2,62 +2,418 @@
 
 using namespace std;
 
-//zmienne globalne-------------------------------------------------------------
-bool hasflatpak = (system("command -v flatpak >/dev/null 2>&1") == 0);
-bool hassnap = (system("command -v snap >/dev/null 2>&1") == 0);
-bool reboot = false;
-bool shutdown = false;
-bool help = false;
-bool version = false;
-bool yes = false;
-bool fullupdate = false;
+const string LOG_PATH = "/tmp/zupd.log";
 string ans;
 
-//koniec zmiennych globalnych----------------------------------------------------
+struct StageStatus {
+    bool ok = false;
+    int exitCode = -1;
+    string details;
+};
 
+struct AptRunResult {
+    bool ok = false;
+    int exitCode = -1;
+    bool sawStructuredProgress = false;
+    string lastTask = "Working...";
+};
 
-//funckcje pomocnicze------------------------------------------------------------
+struct StageRange {
+    float start = 0.0f;
+    float end = 0.0f;
+};
 
-// Nowa funkcja, która przechwytuje tekst wyjściowy z komend terminala
-string execCommand(const char* cmd) {
-    array<char, 128> buffer;
-    string result;
-    
-    FILE* pipe = popen(cmd, "r");
+volatile sig_atomic_t g_interrupted = 0;
+bool g_cancelledByUser = false;
+
+static string trimForTask(const string& line, size_t maxLen = 44);
+
+void handleSigint(int) {
+    g_interrupted = 1;
+}
+
+bool wasInterruptedBySigint(int status) {
+    if (status == 130) return true;
+    if (WIFSIGNALED(status) && WTERMSIG(status) == SIGINT) return true;
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 130) return true;
+    return false;
+}
+
+void drawGlobalBar(float totalProgress, string task) {
+    struct winsize w;
+    int termWidth = 80;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
+        termWidth = w.ws_col;
+
+    const int barWidth = max(10, min(40, termWidth / 3));
+    const int visualPrefixLen = 27 + barWidth;
+    const int taskMaxLen = max(1, termWidth - visualPrefixLen);
+
+    string taskTrimmed = task;
+    taskTrimmed.erase(remove(taskTrimmed.begin(), taskTrimmed.end(), '\n'), taskTrimmed.end());
+    if ((int)taskTrimmed.size() > taskMaxLen)
+        taskTrimmed = taskTrimmed.substr(0, taskMaxLen - 1) + "~";
+
+    int pos = barWidth * (totalProgress / 100.0);
+    int percent = max(0, min(100, (int)totalProgress));
+
+    cout << "\r\033[K" << YELLOW << "Update Progress: [" << RESET;
+    for (int i = 0; i < barWidth; ++i) {
+        if (i < pos) cout << GREEN << "#" << RESET;
+        else cout << " ";
+    }
+    cout << YELLOW << "] " << setw(3) << percent << "% " << RESET << "| " << taskTrimmed << "\033[K" << flush;
+}
+
+int countCommandLines(const string& cmd) {
+    FILE* pipe = popen((cmd + " 2>/dev/null").c_str(), "r");
+    if (!pipe) return 0;
+    int count = 0;
+    char buffer[512];
+    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+        string line = buffer;
+        if (!trimForTask(line).empty()) count++;
+    }
+    pclose(pipe);
+    return count;
+}
+
+vector<string> collectCommandLines(const string& cmd) {
+    vector<string> lines;
+    FILE* pipe = popen((cmd + " 2>/dev/null").c_str(), "r");
+    if (!pipe) return lines;
+    char buffer[512];
+    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+        string line = trimForTask(buffer);
+        if (!line.empty()) lines.push_back(line);
+    }
+    pclose(pipe);
+    return lines;
+}
+
+vector<StageRange> buildStageRanges(bool hasFlatpak, bool hasSnap, int aptCount, int flatpakCount, int snapCount) {
+    const float globalStart = 1.0f;
+    const float globalEnd = 98.0f;
+    const float refreshWeight = 8.0f;
+    const float aptWeight = max(24.0f, static_cast<float>(aptCount) * 6.0f);
+    const float flatpakWeight = hasFlatpak ? max(8.0f, static_cast<float>(flatpakCount) * 4.0f) : 0.0f;
+    const float snapWeight = hasSnap ? max(8.0f, static_cast<float>(snapCount) * 4.0f) : 0.0f;
+    const float totalWeight = refreshWeight + aptWeight + flatpakWeight + snapWeight;
+
+    float cursor = globalStart;
+    vector<StageRange> ranges(4);
+    auto advance = [&](float weight) {
+        float span = (weight / totalWeight) * (globalEnd - globalStart);
+        StageRange r{cursor, cursor + span};
+        cursor += span;
+        return r;
+    };
+
+    ranges[0] = advance(refreshWeight);          // refresh
+    ranges[1] = advance(aptWeight);              // apt
+    ranges[2] = hasFlatpak ? advance(flatpakWeight) : StageRange{ranges[1].end, ranges[1].end};
+    ranges[3] = hasSnap ? advance(snapWeight) : StageRange{ranges[2].end, ranges[2].end};
+    return ranges;
+}
+
+bool runCommandWithEstimatedProgress(const string& cmd, float startRange, float endRange, const string& stageLabel,
+                                     StageStatus& stage, int expectedItems) {
+    FILE* pipe = popen((cmd + " 2>&1").c_str(), "r");
     if (!pipe) {
-        return "";
+        stage.ok = false;
+        stage.details = "Unable to start command: " + stageLabel;
+        return false;
     }
-    
-    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-        result += buffer.data();
+
+    char buffer[512];
+    int steps = 0;
+    int stepGoal = max(1, expectedItems * 2);
+    float lastProgress = startRange;
+    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+        if (g_interrupted) {
+            stage.ok = false;
+            stage.exitCode = 130;
+            stage.details = stageLabel + " interrupted by user.";
+            pclose(pipe);
+            return false;
+        }
+
+        string line = buffer;
+        ofstream log(LOG_PATH, ios::app);
+        log << line;
+
+        string t = trimForTask(line);
+        bool meaningful = (t.find("error") != string::npos || t.find("Error") != string::npos ||
+                           t.find("Updating") != string::npos || t.find("Installing") != string::npos ||
+                           t.find("refresh") != string::npos || t.find("available") != string::npos ||
+                           t.find("updating") != string::npos || t.find("done") != string::npos);
+        if (!meaningful && !t.empty()) {
+            // Still move slowly for unrecognized but real output.
+            meaningful = true;
+        }
+        if (meaningful) {
+            steps++;
+            float ratio = min(0.97f, static_cast<float>(steps) / static_cast<float>(stepGoal));
+            float gp = startRange + ratio * (endRange - startRange);
+            if (gp < lastProgress) gp = lastProgress;
+            lastProgress = gp;
+            drawGlobalBar(gp, stageLabel + ": " + t);
+        }
     }
-    
-    pclose(pipe); // Klasyczne, bezpieczne zamknięcie strumienia
+
+    int rc = pclose(pipe);
+    stage.exitCode = rc;
+    stage.ok = (rc == 0);
+    stage.details = stage.ok ? (stageLabel + " completed.") : (stageLabel + " failed.");
+    if (stage.ok) drawGlobalBar(endRange, stageLabel + " done.");
+    return stage.ok;
+}
+
+static vector<string> splitByColon(const string& line) {
+    vector<string> parts;
+    string part;
+    stringstream ss(line);
+    while (getline(ss, part, ':')) {
+        parts.push_back(part);
+    }
+    return parts;
+}
+
+static bool parsePmStatus(const string& line, float& aptPercent, string& pkgMsg) {
+    if (line.rfind("pmstatus:", 0) != 0) return false;
+    vector<string> parts = splitByColon(line);
+    if (parts.size() < 4) return false;
+    try {
+        aptPercent = stof(parts[2]);
+        if (aptPercent < 0.0f) aptPercent = 0.0f;
+        if (aptPercent > 100.0f) aptPercent = 100.0f;
+    } catch (...) {
+        return false;
+    }
+    pkgMsg = parts[3];
+    for (size_t i = 4; i < parts.size(); ++i) pkgMsg += ":" + parts[i];
+    pkgMsg.erase(remove(pkgMsg.begin(), pkgMsg.end(), '\n'), pkgMsg.end());
+    if (pkgMsg.empty()) pkgMsg = "Applying packages...";
+    return true;
+}
+
+static float fallbackAptProgressByMessage(const string& line) {
+    if (line.find("Unpacking") != string::npos) return 45.0f;
+    if (line.find("Setting up") != string::npos) return 75.0f;
+    if (line.find("Processing triggers for") != string::npos) return 92.0f;
+    if (line.find("Reading package lists") != string::npos) return 12.0f;
+    if (line.find("Building dependency tree") != string::npos) return 22.0f;
+    if (line.find("Calculating upgrade") != string::npos) return 30.0f;
+    return -1.0f;
+}
+
+static string trimForTask(const string& line, size_t maxLen) {
+    string out = line;
+    out.erase(remove(out.begin(), out.end(), '\n'), out.end());
+    if (out.size() > maxLen) out = out.substr(0, maxLen);
+    if (out.empty()) out = "Working...";
+    return out;
+}
+
+AptRunResult executeAptWithGlobalProgress(const string& aptCmd, float startRange, float endRange) {
+    string cmd = "export DEBIAN_FRONTEND=noninteractive; apt-get " + aptCmd + " -y -o APT::Status-Fd=1 -o APT::Cmd::Show-Update-Stats=0 -o APT::Update::Post-Invoke-Success=\"\" 2>&1";
+
+    AptRunResult result;
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        result.lastTask = "Unable to start APT process.";
+        return result;
+    }
+
+    char buffer[512];
+    float lastGlobal = startRange;
+    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+        if (g_interrupted) {
+            result.exitCode = 130;
+            result.ok = false;
+            result.lastTask = "Interrupted by user.";
+            pclose(pipe);
+            return result;
+        }
+
+        string line = buffer;
+        ofstream log(LOG_PATH, ios::app);
+        log << line;
+
+        float aptPercent = 0.0f;
+        string pkgMsg;
+        if (parsePmStatus(line, aptPercent, pkgMsg)) {
+            result.sawStructuredProgress = true;
+            result.lastTask = trimForTask(pkgMsg);
+            float globalPercent = startRange + (aptPercent / 100.0f) * (endRange - startRange);
+            if (globalPercent < lastGlobal) globalPercent = lastGlobal;
+            lastGlobal = globalPercent;
+            drawGlobalBar(globalPercent, result.lastTask);
+            continue;
+        }
+
+        float fallbackStage = fallbackAptProgressByMessage(line);
+        if (fallbackStage >= 0.0f) {
+            float globalPercent = startRange + (fallbackStage / 100.0f) * (endRange - startRange);
+            if (globalPercent < lastGlobal) globalPercent = lastGlobal;
+            lastGlobal = globalPercent;
+            result.lastTask = trimForTask(line);
+            drawGlobalBar(globalPercent, result.lastTask);
+        }
+    }
+    int rc = pclose(pipe);
+    result.exitCode = rc;
+    result.ok = (rc == 0);
     return result;
 }
 
-//wiadomosc pomocy
-void helpmessage(const char* progName) {
-    cout << RED << "Usage: " << RESET << progName << " [options]" << " or zpm upd/update [options]"  "\n\n";
-    cout << RED << "Options:" << RESET << endl;
-    cout << "  --full. -f     Perform a full system upgrade (dist-upgrade)" << endl;
-    cout << "  -r        Reboot the system after update" << endl;
-    cout << "  -s        Shutdown the system after update" << endl;
-    cout << "  --yes, -y    Automatic system update" << endl;
-    cout << "  --help, -h    Show this help message" << endl;
-    cout << "  --version, -v    Show version information" << endl;
+bool runDryRunPreview(const string& mode, float startRange, float endRange, StageStatus& stage) {
+    string cmd = "apt-get -s " + mode + " 2>&1";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        stage.ok = false;
+        stage.details = "Unable to start apt-get -s.";
+        return false;
+    }
+
+    vector<string> instLines;
+    char buffer[512];
+    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+        if (g_interrupted) {
+            stage.ok = false;
+            stage.exitCode = 130;
+            stage.details = "Dry-run interrupted by user.";
+            pclose(pipe);
+            return false;
+        }
+
+        string line = buffer;
+        ofstream log(LOG_PATH, ios::app);
+        log << line;
+        if (line.rfind("Inst ", 0) == 0) {
+            instLines.push_back(trimForTask(line));
+        }
+    }
+
+    int rc = pclose(pipe);
+    stage.exitCode = rc;
+    if (rc != 0) {
+        stage.ok = false;
+        stage.details = "apt-get -s failed.";
+        return false;
+    }
+
+    if (instLines.empty()) {
+        drawGlobalBar(endRange, "Dry-run complete: no packages to upgrade.");
+    } else {
+        for (size_t i = 0; i < instLines.size(); ++i) {
+            float ratio = static_cast<float>(i + 1) / static_cast<float>(instLines.size());
+            float globalPercent = startRange + ratio * (endRange - startRange);
+            drawGlobalBar(globalPercent, "DRY-RUN " + instLines[i]);
+            usleep(60000);
+        }
+    }
+    stage.ok = true;
+    stage.details = "Dry-run simulation finished.";
+    return true;
 }
 
-//wiadomosc wersji
-void versionmessage() {
-    cout << RED << "zupd component version: " << zpm_version::version() << " of ZPM\n" << RESET;
-    cout << "https://github.com/Zielina-Konrad-productions/ZPM" << endl;
-    cout << "Copyright (c) 2026 Ignacyyy & Ry3ball " << endl;
-    cout << "License: MIT" << endl;
+bool runMockDryRunPreview(float startRange, float endRange, StageStatus& stage) {
+    vector<string> mockPkgs = {
+        "Inst zpm-core [1.8.2] (1.9.0 Debian:stable [amd64])",
+        "Inst zpm-ui [0.14.7] (0.15.1 Debian:stable [amd64])",
+        "Inst apt-wrapper [2.3.0] (2.3.2 Debian:stable [amd64])",
+        "Inst zpm-notifier [1.1.9] (1.2.0 Debian:stable [amd64])",
+        "Inst zpm-plugins [3.0.4] (3.1.0 Debian:stable [amd64])"
+    };
+
+    for (size_t i = 0; i < mockPkgs.size(); ++i) {
+        if (g_interrupted) {
+            stage.ok = false;
+            stage.exitCode = 130;
+            stage.details = "Dry-run interrupted by user.";
+            return false;
+        }
+
+        float ratio = static_cast<float>(i + 1) / static_cast<float>(mockPkgs.size());
+        float globalPercent = startRange + ratio * (endRange - startRange);
+        drawGlobalBar(globalPercent, "DRY-RUN " + trimForTask(mockPkgs[i]));
+        ofstream log(LOG_PATH, ios::app);
+        log << mockPkgs[i] << "\n";
+        usleep(110000);
+    }
+    stage.ok = true;
+    stage.exitCode = 0;
+    stage.details = "Mock dry-run simulation finished.";
+    return true;
 }
 
-//wiadomosc system i repo
-void repo() {
+int main(int argc, char* argv[]) {
+    signal(SIGINT, handleSigint);
+    zpm_update::checkForUpdates();
+    bool Reboot = false, FullUpdate = false, Shutdown = false, updateSuccessful = false; bool version = false; bool y = false;
+    bool Help = false, DryRun = false;
+    for (int i = 1; i < argc; i++) {
+        string arg = argv[i];
+        if (arg == "-full") FullUpdate = true;
+        else if (arg == "-r") Reboot = true;
+        else if (arg == "-s") Shutdown = true;
+        else if (arg == "--help" || arg == "-h") Help = true;
+        else if (arg == "--dry-run") DryRun = true; // hidden developer option
+        else if (arg == "--version" || arg == "-v") version = true;
+        else if (arg == "--yes" || arg == "-y") y = true;
+    }
+
+    if (Reboot && Shutdown || Help && Reboot || Help && Shutdown || version && y || Help && y || version && Reboot || version && Shutdown || FullUpdate && version || FullUpdate && Help) {
+        cout << RED << "Error: -r and -s are mutually exclusive. " << endl; cout<< "--help and --version cannot be combined with other options." << RESET << endl;
+        return 0;
+    }
+
+    if (version && Help){
+        cout << YELLOW <<"--version" << RESET << endl;
+        cout << RED << "zupd component version: " << zpm_version::version() << " of ZPM\n" << RESET;
+        cout << "https://github.com/Ignacyyy/ZPM" << endl;
+        cout << "Copyright (c) 2026 Ignacyyy" << endl;
+        cout << "License: MIT" << endl;
+        cout << "" << endl;
+        cout << YELLOW << "--help" << RESET << endl;
+        cout << RED << "Usage: " << RESET << argv[0] << " [options]" << " or zpm upd/update [options]"  "\n\n";
+        cout << RED << "Options:" << RESET << endl;
+        cout << "  -full     Perform a full system upgrade (dist-upgrade)" << endl;
+        cout << "  -r        Reboot the system after update" << endl;
+        cout << "  -s        Shutdown the system after update" << endl;
+        cout << "  --yes, -y    Automatic system update" << endl;
+        cout << "  --help, -h    Show this help message" << endl;
+        cout << "  --version, -v    Show version information" << endl;
+        return 0;
+    }
+
+
+    if (version) {
+        cout << RED << "zupd component version: " << zpm_version::version() << " of ZPM\n" << RESET;
+        cout << "https://github.com/Ignacyyy/ZPM" << endl;
+        cout << "Copyright (c) 2026 Ignacyyy" << endl;
+        cout << "License: MIT" << endl;
+        return 0;
+    }
+
+    if (Help) {
+        cout << RED << "Usage: " << RESET << argv[0] << " [options]" << " or zpm upd/update [options]"  "\n\n";
+        cout << RED << "Options:" << RESET << endl;
+        cout << "  -full     Perform a full system upgrade (dist-upgrade)" << endl;
+        cout << "  -r        Reboot the system after update" << endl;
+        cout << "  -s        Shutdown the system after update" << endl;
+        cout << "  --yes, -y    automatic system update" << endl;
+        cout << "  --help, -h    Show this help message" << endl;
+        cout << "  --version, -v    Show version information" << endl;
+        return 0;
+    }
+
+    if (geteuid() != 0) {
+        cout << RED << "Run with sudo!\n" << RESET;
+        return 1;
+    }
+
     cout << YELLOW << "[SYS] " << RESET << flush;
     system("lsb_release -ds 2>/dev/null || cat /etc/debian_version");
 
@@ -69,253 +425,353 @@ void repo() {
     "  | sed 's/^URIs:[[:space:]]*/deb /'; "
     "} | sort -u | grep -v '^[[:space:]]*$'"
     "  | sed 's|^|" + YELLOW + "- " + RESET + "|'";
-    system(repoCmd.c_str());
-    
-    {
-        string checkCmd =
-            "{ grep -rh '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; "
-            "grep -rh '^URIs:' /etc/apt/sources.list.d/ 2>/dev/null; }"
-            " | grep -qv '^[[:space:]]*$'";
-        if (system(checkCmd.c_str()) != 0)
-            cout << YELLOW << "- (no repos found in standard locations)" << RESET << "\n";
-    }
+system(repoCmd.c_str());
+{
+    string checkCmd =
+        "{ grep -rh '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; "
+        "grep -rh '^URIs:' /etc/apt/sources.list.d/ 2>/dev/null; }"
+        " | grep -qv '^[[:space:]]*$'";
+    if (system(checkCmd.c_str()) != 0)
+        cout << YELLOW << "- (no repos found in standard locations)" << RESET << "\n";
+}
 
-    if (hasflatpak) {
+    bool hasFlatpak = (system("command -v flatpak >/dev/null 2>&1") == 0);
+    bool hasSnap = (system("command -v snap >/dev/null 2>&1") == 0);
+    if (hasFlatpak) {
         cout << "\n" << YELLOW << "[F]" << RESET << GREEN << " Flatpak Remotes:\n" << RESET;
         system("flatpak remotes --columns=name 2>/dev/null | sed 's/^/\033[33m- \033[0m/'");
     }
-    if (hassnap) {
+    if (hasSnap) {
         cout << "\n" << YELLOW << "[S]" << RESET << GREEN << " Snap is available.\n" << RESET;
     }
-}
 
-//czy ma aktualizacje
-bool hasupdates() {
-    bool flatpakupdates = false;
-    bool snapupdates = false;
+    vector<string> aptUpgradable = DryRun ? vector<string>{
+        "zpm-core", "zpm-ui", "apt-wrapper", "zpm-notifier", "zpm-plugins"
+    } : collectCommandLines("apt-get -s upgrade | awk '/^Inst /{print $2}'");
 
-    // Stabilne sprawdzenie APT
-    bool aptupdates = (system("apt-get -s upgrade 2>/dev/null | grep -q '^Inst '") == 0);
-
-    // czy flatpak ma aktualizacje
-    if (hasflatpak)
-        flatpakupdates = system("flatpak remote-ls --updates 2>/dev/null | grep -q .") == 0;
-
-    // czy snap ma aktualizacje
-    if (hassnap)
-        snapupdates = system("snap refresh --list 2>/dev/null | grep -qvE '^(Name|All snaps)'") == 0;
-
-    return aptupdates || flatpakupdates || snapupdates;
-}
-
-//aktualizacja
-void update() {
-    cout << RED << "\nPackages to update (APT):\n" << RESET;
-
-    // Pakiety do aktualizacji APT
-    string aptCmd = "apt-get -s upgrade 2>/dev/null | grep '^Inst ' | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $2}'";
-    system(aptCmd.c_str());
-
-    //pakiety do aktualizacji FLATPAK
-    if (hasflatpak) {
-        cout << RED << "\nPackages to update (Flatpak):\n" << RESET;
-        string flatpakCmd = "flatpak remote-ls --updates --columns=name 2>/dev/null | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $0}'";
-        system(flatpakCmd.c_str());
-    } 
-        
-    //pakiety do aktualizacji SNAP
-    if (hassnap) {
-        cout << RED << "\nPackages to update (Snap):\n" << RESET;
-        string snapCmd = "snap refresh --list 2>/dev/null | grep -vE '^(Name|All snaps)' | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $1}'";
-        system(snapCmd.c_str());
+    vector<string> flatpakUpgradable;
+    if (hasFlatpak) {
+        flatpakUpgradable = DryRun ? vector<string>{
+            "org.mozilla.firefox", "org.videolan.VLC", "com.visualstudio.code"
+        } : collectCommandLines("flatpak remote-ls --updates --columns=application");
     }
-    //autmatyczne aktualizacje
-    if (!yes){
-        cout << "\n" << YELLOW << "Proceed with update?" << RESET << " [y/n]: ";
-        if (!(cin >> ans)) {
-            ans = "x";
-        }
+
+    vector<string> snapUpgradable;
+    if (hasSnap) {
+        snapUpgradable = DryRun ? vector<string>{
+            "firefox", "snap-store", "chromium"
+        } : collectCommandLines("snap refresh --list | sed -n '2,$p' | awk '{print $1}'");
     }
-    //rozpoczecie aktualizacji-----------------------------------------------------
-    if (yes || ans == "y" || ans == "yes") {
-        //zakladamy ze aktualizacja zadziala
-        bool updatedone = true;
 
-        //system ratunkowy, po cichu, dla stabilnosci
-        system("echo -----checking_system_consistency----- >> /tmp/zupd.log");
-        system("dpkg --configure -a >> /tmp/zupd.log 2>&1");
+    int hasUpdates = aptUpgradable.empty() ? 1 : 0;
 
-        //poczatek progress bara
-        progressbar(0.0f,   "0/6 | starting...");
-
-        //odswierzenie repozytoriow
-        progressbar(10.0f,  "1/6 | refreshing repositories...");
-        system("echo -----refreshing_repositories----- >> /tmp/zupd.log");
-        int stanrepo = system("apt-get update >> /tmp/zupd.log 2>&1");
-        if (stanrepo != 0) {
-            updatedone = false;
-        }
-
-        //aktualizacja APT (zwykła lub FULL)
-        int stanapt;
-        if (fullupdate) {
-            progressbar(25.0f,  "2/6 | performing FULL upgrade...");
-            system("echo -----performing_full_APT_upgrade----- >> /tmp/zupd.log");
-            stanapt = system("DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y -o Dpkg::Options::=\"--force-confdef\" -o Dpkg::Options::=\"--force-confold\" >> /tmp/zupd.log 2>&1");
-        } else {
-            progressbar(25.0f,  "2/6 | updating APT...");
-            system("echo -----updating_APT----- >> /tmp/zupd.log");
-            stanapt = system("DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::=\"--force-confdef\" -o Dpkg::Options::=\"--force-confold\" >> /tmp/zupd.log 2>&1");
-        }
-        
-        if (stanapt != 0) {
-            updatedone = false;
-        }
-
-        //aktualizacja flatpak 
-        if (hasflatpak) {
-            progressbar(50.0f,  "3/6 | updating Flatpak...");
-            system("echo ----updating_flatpak---- >> /tmp/zupd.log");
-            int stanflatpak = system("flatpak update -y >> /tmp/zupd.log 2>&1");
-            if (stanflatpak != 0) {
-                updatedone = false;
-            }
-        }
-
-        //aktualizacja snap
-        if (hassnap) {
-            progressbar(75.0f,  "4/6 | updating Snap...");
-            system("echo ----updating_snap---- >> /tmp/zupd.log");
-            int stansnap = system("snap refresh >> /tmp/zupd.log 2>&1");
-            if (stansnap != 0) {
-                updatedone = false;
-            }
-        }
-
-        //sprzątanie po aktualizacji------------------------------------
-        progressbar(90.0f,  "5/6 | cleaning...");
-        system("echo ----cleaning---- >> /tmp/zupd.log");
-        system("apt-get autoremove -y >> /tmp/zupd.log 2>&1");
-        system("apt-get autoclean >> /tmp/zupd.log 2>&1");
-
-        if (hasflatpak) {
-            system("flatpak uninstall --unused -y >> /tmp/zupd.log 2>&1");
-            system("rm -rf /var/tmp/flatpak-cache-* >> /tmp/zupd.log 2>&1");
-        }
-        
-        if (hassnap) {
-            system("snap list --all 2>/dev/null | awk '/disabled/{print $1, $3}' | while read name rev; do snap remove \"$name\" --revision=\"$rev\"; done >> /tmp/zupd.log 2>&1");
-            system("rm -rf /var/lib/snapd/cache/* >> /tmp/zupd.log 2>&1");
-        }
-
-        //koniec aktualizacji i koniec progressbara-------------------------
-        if (updatedone) {
-            progressbar_finish("6/6 | DONE!");
-            cout << YELLOW << "[RAPORT]" << RESET << " /tmp/zupd.log" << endl;
-
-            if (reboot) {
-                cout << YELLOW << "[*] Rebooting system in 3 seconds..." << RESET << endl;
-                system("sleep 3 && reboot");
-            }
-            else if (shutdown) {
-                cout << YELLOW << "[*] Shutting down system in 3 seconds..." << RESET << endl;
-                system("sleep 3 && shutdown -h now");
-            }
-        }
-        else {
-            progressbar_finish("ERROR!"); 
-            cout << RED << "ERROR," << RESET << " check /tmp/zupd.log for details." << endl;
-        }
+    if (hasUpdates != 0 && !FullUpdate && !DryRun) {
+        cout << "\n" << RED << "System is up to date!" << RESET << endl;
     }
     else {
-        cout << YELLOW << "[*] Update cancelled by user." << RESET << endl;
-    }
-}
-//koniec funkcji---------------------------------------------------------------
-
-
-//main--------------------------------------------------------------------------
-int main (int argc, char* argv[]){
-
-    //sprawdzanie aktualizacji komponentu ZPM
-    zpm_update::checkForUpdates();
-
-    //pętla do argumentów--------------------------------------------------------
-    for (int i = 1; i < argc; i++) {
-        string arg = argv[i];
-        if (arg == "--full" || arg == "-f") fullupdate = true;
-        else if (arg == "--reboot" || arg == "-r") reboot = true;
-        else if (arg == "--shutdown" || arg == "-s") shutdown = true;
-        else if (arg == "--help" || arg == "-h") help = true;
-        else if (arg == "--version" || arg == "-v") version = true;
-        else if (arg == "--yes" || arg == "-y") yes = true;
-    }
-    //koniec pętli---------------------------------------------------------------
-
-    //argumenty------------------------------------------------------------------
-
-    //poprawosc argumentow
-
-    if ((reboot && shutdown) || (help && reboot) || (help && shutdown) || (version && yes) || (help && yes) || (version && reboot) || (version && shutdown) || (fullupdate && version) || (fullupdate && help)){
-        cout << RED << "Error: -r and -s are mutually exclusive. " << "--help and --version cannot be combined with other options." << RESET << endl;
-        return 1;
-    }
-
-    //informacje o wersji i wyswietlanie pomocy
-    if (version && help){
-        cout << YELLOW <<"--version" << RESET << endl;
-        versionmessage();
-        cout << "" << endl;
-        cout << YELLOW << "--help" << RESET << endl;
-        helpmessage(argv[0]);
-        return 0;
-    }
-
-    //informacje o wersji
-    if (version){
-        versionmessage();
-        return 0;
-    }
-
-    //wyswieitlanie pomocy
-    if (help){
-        helpmessage(argv[0]);
-        return 0;
-    }
-
-    //sprawdzanie sudo, dopiero teraz, bo wiadomosci help i version
-    if (geteuid() != 0) {
-        cout << RED << "Run with sudo!\n" << RESET;
-        return 1;
-    }
-    //potem bedzie wiecej argumentow narazie koniec----------------------------------
-    
-    //podstawowe ui------------------------------------------------------------------
-
-    //repozytoria i system, flatpak, snap i apt
-    repo();
-    
-    //test
-    system("apt-get update -y > /dev/null 2>&1");
-    
-    // Zapisujemy wynik do zmiennej, żeby nie odpytywać sieci/dysku dwa razy!
-    bool systemHasUpdates = hasupdates();
-
-    //spawdzane czy są dostepne aktualizacje
-    if (systemHasUpdates == false){
-        cout << "\n" << RED << "System is up to date!" << RESET << endl;
-    } 
-    //koniec podstawowego ui----------------------------------------------------------
-
-    //aktualizacja-----------------------------------------------------
-    if(systemHasUpdates){  
-        if(fullupdate){
-            cout << YELLOW << "FULL UPDATE MODE" << RESET << endl;
-            sleep (1);
+        cout << RED << "\nPackages to update (APT):\n" << RESET;
+        for (const string& pkg : aptUpgradable) {
+            cout << YELLOW << "[+] " << RESET << pkg << "\n";
         }
-        update();
+        if (aptUpgradable.empty()) {
+            cout << YELLOW << "[i] No APT packages available for update.\n" << RESET;
+        }
+
+        if (hasFlatpak) {
+            cout << RED << "\nPackages to update (Flatpak):\n" << RESET;
+            if (DryRun) {
+                for (const string& pkg : flatpakUpgradable) {
+                    cout << YELLOW << "[+] " << RESET << pkg << "\n";
+                }
+            } else {
+                for (const string& pkg : flatpakUpgradable) {
+                    cout << YELLOW << "[+] " << RESET << pkg << "\n";
+                }
+            }
+        }
+        if (hasSnap) {
+            cout << RED << "\nPackages to update (Snap):\n" << RESET;
+            for (const string& pkg : snapUpgradable) {
+                cout << YELLOW << "[+] " << RESET << pkg << "\n";
+            }
+            if (snapUpgradable.empty()) {
+                cout << YELLOW << "[i] No Snap packages available for update.\n" << RESET;
+            }
+        }
+        if (y)
+        {
+            cout << "\n";
+            cout << "\n";
+            cout << RED << "auto mode" << RESET; cout << " (-y/--yes)" << endl;
+            StageStatus refreshStage, aptStage, flatpakStage, snapStage;
+
+            vector<StageRange> ranges = buildStageRanges(hasFlatpak, hasSnap,
+                                                        static_cast<int>(aptUpgradable.size()),
+                                                        static_cast<int>(flatpakUpgradable.size()),
+                                                        static_cast<int>(snapUpgradable.size()));
+            const float refreshStart = ranges[0].start;
+            const float refreshEnd = ranges[0].end;
+            const float aptStart = ranges[1].start;
+            const float aptEnd = ranges[1].end;
+            const float flatpakStart = ranges[2].start;
+            const float flatpakEnd = ranges[2].end;
+            const float snapStart = ranges[3].start;
+            const float snapEnd = ranges[3].end;
+
+            // --- STAGE 1: REFRESH ---
+            drawGlobalBar(refreshStart, DryRun ? "Dry-run: validating metadata..." : "Refreshing package lists...");
+            int updateStatus = system("apt-get update -o APT::Update::Post-Invoke-Success=\"\" -o APT::Cmd::Show-Update-Stats=0 -qq >/dev/null 2>&1");
+            refreshStage.exitCode = updateStatus;
+            refreshStage.ok = (updateStatus == 0);
+            refreshStage.details = refreshStage.ok ? "Package lists refreshed." : "apt-get update failed.";
+
+            if (g_interrupted || wasInterruptedBySigint(updateStatus)) {
+                g_cancelledByUser = true;
+                cout << "\n" << YELLOW << "Operation cancelled by user (Ctrl+C)." << RESET << endl;
+                return 130;
+            }
+
+            if (!refreshStage.ok) {
+                cout << endl << RED << "CRITICAL: apt update failed! Operation aborted." << RESET << endl;
+                cout << YELLOW << "Check " << LOG_PATH << " for details." << RESET << endl;
+                return 1;
+            }
+            drawGlobalBar(refreshEnd, DryRun ? "Dry-run: metadata ready." : "Package lists refreshed.");
+
+            // --- STAGE 2: APT UPGRADE ---
+            string mode = FullUpdate ? "dist-upgrade" : "upgrade";
+            bool aptOk = false;
+            if (DryRun) {
+                aptOk = runMockDryRunPreview(aptStart, aptEnd, aptStage);
+            } else {
+                AptRunResult aptResult = executeAptWithGlobalProgress(mode, aptStart, aptEnd);
+                aptStage.ok = aptResult.ok;
+                aptStage.exitCode = aptResult.exitCode;
+                aptStage.details = aptResult.ok
+                    ? (aptResult.sawStructuredProgress ? "Upgrade completed with structured progress." : "Upgrade completed using fallback parser.")
+                    : ("Upgrade failed near: " + aptResult.lastTask);
+                aptOk = aptResult.ok;
+            }
+
+            if (g_interrupted || aptStage.exitCode == 130) {
+                g_cancelledByUser = true;
+                cout << "\n" << YELLOW << "Operation cancelled by user (Ctrl+C)." << RESET << endl;
+                return 130;
+            }
+
+            if (aptOk) {
+
+                // --- STAGE 3: FLATPAK ---
+                if (hasFlatpak) {
+                    drawGlobalBar(flatpakStart, DryRun ? "Dry-run: simulating Flatpak updates..." : "Updating Flatpaks...");
+                    bool flatpakOk = true;
+                    if (DryRun) {
+                        flatpakOk = runCommandWithEstimatedProgress("flatpak remote-ls --updates --columns=application",
+                                                                    flatpakStart, flatpakEnd, "Flatpak dry-run",
+                                                                    flatpakStage, static_cast<int>(flatpakUpgradable.size()));
+                    } else {
+                        flatpakOk = runCommandWithEstimatedProgress("flatpak update -y",
+                                                                    flatpakStart, flatpakEnd, "Flatpak",
+                                                                    flatpakStage, static_cast<int>(flatpakUpgradable.size()));
+                    }
+                    if (!flatpakOk && !DryRun) {
+                        cout << "\n" << YELLOW << "Warning: Flatpak update encountered some issues." << RESET << endl;
+                        cout << YELLOW << "Check " << LOG_PATH << " for details." << RESET << endl;
+                    }
+                    if (g_interrupted || flatpakStage.exitCode == 130) {
+                        g_cancelledByUser = true;
+                        cout << "\n" << YELLOW << "Operation cancelled by user (Ctrl+C)." << RESET << endl;
+                        return 130;
+                    }
+                }
+
+                // --- STAGE 4: SNAP ---
+                if (hasSnap) {
+                    drawGlobalBar(snapStart, DryRun ? "Dry-run: simulating Snap updates..." : "Updating Snaps...");
+                    bool snapOk = true;
+                    if (DryRun) {
+                        snapOk = runCommandWithEstimatedProgress("snap refresh --list",
+                                                                 snapStart, snapEnd, "Snap dry-run",
+                                                                 snapStage, static_cast<int>(snapUpgradable.size()));
+                    } else {
+                        snapOk = runCommandWithEstimatedProgress("snap refresh",
+                                                                 snapStart, snapEnd, "Snap",
+                                                                 snapStage, static_cast<int>(snapUpgradable.size()));
+                    }
+                    if (!snapOk) {
+                        cout << "\n" << YELLOW << "Warning: Snap stage encountered some issues." << RESET << endl;
+                        cout << YELLOW << "Check " << LOG_PATH << " for details." << RESET << endl;
+                    }
+                    if (g_interrupted || snapStage.exitCode == 130) {
+                        g_cancelledByUser = true;
+                        cout << "\n" << YELLOW << "Operation cancelled by user (Ctrl+C)." << RESET << endl;
+                        return 130;
+                    }
+                }
+
+                drawGlobalBar(100, "Done!");
+                cout << endl << "\n" << GREEN << (DryRun ? "Dry-run finished successfully!" : "Update successful!") << RESET << endl;
+                cout << YELLOW << "\n[Report]\n" << RESET;
+                cout << "- refresh: " << (refreshStage.ok ? "OK" : "FAIL") << " (code " << refreshStage.exitCode << ")\n";
+                cout << "- apt: " << (aptStage.ok ? "OK" : "FAIL") << " (code " << aptStage.exitCode << ")\n";
+                if (hasFlatpak) {
+                    cout << "- flatpak: " << (flatpakStage.ok ? "OK" : "FAIL") << " (code " << flatpakStage.exitCode << ")\n";
+                }
+                if (hasSnap) {
+                    cout << "- snap: " << (snapStage.ok ? "OK" : "FAIL") << " (code " << snapStage.exitCode << ")\n";
+                }
+                updateSuccessful = true;
+            } else {
+                cout << "\n" << RED << "CRITICAL: System upgrade failed! Check " << LOG_PATH << RESET << endl;
+                cout << YELLOW << "Check " << LOG_PATH << " for details." << RESET << endl;
+                cout << YELLOW << "[APT details] " << RESET << aptStage.details << "\n";
+                cout << YELLOW << "[Exit code] " << RESET << aptStage.exitCode << "\n";
+                return 0;
+            }
+            return 0;
+        }
+    
+        cout << "\n" << YELLOW << "Proceed with update?" << RESET;
+        cout << " [y/n]: " << RESET;
+         cin >> ans;
+
+        if (ans == "y" || ans == "Y" || ans == "yes" || ans == "Yes" || ans == "YES") {
+            StageStatus refreshStage, aptStage, flatpakStage, snapStage;
+
+            vector<StageRange> ranges = buildStageRanges(hasFlatpak, hasSnap,
+                                                        static_cast<int>(aptUpgradable.size()),
+                                                        static_cast<int>(flatpakUpgradable.size()),
+                                                        static_cast<int>(snapUpgradable.size()));
+            const float refreshStart = ranges[0].start;
+            const float refreshEnd = ranges[0].end;
+            const float aptStart = ranges[1].start;
+            const float aptEnd = ranges[1].end;
+            const float flatpakStart = ranges[2].start;
+            const float flatpakEnd = ranges[2].end;
+            const float snapStart = ranges[3].start;
+            const float snapEnd = ranges[3].end;
+
+            // --- STAGE 1: REFRESH ---
+            drawGlobalBar(refreshStart, DryRun ? "Dry-run: validating metadata..." : "Refreshing package lists...");
+            int updateStatus = system("apt-get update -o APT::Update::Post-Invoke-Success=\"\" -o APT::Cmd::Show-Update-Stats=0 -qq >/dev/null 2>&1");
+            refreshStage.exitCode = updateStatus;
+            refreshStage.ok = (updateStatus == 0);
+            refreshStage.details = refreshStage.ok ? "Package lists refreshed." : "apt-get update failed.";
+
+            if (g_interrupted || wasInterruptedBySigint(updateStatus)) {
+                g_cancelledByUser = true;
+                cout << "\n" << YELLOW << "Operation cancelled by user (Ctrl+C)." << RESET << endl;
+                return 130;
+            }
+
+            if (!refreshStage.ok) {
+                cout << endl << RED << "CRITICAL: apt update failed! Operation aborted." << RESET << endl;
+                cout << YELLOW << "Check " << LOG_PATH << " for details." << RESET << endl;
+                return 1;
+            }
+            drawGlobalBar(refreshEnd, DryRun ? "Dry-run: metadata ready." : "Package lists refreshed.");
+
+            // --- STAGE 2: APT UPGRADE ---
+            string mode = FullUpdate ? "dist-upgrade" : "upgrade";
+            bool aptOk = false;
+            if (DryRun) {
+                aptOk = runMockDryRunPreview(aptStart, aptEnd, aptStage);
+            } else {
+                AptRunResult aptResult = executeAptWithGlobalProgress(mode, aptStart, aptEnd);
+                aptStage.ok = aptResult.ok;
+                aptStage.exitCode = aptResult.exitCode;
+                aptStage.details = aptResult.ok
+                    ? (aptResult.sawStructuredProgress ? "Upgrade completed with structured progress." : "Upgrade completed using fallback parser.")
+                    : ("Upgrade failed near: " + aptResult.lastTask);
+                aptOk = aptResult.ok;
+            }
+
+            if (g_interrupted || aptStage.exitCode == 130) {
+                g_cancelledByUser = true;
+                cout << "\n" << YELLOW << "Operation cancelled by user (Ctrl+C)." << RESET << endl;
+                return 130;
+            }
+
+            if (aptOk) {
+
+                // --- STAGE 3: FLATPAK ---
+                if (hasFlatpak) {
+                    drawGlobalBar(flatpakStart, DryRun ? "Dry-run: simulating Flatpak updates..." : "Updating Flatpaks...");
+                    bool flatpakOk = true;
+                    if (DryRun) {
+                        flatpakOk = runCommandWithEstimatedProgress("flatpak remote-ls --updates --columns=application",
+                                                                    flatpakStart, flatpakEnd, "Flatpak dry-run",
+                                                                    flatpakStage, static_cast<int>(flatpakUpgradable.size()));
+                    } else {
+                        flatpakOk = runCommandWithEstimatedProgress("flatpak update -y",
+                                                                    flatpakStart, flatpakEnd, "Flatpak",
+                                                                    flatpakStage, static_cast<int>(flatpakUpgradable.size()));
+                    }
+                    if (!flatpakOk && !DryRun) {
+                        cout << "\n" << YELLOW << "Warning: Flatpak update encountered some issues." << RESET << endl;
+                        cout << YELLOW << "Check " << LOG_PATH << " for details." << RESET << endl;
+                    }
+                    if (g_interrupted || flatpakStage.exitCode == 130) {
+                        g_cancelledByUser = true;
+                        cout << "\n" << YELLOW << "Operation cancelled by user (Ctrl+C)." << RESET << endl;
+                        return 130;
+                    }
+                }
+
+                // --- STAGE 4: SNAP ---
+                if (hasSnap) {
+                    drawGlobalBar(snapStart, DryRun ? "Dry-run: simulating Snap updates..." : "Updating Snaps...");
+                    bool snapOk = true;
+                    if (DryRun) {
+                        snapOk = runCommandWithEstimatedProgress("snap refresh --list",
+                                                                 snapStart, snapEnd, "Snap dry-run",
+                                                                 snapStage, static_cast<int>(snapUpgradable.size()));
+                    } else {
+                        snapOk = runCommandWithEstimatedProgress("snap refresh",
+                                                                 snapStart, snapEnd, "Snap",
+                                                                 snapStage, static_cast<int>(snapUpgradable.size()));
+                    }
+                    if (!snapOk) {
+                        cout << "\n" << YELLOW << "Warning: Snap stage encountered some issues." << RESET << endl;
+                        cout << YELLOW << "Check " << LOG_PATH << " for details." << RESET << endl;
+                    }
+                    if (g_interrupted || snapStage.exitCode == 130) {
+                        g_cancelledByUser = true;
+                        cout << "\n" << YELLOW << "Operation cancelled by user (Ctrl+C)." << RESET << endl;
+                        return 130;
+                    }
+                }
+
+                drawGlobalBar(100, "Done!");
+                cout << endl << "\n" << GREEN << (DryRun ? "Dry-run finished successfully!" : "Update successful!") << RESET << endl;
+                cout << YELLOW << "\n[Report]\n" << RESET;
+                cout << "- refresh: " << (refreshStage.ok ? "OK" : "FAIL") << " (code " << refreshStage.exitCode << ")\n";
+                cout << "- apt: " << (aptStage.ok ? "OK" : "FAIL") << " (code " << aptStage.exitCode << ")\n";
+                if (hasFlatpak) {
+                    cout << "- flatpak: " << (flatpakStage.ok ? "OK" : "FAIL") << " (code " << flatpakStage.exitCode << ")\n";
+                }
+                if (hasSnap) {
+                    cout << "- snap: " << (snapStage.ok ? "OK" : "FAIL") << " (code " << snapStage.exitCode << ")\n";
+                }
+                updateSuccessful = true;
+            } else {
+                cout << "\n" << RED << "CRITICAL: System upgrade failed! Check " << LOG_PATH << RESET << endl;
+                cout << YELLOW << "Check " << LOG_PATH << " for details." << RESET << endl;
+                cout << YELLOW << "[APT details] " << RESET << aptStage.details << "\n";
+                cout << YELLOW << "[Exit code] " << RESET << aptStage.exitCode << "\n";
+            }
+        }
     }
-    //koniec aktualizacji-----------------------------------------------
+
+    // --- POWER ACTIONS ---
+    if (updateSuccessful && !g_cancelledByUser) {
+        if (Reboot) { cout << YELLOW << "Rebooting..." << RESET << endl; sync(); system("reboot"); }
+        else if (Shutdown) { cout << YELLOW << "Shutting down..." << RESET << endl; sync(); system("poweroff"); }
+
+
+        
+
+    }
 
     return 0;
 }

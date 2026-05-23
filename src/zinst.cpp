@@ -1,6 +1,8 @@
 #include "main.h"
 
+
 using namespace std;
+
 
 const string LOG_PATH = "/tmp/zinst.log";
 
@@ -19,32 +21,81 @@ struct InstallTarget {
     bool   useSnap    = false;
 };
 
-//wiadomosc pomocy
-void helpmessage(const char* progName){
-    cout << RED << "Usage: " << RESET << progName << " [options] [packages...]" << " or zpm inst/install [options] [packages...]"  "\n\n";
-    cout << RED << "Options:\n" << RESET;
-    cout << "  (auto)         Picks APT / Flatpak / Snap per package\n";
-    cout << "  --version, -v  Show version information\n";
-    cout << "  --help,    -h  Show this help message\n";
-}
-
-//wiadomosc versji
-void versionmessage(){
-    cout << RED << "zinst component version: " << zpm_version::version() << " of ZPM\n" << RESET;
-    cout << "https://github.com/Zielina-Konrad-productions/ZPM\n";
-    cout << "Copyright (c) 2026 Ignacyyy & Ry3ball \nLicense: MIT\n";
-}
-
 // ─── signal ──────────────────────────────────────────────────────────────────
 void handleSigint(int) { g_interrupted = 1; }
 
 // ─── flatpak remote detection ─────────────────────────────────────────────────
 string getFlatpakRemoteFlag() {
+    // Sprawdź czy system remote z flathubem istnieje
     if (system("flatpak remotes --system 2>/dev/null | grep -q flathub") == 0)
         return "--system";
+    // Fallback na user
     if (system("flatpak remotes --user 2>/dev/null | grep -q flathub") == 0)
         return "--user";
+    // Brak flaga — flatpak użyje domyślnego
     return "";
+}
+
+// ─── progress bar ─────────────────────────────────────────────────────────────
+void drawGlobalBar(float totalProgress, const string& task) {
+    struct winsize w;
+    int termWidth = 80;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
+        termWidth = w.ws_col;
+
+    const int barWidth = max(10, min(40, termWidth / 3));
+    const int visualPrefixLen = 28 + barWidth;
+    const int taskMaxLen = max(1, termWidth - visualPrefixLen);
+    
+
+    string taskTrimmed = task;
+    taskTrimmed.erase(remove(taskTrimmed.begin(), taskTrimmed.end(), '\n'), taskTrimmed.end());
+    if ((int)taskTrimmed.size() > taskMaxLen)
+        taskTrimmed = taskTrimmed.substr(0, taskMaxLen - 1) + "~";
+
+    int percent = max(0, min(100, (int)totalProgress));
+    int pos = barWidth * percent / 100;
+
+    cout << "\r\033[K" << YELLOW << "Install Progress: [" << RESET;
+    for (int i = 0; i < barWidth; ++i)
+        cout << (i < pos ? GREEN + "#" + RESET : " ");
+        cout << YELLOW << "] " << setw(3) << percent << "% " << RESET << "| " << taskTrimmed << "\033[K" << flush;
+}
+
+static string stripAnsi(const string& in) {
+    string out;
+    out.reserve(in.size());
+    bool inEsc = false;
+    for (size_t i = 0; i < in.size(); ++i) {
+        unsigned char c = (unsigned char)in[i];
+        if (inEsc) {
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) inEsc = false;
+            continue;
+        }
+        if (c == '\033') { inEsc = true; continue; }
+        if (c == '\r' || c == '\n') continue;
+        if (c < 32 || c == 127) continue;
+        out += (char)c;
+    }
+    return out;
+}
+
+static string trimForTask(const string& in, size_t maxLen = 48) {
+    string s = stripAnsi(in);
+    // collapse multiple spaces/tabs into one
+    string collapsed;
+    bool prevSpace = true;
+    for (char c : s) {
+        if (c == ' ' || c == '\t') {
+            if (!prevSpace) { collapsed += ' '; prevSpace = true; }
+        } else {
+            collapsed += c;
+            prevSpace = false;
+        }
+    }
+    while (!collapsed.empty() && collapsed.back() == ' ') collapsed.pop_back();
+    if (collapsed.size() > maxLen) collapsed = collapsed.substr(0, maxLen);
+    return collapsed.empty() ? "Working..." : collapsed;
 }
 
 // ─── detection helpers ────────────────────────────────────────────────────────
@@ -68,33 +119,9 @@ bool isInstalledSnap(const string& pkg) {
     return system(cmd.c_str()) == 0;
 }
 
-// Zwraca rzeczywistą nazwę pakietu w APT (obsługuje aliasy i virtual packages).
-// Np. "firefox" -> "firefox-esr" na Debianie.
-// Jeśli podana nazwa istnieje dosłownie — zwraca ją bez zmian.
-// Jeśli nie — szuka przez apt-cache search i bierze pierwsze trafienie,
-// którego nazwa zaczyna się od zapytania (np. firefox -> firefox-esr).
-string resolveAptName(const string& pkg) {
-    // 1. Sprawdź czy nazwa dosłowna istnieje
-    string checkExact = "apt-cache show " + pkg + " >/dev/null 2>&1";
-    if (system(checkExact.c_str()) == 0) return pkg;
-
-    // 2. Szukaj przez apt-cache search — bierz pierwszą nazwę zaczynającą się od pkg
-    string cmd = "apt-cache search --names-only '^" + pkg + "' 2>/dev/null | awk '{print $1}' | head -1";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return pkg;
-    char buf[256] = {};
-    fgets(buf, sizeof(buf), pipe);
-    pclose(pipe);
-
-    string found = buf;
-    found.erase(found.find_last_not_of(" \n\r\t") + 1);
-    return found.empty() ? pkg : found;
-}
-
 bool aptPackageExists(const string& pkg) {
-    string resolved = resolveAptName(pkg);
-    return !resolved.empty()
-        && system(("apt-cache show " + resolved + " >/dev/null 2>&1").c_str()) == 0;
+    string cmd = "apt-get -y --simulate install " + pkg + " >/dev/null 2>&1";
+    return system(cmd.c_str()) == 0;
 }
 
 bool snapPackageExists(const string& pkg) {
@@ -113,12 +140,16 @@ vector<string> searchFlatpak(const string& query) {
     while (fgets(buffer, sizeof(buffer), pipe)) {
         string line = buffer;
         line.erase(line.find_last_not_of(" \n\r\t") + 1);
+
+        // Pomiń nagłówek "Application" który flatpak czasem zwraca
         if (firstLine && line == "Application") { firstLine = false; continue; }
         firstLine = false;
+
         if (!line.empty()) results.push_back(line);
     }
     pclose(pipe);
 
+    // filter by substring
     string qLower = query;
     transform(qLower.begin(), qLower.end(), qLower.begin(), ::tolower);
     vector<string> filtered;
@@ -131,7 +162,7 @@ vector<string> searchFlatpak(const string& query) {
     return filtered;
 }
 
-// ─── source-selection menu ────────────────────────────────────────────────────
+// ─── NEW: pretty source-selection menu ────────────────────────────────────────
 string chooseSourceMenu(const string& pkg,
                         bool aptAvail,
                         bool snapAvail,
@@ -152,6 +183,7 @@ string chooseSourceMenu(const string& pkg,
 
     cout << "\n" << BOLD << "Package: " << CYAN << pkg << RESET << "\n";
 
+    // APT
     cout << "  " << BOLD << idx << ". APT:     " << RESET;
     if (aptAvail) {
         cout << GREEN << "exist (" << pkg << ")" << RESET << "\n";
@@ -162,6 +194,7 @@ string chooseSourceMenu(const string& pkg,
         idx++;
     }
 
+    // Snap
     if (snapSystemAvail) {
         cout << "  " << BOLD << idx << ". Snap:    " << RESET;
         if (snapAvail) {
@@ -174,6 +207,7 @@ string chooseSourceMenu(const string& pkg,
         idx++;
     }
 
+    // Flatpak
     if (flatpakSystemAvail) {
         cout << "  " << BOLD << idx << ". Flatpak: " << RESET;
         if (flatpakAvail) {
@@ -200,9 +234,12 @@ string chooseSourceMenu(const string& pkg,
         if (!getline(cin, input)) return "";
         int choice = -1;
         try { choice = stoi(input); } catch (...) {}
+
         if (choice == 0) return "";
+
         for (const auto& o : options)
             if (o.num == choice) return o.key;
+
         cout << RED << "Invalid choice, try again.\n" << RESET;
     }
 }
@@ -230,174 +267,181 @@ string chooseFlatpakPackage(const vector<string>& packages, const string& query)
     return "";
 }
 
+
+// ─── progress renderer thread ────────────────────────────────────────────────
+struct BarState {
+    atomic<float>  progress{0.0f};
+    atomic<bool>   running{true};
+    string         label;
+};
+
+static void* barThread(void* arg) {
+    BarState* s = static_cast<BarState*>(arg);
+    while (s->running.load()) {
+        drawGlobalBar(s->progress.load(), s->label);
+        usleep(80000);
+    }
+    return nullptr;
+}
+
 // ─── installers ───────────────────────────────────────────────────────────────
 
-int installAPT(const string& pkg, float startPct, float endPct, int idx, int total) {
-    string label = to_string(idx) + "/" + to_string(total) + " | APT: " + pkg;
+int runAPTInstallWithProgress(const string& pkg, float startRange, float endRange) {
+    string exitFile = "/tmp/zinst_apt_exit_" + to_string(getpid());
 
-    progressbar_start(startPct, label + " — refreshing cache...");
-    int st = system(("apt-get update -qq >> " + LOG_PATH + " 2>&1").c_str());
-    if (g_interrupted) return 130;
+    int pfd[2];
+    if (pipe(pfd) != 0) return 1;
 
-    progressbar_update(startPct + (endPct - startPct) * 0.3f,
-                       label + " — installing...");
-    setenv("DEBIAN_FRONTEND", "noninteractive", 1);
-    st = system(("apt-get install -y -o APT::Status-Fd=/dev/null "
-                 + pkg + " >> " + LOG_PATH + " 2>&1").c_str());
-    if (g_interrupted) return 130;
+    pid_t pid = fork();
+    if (pid == 0) {
+        close(pfd[0]);
+        dup2(pfd[1], 3);
+        close(pfd[1]);
+        int logfd = open(LOG_PATH.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (logfd >= 0) { dup2(logfd, 1); dup2(logfd, 2); close(logfd); }
+        setenv("DEBIAN_FRONTEND", "noninteractive", 1);
+        execlp("apt-get", "apt-get", "-y", "-o", "APT::Status-Fd=3",
+               "install", pkg.c_str(), nullptr);
+        _exit(127);
+    }
+    if (pid < 0) { close(pfd[0]); close(pfd[1]); return 1; }
+    close(pfd[1]);
 
-    progressbar_update(endPct, label + " — done");
-    return (st == 0) ? 0 : 1;
-}
+    BarState bs;
+    bs.progress = startRange;
+    bs.label    = "APT " + pkg + ": preparing...";
+    pthread_t tid;
+    pthread_create(&tid, nullptr, barThread, &bs);
 
-int installFlatpak(const string& pkg, float startPct, float endPct, int idx, int total) {
-    string label = to_string(idx) + "/" + to_string(total) + " | Flatpak: " + pkg;
+    FILE* f = fdopen(pfd[0], "r");
+    if (f) setvbuf(f, nullptr, _IONBF, 0);
+    char buf[512];
 
-    progressbar_start(startPct, label + " — installing...");
-    string cmd = "flatpak install " + g_flatpakFlag + " -y --noninteractive flathub "
-                 + pkg + " >> " + LOG_PATH + " 2>&1";
-    int st = system(cmd.c_str());
-    if (g_interrupted) return 130;
-
-    progressbar_update(endPct, label + " — done");
-    return (st == 0) ? 0 : 1;
-}
-
-int installSnap(const string& pkg, float startPct, float endPct, int idx, int total) {
-    string label = to_string(idx) + "/" + to_string(total) + " | Snap: " + pkg;
-
-    progressbar_start(startPct, label + " — installing...");
-    string cmd = "snap install " + pkg + " >> " + LOG_PATH + " 2>&1";
-    int st = system(cmd.c_str());
-    if (g_interrupted) return 130;
-
-    progressbar_update(endPct, label + " — done");
-    return (st == 0) ? 0 : 1;
-}
-
-// ─── install loop ─────────────────────────────────────────────────────────────
-void runInstallLoop(const vector<InstallTarget>& targets) {
-    vector<PackageResult> results;
-    bool anyFailed = false;
-    int  totalPkgs = static_cast<int>(targets.size());
-
-    for (int i = 0; i < totalPkgs; ++i) {
+    while (f && fgets(buf, sizeof(buf), f)) {
         if (g_interrupted) {
-            cout << "\n" << YELLOW << "Cancelled by user (Ctrl+C).\n" << RESET;
-            return;
+            bs.running = false; pthread_join(tid, nullptr);
+            fclose(f); kill(pid, SIGTERM); waitpid(pid, nullptr, 0); return 130;
         }
-
-        const string& p      = targets[i].name;
-        float startPct = (100.0f *  i)      / totalPkgs;
-        float endPct   = (100.0f * (i + 1)) / totalPkgs;
-
-        PackageResult res; res.name = p;
-
-        // ── Flatpak ───────────────────────────────────────────────────────────
-        if (targets[i].useFlatpak) {
-            string label = to_string(i+1) + "/" + to_string(totalPkgs) + " | Flatpak: " + p;
-            if (isInstalledFlatpak(p)) {
-                progressbar_update(endPct, label + ": already installed");
-                res.message = YELLOW + "Package " + p + " is already installed." + RESET;
-                res.success = true;
-            } else {
-                int st = installFlatpak(p, startPct, endPct, i+1, totalPkgs);
-                if (st == 130) { progressbar_finish("Cancelled!"); cout << "\n" << YELLOW << "Cancelled.\n" << RESET; return; }
-                if (st == 0) {
-                    res.message = "Package " + p + " installed successfully." + RESET;
-                    res.success = true;
-                } else {
-                    res.message = RED + "Package " + p + " installation failed." + RESET;
-                    anyFailed   = true;
-                }
+        string line = buf;
+        if (line.rfind("dlstatus:", 0) == 0 || line.rfind("pmstatus:", 0) == 0) {
+            size_t c1 = line.find(':');
+            size_t c2 = line.find(':', c1 + 1);
+            size_t c3 = line.find(':', c2 + 1);
+            if (c3 != string::npos) {
+                float pct = 0.0f;
+                try { pct = stof(line.substr(c2 + 1, c3 - c2 - 1)); } catch (...) {}
+                float gp = startRange + (pct / 100.0f) * (endRange - startRange);
+                if (gp > bs.progress.load()) bs.progress = gp;
+                bs.label = "APT: " + trimForTask(line.substr(c3 + 1));
             }
         }
-        // ── Snap ──────────────────────────────────────────────────────────────
-        else if (targets[i].useSnap) {
-            string label = to_string(i+1) + "/" + to_string(totalPkgs) + " | Snap: " + p;
-            if (isInstalledSnap(p)) {
-                progressbar_update(endPct, label + ": already installed");
-                res.message = YELLOW + "Package " + p + " is already installed." + RESET;
-                res.success = true;
-            } else {
-                int st = installSnap(p, startPct, endPct, i+1, totalPkgs);
-                if (st == 130) { progressbar_finish("Cancelled!"); cout << "\n" << YELLOW << "Cancelled.\n" << RESET; return; }
-                if (st == 0) {
-                    res.message = "Package " + p + " installed successfully." + RESET;
-                    res.success = true;
-                } else {
-                    res.message = RED + "Package " + p + " installation failed." + RESET;
-                    anyFailed   = true;
-                }
-            }
-        }
-        // ── APT ───────────────────────────────────────────────────────────────
-        else {
-            string label = to_string(i+1) + "/" + to_string(totalPkgs) + " | APT: " + p;
-            if (isInstalledAPT(p)) {
-                progressbar_update(endPct, label + ": already installed");
-                res.message = YELLOW + "Package " + p + " is already installed." + RESET;
-                res.success = true;
-            } else {
-                int st = installAPT(p, startPct, endPct, i+1, totalPkgs);
-                if (st == 130) { progressbar_finish("Cancelled!"); cout << "\n" << YELLOW << "Cancelled.\n" << RESET; return; }
-                if (st == 0) {
-                    res.message = "Package " + p + " installed successfully." + RESET;
-                    res.success = true;
-                } else {
-                    res.message = RED + "Package " + p + " installation failed." + RESET;
-                    anyFailed   = true;
-                }
-            }
-        }
-
-        results.push_back(res);
     }
+    if (f) fclose(f);
 
-    // ── finalizacja ───────────────────────────────────────────────────────────
-    if (anyFailed) {
-        progressbar_finish("Done with errors!");
-        cout << "\n";
-        for (const auto& r : results) cout << r.message << "\n";
-        cout << RED    << "Installation finished with errors!\n" << RESET;
-        cout << YELLOW << "[RAPORT] " << RESET << LOG_PATH << "\n";
-        return;
-    }
+    bs.running = false;
+    pthread_join(tid, nullptr);
 
-    progressbar_finish("Done!");
-    cout << "\n";
-    for (const auto& r : results) cout << r.message << "\n";
-    cout << GREEN  << "Installation complete!\n" << RESET;
-    cout << YELLOW << "[RAPORT] " << RESET << LOG_PATH << "\n";
+    int wst = 0;
+    waitpid(pid, &wst, 0);
+    return WIFEXITED(wst) ? WEXITSTATUS(wst) : 1;
 }
 
-// ─── resolve packages to targets ──────────────────────────────────────────────
-vector<InstallTarget> resolveTargets(const vector<string>& packages,
-                                     bool hasSnap, bool hasFlatpak) {
-    vector<InstallTarget> targets;
+int runFlatpakInstallWithProgress(const string& pkg, float startRange, float endRange) {
+    string exitFile = "/tmp/zinst_fp_exit_" + to_string(getpid());
+    string cmd = "flatpak install " + g_flatpakFlag + " -y --noninteractive flathub "
+                 + pkg + " >> " + LOG_PATH + " 2>&1; echo $? > " + exitFile;
 
-    for (const string& pkg : packages) {
-        bool           aptAvail     = aptPackageExists(pkg);
-        bool           snapAvail    = hasSnap    && snapPackageExists(pkg);
-        vector<string> flatpakFound = hasFlatpak ? searchFlatpak(pkg) : vector<string>{};
+    pid_t pid = fork();
+    if (pid == 0) {
+        execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+        _exit(127);
+    }
+    if (pid < 0) return 1;
 
-        string source = chooseSourceMenu(pkg, aptAvail, snapAvail,
-                                         flatpakFound, hasSnap, hasFlatpak);
+    float range = endRange - startRange;
+    const float T = 20.0f;
+    auto timeNow = []() -> float {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        return ts.tv_sec + ts.tv_nsec * 1e-9f;
+    };
+    float t0 = timeNow();
 
-        if (source == "apt") {
-            targets.push_back({resolveAptName(pkg), false, false});
-        } else if (source == "snap") {
-            targets.push_back({pkg, false, true});
-        } else if (source == "flatpak") {
-            bool exactMatch = false;
-            for (const auto& c : flatpakFound)
-                if (c == pkg) { exactMatch = true; break; }
-            string selected = exactMatch ? pkg : chooseFlatpakPackage(flatpakFound, pkg);
-            if (!selected.empty()) targets.push_back({selected, true, false});
-        }
+    while (true) {
+        if (g_interrupted) { kill(pid, SIGTERM); waitpid(pid, nullptr, 0); return 130; }
+        if (waitpid(pid, nullptr, WNOHANG) == pid) break;
+        usleep(100000);
+        float t = timeNow() - t0;
+        float frac = 1.0f - 1.0f / (1.0f + t / T);
+        float gp = startRange + range * frac * 0.95f;
+        drawGlobalBar(gp, "Flatpak " + pkg + ": installing...");
     }
 
-    return targets;
+    int exitCode = 1;
+    { ifstream ef(exitFile); if (ef) ef >> exitCode; remove(exitFile.c_str()); }
+    return exitCode;
+}
+
+int runSnapInstallWithProgress(const string& pkg, float startRange, float endRange) {
+    string exitFile = "/tmp/zinst_snap_exit_" + to_string(getpid());
+    string cmd = "snap install " + pkg + " 2>&1; echo $? > " + exitFile;
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return 1;
+    setvbuf(pipe, nullptr, _IONBF, 0);
+
+    BarState bs;
+    bs.progress = startRange;
+    bs.label    = "Snap " + pkg + ": preparing...";
+    pthread_t tid;
+    pthread_create(&tid, nullptr, barThread, &bs);
+
+    char  buf[512];
+    int   ticks = 0;
+    while (fgets(buf, sizeof(buf), pipe)) {
+        if (g_interrupted) {
+            bs.running = false; pthread_join(tid, nullptr);
+            pclose(pipe); return 130;
+        }
+        string line  = buf;
+        string clean = stripAnsi(line);
+        { ofstream log(LOG_PATH, ios::app); log << clean << "\n"; }
+
+        size_t sep = clean.find(" / ");
+        float  cur = 0.0f, tot = 0.0f;
+        if (sep != string::npos) {
+            int k = (int)sep - 1;
+            while (k >= 0 && !isdigit((unsigned char)clean[k])) k--;
+            string n1;
+            while (k >= 0 && (isdigit((unsigned char)clean[k]) || clean[k] == '.'))
+                n1 = clean[k--] + n1;
+            size_t m = sep + 3;
+            while (m < clean.size() && !isdigit((unsigned char)clean[m])) m++;
+            string n2;
+            while (m < clean.size() && (isdigit((unsigned char)clean[m]) || clean[m] == '.'))
+                n2 += clean[m++];
+            if (!n1.empty() && !n2.empty()) {
+                try { cur = stof(n1); tot = stof(n2); } catch (...) {}
+            }
+        }
+        float gp;
+        if (tot > 0.0f) {
+            gp = startRange + (cur / tot) * (endRange - startRange);
+        } else {
+            ticks++;
+            gp = startRange + (endRange - startRange)
+                 * (1.0f - expf(-(float)ticks / 8.0f)) * 0.9f;
+        }
+        if (gp > bs.progress.load()) bs.progress = gp;
+        bs.label = "Snap: " + trimForTask(clean);
+    }
+    pclose(pipe);
+
+    bs.running = false;
+    pthread_join(tid, nullptr);
+
+    int exitCode = 1;
+    { ifstream ef(exitFile); if (ef) ef >> exitCode; remove(exitFile.c_str()); }
+    return exitCode;
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
@@ -409,45 +453,58 @@ int main(int argc, char* argv[]) {
     bool           showHelp       = false;
     bool           showVersion    = false;
     bool           useTestPackage = false;
-    bool           y              = false;
+    bool           y = false;
     vector<string> packages;
 
     bool hasFlatpak = (system("command -v flatpak >/dev/null 2>&1") == 0);
     bool hasSnap    = (system("command -v snap    >/dev/null 2>&1") == 0);
 
+    // Wykryj flatpak remote raz na starcie
     if (hasFlatpak) {
         g_flatpakFlag = getFlatpakRemoteFlag();
         if (g_flatpakFlag.empty()) {
             cout << YELLOW << "Warning: No flathub remote found for flatpak (tried --system and --user).\n" << RESET;
-            hasFlatpak = false;
+            hasFlatpak = false; // traktuj jako brak flatpaka
         }
     }
 
     for (int i = 1; i < argc; ++i) {
         string arg = argv[i];
-        if      (arg == "--help"    || arg == "-h") showHelp    = true;
+        if      (arg == "--help"    || arg == "-h") showHelp = true;
         else if (arg == "--version" || arg == "-v") showVersion = true;
         else if (arg == "--dry-run")                useTestPackage = true;
-        else if (arg == "--yes"     || arg == "-y") y           = true;
+        else if (arg == "--yes" || arg =="-y") y = true;
         else packages.push_back(arg);
     }
 
-    if (showVersion && showHelp) {
+    if(showVersion && showHelp){
         cout << YELLOW << "--version" << RESET << endl;
-        versionmessage();
+        cout << RED << "zinst component version: " << zpm_version::version() << " of ZPM\n" << RESET;
+        cout << "https://github.com/Ignacyyy/ZPM\n";
+        cout << "Copyright (c) 2026 Ignacyyy\nLicense: MIT\n";
         cout << "" << endl;
         cout << YELLOW <<"--help" << RESET << endl;
-        helpmessage(argv[0]);
+        cout << RED << "Usage: " << RESET << argv[0] << " [options] [packages...]" << " or zpm inst/install [options] [packages...]"  "\n\n";
+        cout << RED << "Options:\n" << RESET;
+        cout << "  (auto)         Picks APT / Flatpak / Snap per package\n";
+        cout << "  --version, -v  Show version information\n";
+        cout << "  --help,    -h  Show this help message\n";
         return 0;
     }
 
     if (showVersion) {
-        versionmessage();
+        cout << RED << "zinst component version: " << zpm_version::version() << " of ZPM\n" << RESET;
+        cout << "https://github.com/Ignacyyy/ZPM\n";
+        cout << "Copyright (c) 2026 Ignacyyy\nLicense: MIT\n";
         return 0;
     }
 
     if (showHelp) {
-        helpmessage(argv[0]);
+        cout << RED << "Usage: " << RESET << argv[0] << " [options] [packages...]" << " or zpm inst/install [options] [packages...]"  "\n\n";
+        cout << RED << "Options:\n" << RESET;
+        cout << "  (auto)         Picks APT / Flatpak / Snap per package\n";
+        cout << "  --version, -v  Show version information\n";
+        cout << "  --help,    -h  Show this help message\n";
         return 0;
     }
 
@@ -463,7 +520,29 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    vector<InstallTarget> targets = resolveTargets(packages, hasSnap, hasFlatpak);
+    // ── resolve each package to an InstallTarget ──────────────────────────────
+    vector<InstallTarget> targets;
+
+    for (const string& pkg : packages) {
+        bool           aptAvail     = aptPackageExists(pkg);
+        bool           snapAvail    = hasSnap    && snapPackageExists(pkg);
+        vector<string> flatpakFound = hasFlatpak ? searchFlatpak(pkg) : vector<string>{};
+
+        string source = chooseSourceMenu(pkg, aptAvail, snapAvail, flatpakFound, hasSnap, hasFlatpak);
+
+        if (source == "apt") {
+            targets.push_back({pkg, false, false});
+        } else if (source == "snap") {
+            targets.push_back({pkg, false, true});
+        } else if (source == "flatpak") {
+            bool exactMatch = false;
+            for (const auto& c : flatpakFound)
+                if (c == pkg) { exactMatch = true; break; }
+
+            string selected = exactMatch ? pkg : chooseFlatpakPackage(flatpakFound, pkg);
+            if (!selected.empty()) targets.push_back({selected, true, false});
+        }
+    }
 
     if (targets.empty()) {
         cout << YELLOW << "No packages selected.\n" << RESET;
@@ -473,6 +552,95 @@ int main(int argc, char* argv[]) {
     cout << "\n" << RED << "Auto mode: APT/Flatpak/Snap per package\n" << RESET;
     cout << "Installing packages...\n\n";
 
-    runInstallLoop(targets);
+    // ── install loop ──────────────────────────────────────────────────────────
+    vector<PackageResult> results;
+    bool anyFailed    = false;
+    int  totalPkgs    = static_cast<int>(targets.size());
+
+    for (int i = 0; i < totalPkgs; ++i) {
+        if (g_interrupted) {
+            cout << "\n" << YELLOW << "Cancelled by user (Ctrl+C).\n" << RESET;
+            return 130;
+        }
+
+        const string& p         = targets[i].name;
+        float         startRange = (100.0f * i)       / totalPkgs;
+        float         endRange   = (100.0f * (i + 1)) / totalPkgs;
+
+        PackageResult res; res.name = p;
+
+        // ── Flatpak ───────────────────────────────────────────────────────────
+        if (targets[i].useFlatpak) {
+            if (isInstalledFlatpak(p)) {
+                drawGlobalBar(endRange, "Flatpak " + p + ": already installed");
+                res.message = YELLOW + "Package " + p + " is already installed." + RESET;
+                res.success = true;
+            } else {
+                int st = runFlatpakInstallWithProgress(p, startRange, endRange);
+                if (st == 130) { cout << "\n" << YELLOW << "Cancelled.\n" << RESET; return 130; }
+                if (st == 0) {
+                    drawGlobalBar(endRange, "Flatpak " + p + ": done");
+                    res.message = GREEN + "Package " + p + " installed successfully." + RESET;
+                    res.success = true;
+                } else {
+                    res.message = RED + "Package " + p + " installation failed." + RESET;
+                    anyFailed   = true;
+                }
+            }
+        }
+        // ── Snap ──────────────────────────────────────────────────────────────
+        else if (targets[i].useSnap) {
+            if (isInstalledSnap(p)) {
+                drawGlobalBar(endRange, "Snap " + p + ": already installed");
+                res.message = YELLOW + "Package " + p + " is already installed." + RESET;
+                res.success = true;
+            } else {
+                int st = runSnapInstallWithProgress(p, startRange, endRange);
+                if (st == 130) { cout << "\n" << YELLOW << "Cancelled.\n" << RESET; return 130; }
+                if (st == 0) {
+                    drawGlobalBar(endRange, "Snap " + p + ": done");
+                    res.message = GREEN + "Package " + p + " installed successfully." + RESET;
+                    res.success = true;
+                } else {
+                    res.message = RED + "Package " + p + " installation failed." + RESET;
+                    anyFailed   = true;
+                }
+            }
+        }
+        // ── APT ───────────────────────────────────────────────────────────────
+        else {
+            if (isInstalledAPT(p)) {
+                drawGlobalBar(endRange, "APT " + p + ": already installed");
+                res.message = YELLOW + "Package " + p + " is already installed." + RESET;
+                res.success = true;
+            } else {
+                int st = runAPTInstallWithProgress(p, startRange, endRange);
+                if (st == 130) { cout << "\n" << YELLOW << "Cancelled.\n" << RESET; return 130; }
+                if (st == 0) {
+                    drawGlobalBar(endRange, "APT " + p + ": done");
+                    res.message = GREEN + "Package " + p + " installed successfully." + RESET;
+                    res.success = true;
+                } else {
+                    res.message = RED + "Package " + p + " installation failed." + RESET;
+                    anyFailed   = true;
+                }
+            }
+        }
+
+        results.push_back(res);
+    }
+
+    drawGlobalBar(100, "Done!");
+    cout << "\n\n";
+
+    for (const auto& r : results) cout << r.message << "\n";
+
+    if (anyFailed) {
+        cout << RED    << "Installation finished with errors!\n" << RESET;
+        cout << YELLOW << "Check " << LOG_PATH << " for details.\n" << RESET;
+        return 1;
+    }
+
+    cout << GREEN << "Installation complete!\n" << RESET;
     return 0;
 }
