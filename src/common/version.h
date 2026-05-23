@@ -1,8 +1,9 @@
 #pragma once
-#include "main.h"
+#include <string>
+#include <fstream>
 
 // how to use:
-//  #include "main.h"
+// #include "version.h", or if you using main.h, #include "main.h"
 // to get version:
 // zpm_version::version()
 namespace zpm_version {

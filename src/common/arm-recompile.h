@@ -1,8 +1,13 @@
 #pragma once
-#include "main.h"
+#include <string>
+#include <fstream>
+#include <iostream>
+#include <cstdlib>
+#include <algorithm>
 
 // Usage:
-//   #include "main.h"
+//   #include "arm-recompile.h"   (standalone)
+//   #include "main.h"            (via main header)
 //   arm::recompile();
 
 namespace arm {

@@ -1,11 +1,15 @@
 #pragma once
-#include "main.h"
+#include <string>
+#include <fstream>
+#include <algorithm>
+
 // ── zhelp-default-page.h ──────────────────────────────────────────────────────
 //
 // Checks whether a specific zhelp default page is enabled in zielina.conf,
 // or whether "show all pages" mode is active.
 //
 // USAGE:
+//   #include "zhelp-default-page.h"   (standalone)
 //   #include "main.h"                 (via main header)
 //
 //   if (zhelp::defaultpage(2)) { /* show page 2 */ }
