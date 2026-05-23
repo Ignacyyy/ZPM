@@ -295,6 +295,9 @@ int main (int argc, char* argv[]){
     //repozytoria i system, flatpak, snap i apt
     repo();
     
+    //test
+    system("apt-get update -y > /dev/null 2>&1");
+    
     // Zapisujemy wynik do zmiennej, żeby nie odpytywać sieci/dysku dwa razy!
     bool systemHasUpdates = hasupdates();
 
