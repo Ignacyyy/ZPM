@@ -299,7 +299,7 @@ int main (int argc, char* argv[]){
     bool systemHasUpdates = hasupdates();
 
     //spawdzane czy są dostepne aktualizacje
-    if (!systemHasUpdates){
+    if (systemHasUpdates == false){
         cout << "\n" << RED << "System is up to date!" << RESET << endl;
     } 
     //koniec podstawowego ui----------------------------------------------------------
