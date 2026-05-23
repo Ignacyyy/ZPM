@@ -1,5 +1,4 @@
-#ifndef MAIN_H
-#define MAIN_H
+#pragma once
 
 // ====================== STANDARD ======================
 #include <iostream>
@@ -9,6 +8,7 @@
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <array>
 
 // ====================== SYSTEM ======================
 #include <cstdlib>
@@ -35,8 +35,8 @@
 #include "version.h"    // version (VERSION.txt)
 #include "arm-recompile.h" // zupgr ARM recompile
 #include "zhelp-default-page.h" // zhelp default page
+#include "progressbar.h" // progressbar
 
 
 
 
-#endif // MAIN_H

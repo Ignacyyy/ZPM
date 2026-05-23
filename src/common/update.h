@@ -1,15 +1,5 @@
 #pragma once
-
-#include <iostream>
-#include <string>
-#include <vector>
-#include <sstream>
-#include <cstdio>
-#include <algorithm>
-#include <cctype>
-#include <array>
-#include <memory>
-#include <fstream>
+#include "main.h"
 
 namespace zpm_update {
 
