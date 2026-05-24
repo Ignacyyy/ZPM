@@ -17,8 +17,6 @@ void PAGE1() {
     std::cout << BOLD << " Options:" << RESET << std::endl;
     std::cout << "  update-info=true/false" << std::endl;
     std::cout << "     shows update notifications in ZPM tools" << std::endl;
-    std::cout << "  arm-recompile=true/false" << std::endl;
-    std::cout << "     enables ARM recompilation during updates (experimental)" << std::endl;
     std::cout << "  zhelp-default-page-1=true/false" << std::endl;
     std::cout << "      zhelp default page 1" << std::endl;
     std::cout << "  zhelp-default-page-2=true/false" << std::endl;
@@ -29,7 +27,6 @@ void PAGE1() {
     std::cout << BOLD << RED << "ARM support:" << RESET << std::endl;
     std::cout << "  ZPM supports ARM (aarch64 / armhf) systems" << std::endl;
     std::cout << "  ARM mode does NOT affect normal usage" << std::endl;
-    std::cout << "  It only controls optional rebuild step during updates" << std::endl;
     std::cout << std::endl;
    
     //zhelp page info
@@ -116,8 +113,6 @@ void PAGE1_PAGE2(){
     std::cout << BOLD << " Options:" << RESET << std::endl;
     std::cout << "  update-info=true/false" << std::endl;
     std::cout << "     shows update notifications in ZPM tools" << std::endl;
-    std::cout << "  arm-recompile=true/false" << std::endl;
-    std::cout << "     enables ARM recompilation during updates (experimental)" << std::endl;
     std::cout << "  zhelp-default-page-1=true/false" << std::endl;
     std::cout << "      zhelp default page 1" << std::endl;
     std::cout << "  zhelp-default-page-2=true/false" << std::endl;
@@ -128,7 +123,6 @@ void PAGE1_PAGE2(){
     std::cout << BOLD << RED << "ARM support:" << RESET << std::endl;
     std::cout << "  ZPM supports ARM (aarch64 / armhf) systems" << std::endl;
     std::cout << "  ARM mode does NOT affect normal usage" << std::endl;
-    std::cout << "  It only controls optional rebuild step during updates" << std::endl;
     std::cout << std::endl;
 
     // commands
@@ -202,7 +196,13 @@ int main(int argc, char* argv[]) {
     zpm_update::checkForUpdates();
 
     std::cout << RED << "Zielina Package Manager (ZPM) " << RESET << "v" << zpm_version::version() << std::endl;
-    std::cout << "https://github.com/Ignacyyy/ZPM\n" << std::endl;
+    std::cout << "" << std::endl;
+    std::cout << BOLD << "ZPM information:" << RESET <<std:: endl;
+    std::cout << "Version: v" << zpm_version::version() << std::endl;
+    std::cout << "https://github.com/Zielina-Konrad-productions/ZPM" << std::endl;
+    std::cout << "Copyright (c) 2026 Ignacyyy & Ry3ball " << std::endl;
+    std::cout << "License: MIT" << std::endl;
+    std::cout << "" << std::endl;
 
     // page info
     std::cout << CYAN << "PAGE Information:" << RESET << std::endl;
