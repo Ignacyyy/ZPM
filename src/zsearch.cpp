@@ -1,5 +1,5 @@
 #include "main.h"
-
+using namespace std;
 // lowercase
 std::string toLower(std::string str) {
     std::transform(str.begin(), str.end(), str.begin(), ::tolower);
@@ -15,6 +15,22 @@ std::string highlight(const std::string& text, const std::string& query) {
     return text.substr(0, pos) +
         YELLOW + text.substr(pos, query.length()) + RESET +
         text.substr(pos + query.length());
+}
+//komunikat pomocy
+void helpmessage(const char* progName) {
+    cout << RED << "Usage: " << RESET << progName << " [options] or zpm search [options]\n\n";
+    cout << "Options:\n";
+    cout << "  -h, --help           Show help\n";
+    cout << "  -v, --version        Show version\n";
+    
+}
+
+// Komunikat wersji
+void versionmessage() {
+    cout << RED << "zupgr component version: v" << zpm_version::version() << " of ZPM\n" << RESET;
+    cout << "https://github.com/Zielina-Konrad-productions/ZPM" << endl;
+    cout << "Copyright (c) 2026 Ignacyyy & Ry3ball" << endl;
+    cout << "License: MIT" << endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -32,27 +48,17 @@ int main(int argc, char* argv[]) {
 
     if (showVersion && showHelp) {
         cout << YELLOW << "--version\n" << RESET;
-        cout << RED << "zsearch component version: " << zpm_version::version() << " of ZPM\n" << RESET;
-        cout << "https://github.com/Ignacyyy/ZPM\n";
-        cout << "Copyright (c) 2026 Ignacyyy\nLicense: MIT\n\n";
+        versionmessage();
         cout << YELLOW << "--help\n" << RESET;
-        cout << RED << "Usage: " << RESET << argv[0] << " [options] [packages...] or zpm search [options] [packages...]\n\n";
-        cout << RED << "Options:\n" << RESET;
-        cout << "  --version, -v  Show version information\n";
-        cout << "  --help,    -h  Show this help message\n";
+        helpmessage(argv[0]);
         return 0;
     }
     if (showVersion) {
-        cout << RED << "zsearch component version: " << zpm_version::version() << " of ZPM\n" << RESET;
-        cout << "https://github.com/Ignacyyy/ZPM\n";
-        cout << "Copyright (c) 2026 Ignacyyy\nLicense: MIT\n";
+        helpmessage(argv[0]);
         return 0;
     }
     if (showHelp) {
-        cout << RED << "Usage: " << RESET << argv[0] << " [options] [packages...] or zpm search [options] [packages...]\n\n";
-        cout << RED << "Options:\n" << RESET;
-        cout << "  --version, -v  Show version information\n";
-        cout << "  --help,    -h  Show this help message\n";
+        versionmessage();
         return 0;
     }
 
