@@ -235,11 +235,14 @@
       var badge = r.prerelease
         ? '<span class="release-badge badge-pre"><span class="badge-dot-sm"></span>Pre-release</span>'
         : '<span class="release-badge badge-release"><span class="badge-dot-sm"></span>Release</span>';
-      var assets = r.assets && r.assets.length > 0
+      var assetLinks = r.assets && r.assets.length > 0
         ? r.assets.map(function(a) {
             return '<a class="asset-link" href="' + a.browser_download_url + '" target="_blank" rel="noopener noreferrer"><span class="asset-icon">' + getIcon(a.name) + '</span><span>' + escHtml(a.name) + '</span><span class="asset-size">' + formatSize(a.size) + '</span></a>';
           }).join('')
-        : '<p style="font-size:0.72rem;color:var(--text-muted);padding:8px 0;">No downloadable assets</p>';
+        : '';
+      var sourceLinks = '<a class="asset-link" href="' + r.zipball_url + '" target="_blank" rel="noopener noreferrer"><span class="asset-icon">&#128374;</span><span>Source code (zip)</span><span class="asset-size"></span></a>'
+        + '<a class="asset-link" href="' + r.tarball_url + '" target="_blank" rel="noopener noreferrer"><span class="asset-icon">&#128374;</span><span>Source code (tar.gz)</span><span class="asset-size"></span></a>';
+      var assets = assetLinks + sourceLinks;
       return '<div class="release-card" style="animation-delay:' + (i * 0.06) + 's"><div class="release-header"><p class="release-name">' + escHtml(r.name || r.tag_name) + '</p>' + badge + '</div><p class="release-date">' + escHtml(r.tag_name) + ' &middot; ' + date + '</p><div class="release-assets">' + assets + '</div><a class="release-gh-link" href="' + r.html_url + '" target="_blank">View on GitHub &#8599;</a></div>';
     }).join('');
   }
