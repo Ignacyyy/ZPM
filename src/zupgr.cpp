@@ -270,6 +270,9 @@ int main(int argc, char* argv[]) {
             cout << RED << "ZPM is up to date." << RESET << endl;
         }
     }
-
+        if (!experimental){
+        system("rm -rf /opt/ZPM/PREVERSION.txt");
+        }
+        
     return 0;
 }
