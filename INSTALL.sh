@@ -4,12 +4,11 @@ set -euo pipefail
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
 readonly LOG="/tmp/ZPM_INSTALL.log"
 readonly TARGET="/opt/ZPM"
-readonly REQUIRED_DEPS=(curl git wget python3 g++)
+readonly REQUIRED_DEPS=(curl git wget python3 g++ sudo zip)
 
 # ── LOGGING ───────────────────────────────────────────────────────────────────
 exec > >(tee -a "$LOG") 2>&1
 echo "===== ZPM Manual Installer ====="
-echo ""
 
 # ── CLEANUP TRAP ──────────────────────────────────────────────────────────────
 cleanup() {
@@ -76,8 +75,6 @@ fi
 
 # ── SOURCE DIR ────────────────────────────────────────────────────────────────
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-info "Source directory: $SRC_DIR"
-
 
 # ── DEPENDENCIES ──────────────────────────────────────────────────────────────
 echo ""
@@ -94,12 +91,12 @@ if [ "$dep" = "y" ]; then
     export DEBIAN_FRONTEND=noninteractive
 
     # ── WAIT FOR APT LOCK ──
-    local_wait=0
+    apt_wait=0
     while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-        info "Waiting for dpkg lock... (${local_wait}s)"
+        info "Waiting for dpkg lock... (${apt_wait}s)"
         sleep 2
-        local_wait=$((local_wait + 2))
-        if [ "$local_wait" -ge 60 ]; then
+        apt_wait=$((apt_wait + 2))
+        if [ "$apt_wait" -ge 60 ]; then
             die "dpkg lock held for over 60s. Another process may be using apt."
         fi
     done
@@ -109,7 +106,7 @@ if [ "$dep" = "y" ]; then
         || die "apt-get update failed. Check your internet connection."
 
     info "Installing dependencies..."
-    apt-get install -y "${REQUIRED_DEPS[@]}" >> "$LOG" 2>&1 \
+    apt-get install -y "${REQUIRED_DEPS[@]}" > "$LOG" 2>&1 \
         || die "Failed to install dependencies."
 
     ok "Dependencies installed successfully."
@@ -141,6 +138,33 @@ else
     warn "No bin/ directory found (or it is empty). No binaries to configure."
 fi
 
+# ── RECOMPILATION ─────────────────────────────────────────────────────────────
+echo ""
+echo "===== ZPM Compilation ====="
+
+BUILD_SCRIPT="$TARGET/src/build.sh"
+
+if [ ! -f "$BUILD_SCRIPT" ]; then
+    die "build.sh not found at: $BUILD_SCRIPT"
+fi
+
+if [ ! -x "$BUILD_SCRIPT" ]; then
+    chmod +x "$BUILD_SCRIPT" || die "Could not make build.sh executable."
+fi
+
+info "Recompiling ZPM (this may take a while)..."
+cd "$TARGET/src" || die "Failed to enter $TARGET/src"
+
+if bash build.sh; then
+    ok "Recompilation complete."
+else
+    echo "ERROR: Compilation failed! Check the log for details: $LOG"
+    rm -rf "$TARGET"
+    exit 1
+fi
+
+cd "$TARGET" || true
+
 # ── SYMLINKS ──────────────────────────────────────────────────────────────────
 info "Updating symlinks in /usr/bin..."
 
@@ -165,49 +189,13 @@ else
     warn "bin/ is empty — no symlinks created."
 fi
 
-# ── ARM RECOMPILATION ─────────────────────────────────────────────────────────
-echo ""
-echo "===== ZPM ARM Compatibility ====="
-
-rec="n"
-ARCH=$(uname -m)
-if [[ "$ARCH" == arm* ]] || [[ "$ARCH" == aarch64* ]]; then
-    info "ARM architecture detected ($ARCH). Recompilation is necessary."
-    ask rec "Recompile ZPM for ARM?"
-else
-    info "Architecture: $ARCH (non-ARM). Skipping recompilation."
-fi
-
-if [ "$rec" = "y" ]; then
-    BUILD_SCRIPT="$TARGET/src/build.sh"
-
-    if [ ! -f "$BUILD_SCRIPT" ]; then
-        die "build.sh not found at: $BUILD_SCRIPT"
-    fi
-
-    if [ ! -x "$BUILD_SCRIPT" ]; then
-        chmod +x "$BUILD_SCRIPT" || die "Could not make build.sh executable."
-    fi
-
-    info "Recompiling ZPM (this may take a while)..."
-    cd "$TARGET/src" || die "Failed to enter $TARGET/src"
-
-    if bash build.sh >> "$LOG" 2>&1; then
-        ok "Recompilation complete."
-    else
-        warn "Recompilation failed. Check the log for details: $LOG"
-        warn "The pre-compiled binaries (if any) will be used instead."
-    fi
-
-    cd "$TARGET" || true
-fi
-
 # ── CLEAN PREVERSION STATE ────────────────────────────────────────────────────
 rm -f "$TARGET/PREVERSION.txt" 2>/dev/null || true
-
+rm -rf "$SRC_DIR"
+cd ~
 # ── DONE ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "Installation complete!"
 echo "type zhelp to gain more info about ZPM"
-printf  "Path    : %-34s\n" "$TARGET"
-printf  "Log     : %-34s\n" "$LOG"
+printf "Path    : %-34s\n" "$TARGET"
+printf "Log     : %-34s\n" "$LOG"
