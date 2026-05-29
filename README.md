@@ -77,4 +77,4 @@ sudo zuninstall
 
 [MIT](LICENSE)
 
-Copyright (c) 2026 Ignacyyy
+Copyright (c) 2026 Ignacyyy & Ry3ball
