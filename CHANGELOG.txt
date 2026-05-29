@@ -1,3 +1,13 @@
+ZPM v2.0
+Program updates: (General)
+- zhelp new UI
+- new ZPM update system
+- improved INSTALL.sh
+- improved INETINSTALL.sh
+- clean rebuild
+- zupd rebuild
+- new progressbar
+
 ZPM v1.9
 Program updates: (General)
 - zhelp new UI, 
