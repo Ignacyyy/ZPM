@@ -1,3 +1,6 @@
+ZPM v2.0.1
+- small hotfix
+
 ZPM v2.0
 Program updates: (General)
 - zhelp new UI
