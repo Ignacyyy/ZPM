@@ -20,8 +20,6 @@ void show_help() {
     cout << "  search          Search for package (zsearch)" << endl;
     cout << "  clean           Clean system cache (zclean)" << endl;
     cout << "  info            Package information (zinfo)" << endl;
-    cout << "  reboot, r       Reboot system (zr)" << endl;
-    cout << "  shutdown, s     Shutdown system (zs)" << endl;
     cout << "  uninstall       Uninstall ZPM (zuninstall)" << endl;
     cout << "  run             Run programs using ZPM" << endl;
     cout << endl;
@@ -55,8 +53,6 @@ int main(int argc, char* argv[]) {
         else if (cmd == "search") target = "zsearch";
         else if (cmd == "clean") target = "zclean";
         else if (cmd == "info") target = "zinfo";
-        else if (cmd == "reboot" || cmd == "r") target = "zr";
-        else if (cmd == "shutdown" || cmd == "s") target = "zs";
         else if (cmd == "uninstall") target = "zuninstall";
         else if (cmd == "help") target = "zhelp";
         else if (cmd == "run") target = "zrun";
@@ -106,8 +102,6 @@ int main(int argc, char* argv[]) {
         cout << "  search          Search for package (zsearch)" << endl;
         cout << "  clean           Clean system cache (zclean)" << endl;
         cout << "  info            Package information (zinfo)" << endl;
-        cout << "  reboot, r       Reboot system (zr)" << endl;
-        cout << "  shutdown, s     Shutdown system (zs)" << endl;
         cout << "  uninstall       Uninstall ZPM (zuninstall)" << endl;
         cout << "  run             Run programs using ZPM" << endl;
         cout << endl;
