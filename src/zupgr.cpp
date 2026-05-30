@@ -13,12 +13,12 @@ string odp;
 // Wersja zainstalowana (stabilna)
 string ZPM_ver() {
     ifstream plik("/opt/ZPM/VERSION.txt");
-    string line = "unknown";
+    string line;
 
-    if (plik.is_open() && getline(plik, line)) {
+    if (plik.is_open() && getline(plik, line) && !line.empty()) {
         cout << "ZPM installed version:" << YELLOW << " v" << line << RESET << endl;
-        plik.close();
     } else {
+        line = "unknown";
         cout << "ZPM installed version: " << YELLOW << "unknown" << RESET << endl;
     }
     return line;
@@ -27,14 +27,15 @@ string ZPM_ver() {
 // Wersja zainstalowana (prerelease)
 string ZPM_prever() {
     ifstream plik("/opt/ZPM/PREVERSION.txt");
-    string line = "unknown";
+    string line;
 
-    if (plik.is_open() && getline(plik, line)) {
+    if (plik.is_open() && getline(plik, line) && !line.empty()) {
         cout << "ZPM installed preversion:" << YELLOW << " v" << line << RESET << endl;
-        plik.close();
     } else {
-        cout << "ZPM installed preversion: " << YELLOW << "unknown" << RESET << endl;
+        line = "unknown";
+        cout << "ZPM installed preversion: " << YELLOW << "none" << RESET << endl;
     }
+
     return line;
 }
 
@@ -141,33 +142,30 @@ bool isVersionOlder(const string& v1, const string& v2) {
 // tag_name - np. "1.9" (bez 'v')
 // zip_name - nazwa pliku zip w /tmp
 // is_pre   - true dla experimental (nadpisuje też PREVERSION.txt)
-void run_update(const string& tag_name, const string& zip_name, bool is_pre = false) {
-
+bool run_update(const string& tag_name, const string& zip_name, bool is_pre = false) {
+    bool fail = false;
     string zip_url = "https://github.com/Zielina-Konrad-productions/ZPM/archive/refs/tags/v" + tag_name + ".zip";
     string dl      = "curl -fsSL \"" + zip_url + "\" -o /tmp/" + zip_name + " >> /tmp/zupgr.log 2>&1";
     string unzp    = "unzip -q -o /tmp/" + zip_name + " -d /tmp/ >> /tmp/zupgr.log 2>&1";
     string rmtmp   = "rm -rf /tmp/ZPM-built /tmp/" + zip_name + " >> /tmp/zupgr.log 2>&1";
 
     progressbar_start(0.0f, "0/5 | Starting update...");
-    system("cd ~");
     system("echo -------------------starting update---------------------- > /tmp/zupgr.log");
     system("rm -rf /tmp/ZPM* /tmp/zielina.conf >> /tmp/zupgr.log 2>&1");
     system("mv /opt/ZPM/zielina.conf /tmp/zielina.conf >> /tmp/zupgr.log 2>&1");
     system("rm -rf /opt/ZPM >> /tmp/zupgr.log 2>&1");
 
     progressbar_update(20.0f, "1/5 | Downloading newest version...");
-    system("echo -------------------dowlaning ZPM---------------------- >> /tmp/zupgr.log");
+    system("echo -------------------downloading ZPM---------------------- >> /tmp/zupgr.log");
     system(dl.c_str());
     system(unzp.c_str());
     system("mv /tmp/ZPM-*/ /tmp/ZPM-built >> /tmp/zupgr.log 2>&1");
     system("mkdir -p /opt/ZPM >> /tmp/zupgr.log 2>&1");
     system("cp -r /tmp/ZPM-built/. /opt/ZPM/ >> /tmp/zupgr.log 2>&1");
 
-    // Zawsze nadpisz VERSION.txt poprawną wersją (bo w repo może być stara)
     string write_ver = "echo \"" + tag_name + "\" > /opt/ZPM/VERSION.txt 2>> /tmp/zupgr.log";
     system(write_ver.c_str());
 
-    // Dla experimental dodatkowo nadpisz PREVERSION.txt
     if (is_pre) {
         string write_prever = "echo \"" + tag_name + "\" > /opt/ZPM/PREVERSION.txt 2>> /tmp/zupgr.log";
         system(write_prever.c_str());
@@ -175,7 +173,9 @@ void run_update(const string& tag_name, const string& zip_name, bool is_pre = fa
 
     progressbar_update(40.0f, "2/5 | Building ZPM...");
     system("echo -------------------building ZPM---------------------- >> /tmp/zupgr.log");
-    system("bash /opt/ZPM/src/build.sh >> /tmp/zupgr.log 2>&1");
+    if (system("bash /opt/ZPM/src/build.sh >> /tmp/zupgr.log 2>&1") != 0) {
+        fail = true;
+    }
     system("chmod +x /opt/ZPM/bin/* >> /tmp/zupgr.log 2>&1");
 
     progressbar_update(70.0f, "3/5 | Updating symlinks...");
@@ -187,11 +187,18 @@ void run_update(const string& tag_name, const string& zip_name, bool is_pre = fa
     system("rm -f /opt/ZPM/zielina.conf >> /tmp/zupgr.log 2>&1");
     system("mv /tmp/zielina.conf /opt/ZPM/zielina.conf >> /tmp/zupgr.log 2>&1");
     system(rmtmp.c_str());
-    system("cd ~");
 
-    progressbar_finish("5/5 | DONE!");
+    if (!fail) {
+        progressbar_finish("5/5 | DONE!");
+        cout << YELLOW << "[RAPORT]" << RESET << " /tmp/zupgr.log" << endl;
+    } else {
+        progressbar_finish("5/5 | ERROR!");
+        cout << RED << "ERROR," << RESET << " check /tmp/zupgr.log for details." << endl;
+        cout << RED << "R.I.P ZPM, please reinstall, with whis command:" << RESET << endl;
+        cout << BOLD << "sudo bash -c ""$(curl -fsSL https://raw.githubusercontent.com/Zielina-Konrad-productions/ZPM/main/INETINSTALL.sh)" << RESET << endl;
+    }
 
-    cout << YELLOW << "[RAPORT]" << RESET << " /tmp/zupgr.log" << endl;
+    return fail;
 }
 
 int main(int argc, char* argv[]) {
@@ -204,7 +211,6 @@ int main(int argc, char* argv[]) {
         if (arg == "--experimental" || arg == "-ex") experimental = true;
     }
 
-    // --help i --version nie mogą być łączone z --force / --experimental
     if ((help || version) && (force || experimental)) {
         cout << RED << "Error: --help/--version cannot be combined with --force/--experimental." << RESET << endl;
         return 1;
@@ -221,7 +227,6 @@ int main(int argc, char* argv[]) {
     if (version) { versionmessage(); return 0; }
     if (help)    { helpmessage(argv[0]); return 0; }
 
-    // Wymagane sudo
     if (geteuid() != 0) {
         cout << RED << "Run with sudo!\n" << RESET;
         return 1;
@@ -249,10 +254,10 @@ int main(int argc, char* argv[]) {
         if (local_pre == "unknown" || isVersionOlder(local_pre, repo_pre) || force) {
             cout << GREEN << "ZPM prerelease update available" << RESET << ", continue? [y/n] ";
             cin >> odp;
-            cout <<"\n";
-            cout << RED << "Updating ZPM..." << RED << endl;
+            cout << "\n";
             if (odp != "y" && odp != "Y") { cout << "Update cancelled." << endl; return 0; }
-            run_update(repo_pre, "ZPM-experimental.zip", true);
+            cout << RED << "Updating ZPM..." << RESET << endl;
+            return run_update(repo_pre, "ZPM-experimental.zip", true) ? 1 : 0;
         } else {
             cout << "ZPM prerelease is up to date." << endl;
         }
@@ -265,14 +270,12 @@ int main(int argc, char* argv[]) {
             cout << GREEN << "ZPM update available" << RESET << ", continue? [y/n]: ";
             cin >> odp;
             if (odp != "y" && odp != "Y") { cout << "Update cancelled." << endl; return 0; }
-            run_update(repo_v, "ZPM.zip", false);
+            if (!experimental) system("rm -rf /opt/ZPM/PREVERSION.txt");
+            return run_update(repo_v, "ZPM.zip", false) ? 1 : 0;
         } else {
             cout << RED << "ZPM is up to date." << RESET << endl;
         }
     }
-        if (!experimental){
-        system("rm -rf /opt/ZPM/PREVERSION.txt");
-        }
-        
+
     return 0;
 }
