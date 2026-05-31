@@ -88,28 +88,10 @@ int main(int argc, char* argv[]) {
 
     if (version && help) {
         cout << YELLOW << "--version\n" << RESET;
-        cout << RED << "zpm component version: v" << zpm_version::version() << "\n" << RESET;
-        cout << "https://github.com/Zielina-Konrad-productions/ZPM" << endl;
-        cout << "Copyright (c) 2026 Ignacyyy & Ry3ball " << endl;
-        cout << "License: MIT" << endl;
-        cout << "\n";
+        show_version();
+        cout << "" << endl;
         cout << YELLOW << "--help" << endl;
-        cout << RED << "Usage: " << RESET << "zpm <command> [options]" << endl;
-        cout << RED << "Commands:" << RESET << endl;
-        cout << "  update, upd     Perform a system upgrade (zupd)" << endl;
-        cout << "  upgrade, upgr   Upgrade ZPM itself (zupgr)" << endl;
-        cout << "  install, inst   Install package (zinst)" << endl;
-        cout << "  remove, rm      Remove package (zrm)" << endl;
-        cout << "  list, ls        List installed packages (zlist)" << endl;
-        cout << "  search          Search for package (zsearch)" << endl;
-        cout << "  clean           Clean system cache (zclean)" << endl;
-        cout << "  info            Package information (zinfo)" << endl;
-        cout << "  uninstall       Uninstall ZPM (zuninstall)" << endl;
-        cout << "  run             Run programs using ZPM" << endl;
-        cout << endl;
-        cout << RED << "Options:" << RESET << endl;
-        cout << "  --help, -h      Show this help message" << endl;
-        cout << "  --version, -v   Show version information" << endl;
+        void show_help();
         return 0;
     }
 
