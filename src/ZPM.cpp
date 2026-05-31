@@ -26,6 +26,8 @@ void show_help() {
     cout << RED << "Options:" << RESET << endl;
     cout << "  --help, -h      Show this help message" << endl;
     cout << "  --version, -v   Show version information" << endl;
+    cout << "" << endl;
+    cout << BOLD << "type zhelp, for detailed info about ZPM." << RESET << endl;
 }
 
 int main(int argc, char* argv[]) {
