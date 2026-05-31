@@ -63,7 +63,7 @@ sudo zuninstall
 
 | Property          | Value                          |
 |-------------------|--------------------------------|
-| Version           | 2.0.1                          |
+| Version           | 2.0.2                          |
 | Supported distros | Debian / Ubuntu (APT)          |
 | Installation path | `/opt/ZPM`                     |
 | Commands location | `/usr/bin/z*` (symbolic links) |
