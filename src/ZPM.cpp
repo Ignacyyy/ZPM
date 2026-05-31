@@ -91,7 +91,7 @@ int main(int argc, char* argv[]) {
         show_version();
         cout << "" << endl;
         cout << YELLOW << "--help" << endl;
-        void show_help();
+        show_help();
         return 0;
     }
 
