@@ -24,7 +24,7 @@ This installs ZPM to `/opt/ZPM` and creates symbolic links in `/usr/bin/`.
 
 After installation, run `zhelp` to see the full guide.
 
-**Requirements:** `git`, `curl`, `wget`, `sudo`,`python3` installed with the ZPM
+**Requirements:** `git`, `curl`, `wget`, `sudo`,`python3`... installed with the ZPM
 
 ---
 
