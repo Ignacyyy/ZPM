@@ -19,7 +19,7 @@ string ZPM_ver() {
         cout << "ZPM installed version:" << YELLOW << " v" << line << RESET << endl;
     } else {
         line = "unknown";
-        cout << "ZPM installed version: " << YELLOW << "unknown" << RESET << endl;
+        cout << "ZPM installed version: " << YELLOW << "none" << RESET << endl;
     }
     return line;
 }
@@ -247,6 +247,7 @@ int main(int argc, char* argv[]) {
     cout << CYAN << "------------------------------------------------------" << RESET << "\n\n";
 
     if (experimental) {
+        system("rm -rf /opt/ZPM/VERSION.txt");
         if (repo_pre.empty()) {
             cout << RED << "No prerelease version available." << RESET << endl;
             return 0;
@@ -270,11 +271,13 @@ int main(int argc, char* argv[]) {
             cout << GREEN << "ZPM update available" << RESET << ", continue? [y/n]: ";
             cin >> odp;
             if (odp != "y" && odp != "Y") { cout << "Update cancelled." << endl; return 0; }
-            if (!experimental) system("rm -rf /opt/ZPM/PREVERSION.txt");
             return run_update(repo_v, "ZPM.zip", false) ? 1 : 0;
         } else {
             cout << RED << "ZPM is up to date." << RESET << endl;
         }
+    }
+    if (!experimental){
+        system("rm -rf /opt/ZPM/PREVERSION.txt");
     }
 
     return 0;
