@@ -42,8 +42,6 @@ After installation, run `zhelp` to see the full guide.
 | `zsearch`      | Search for a package                          |
 | `zclean`       | Clean package cache                           |
 | `zinfo`        | Show package information                      |
-| `zr`           | Reboot system                                 |
-| `zs`           | Shutdown system                               |
 | `zuninstall`   | Uninstall ZPM                                 |
 | `zrun`         | Run programs using ZPM                        |
 
