@@ -247,7 +247,6 @@ int main(int argc, char* argv[]) {
     cout << CYAN << "------------------------------------------------------" << RESET << "\n\n";
 
     if (experimental) {
-        system("rm -rf /opt/ZPM/VERSION.txt");
         if (repo_pre.empty()) {
             cout << RED << "No prerelease version available." << RESET << endl;
             return 0;
@@ -258,6 +257,7 @@ int main(int argc, char* argv[]) {
             cout << "\n";
             if (odp != "y" && odp != "Y") { cout << "Update cancelled." << endl; return 0; }
             cout << RED << "Updating ZPM..." << RESET << endl;
+            system("rm -rf /opt/ZPM/VERSION.txt");
             return run_update(repo_pre, "ZPM-experimental.zip", true) ? 1 : 0;
         } else {
             cout << "ZPM prerelease is up to date." << endl;
