@@ -87,7 +87,7 @@ int main(int argc, char* argv[]) {
 
 
     if (version && help) {
-        cout << YELLOW << "--version\n" << RESET;
+        cout << YELLOW << "--version" << RESET << endl;
         show_version();
         cout << "" << endl;
         cout << YELLOW << "--help" << endl;
