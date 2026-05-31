@@ -195,7 +195,7 @@ bool run_update(const string& tag_name, const string& zip_name, bool is_pre = fa
         progressbar_finish("5/5 | ERROR!");
         cout << RED << "ERROR," << RESET << " check /tmp/zupgr.log for details." << endl;
         cout << RED << "R.I.P ZPM, please reinstall, with whis command:" << RESET << endl;
-        cout << BOLD << "sudo bash -c ""$(curl -fsSL https://raw.githubusercontent.com/Zielina-Konrad-productions/ZPM/main/INETINSTALL.sh)" << RESET << endl;
+        cout << BOLD << "sudo bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Zielina-Konrad-productions/ZPM/main/INETINSTALL.sh)\"" << RESET << endl;
     }
 
     return fail;
