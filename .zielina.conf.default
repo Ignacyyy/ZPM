@@ -10,12 +10,6 @@
 # false = silent mode, no update prompts
 update-info=true
 
-[arm]
-# Recompile ZPM binaries for ARM architecture during updates
-# true  = rebuild from source after each update (required on ARM systems)
-# false = use prebuilt binaries (default for x86/x86_64)
-arm-recompile=false
-
 [UI-zhelp]
 # ── Default page ──────────────────────────────────────────────────────────────
 # Controls which page is shown when running "zhelp" with no arguments.
