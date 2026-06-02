@@ -246,10 +246,10 @@ void update(const UpdateStatus& status) {
             }
         } else {
             progressbar_finish("ERROR!");
-            cout << RED << "ERROR," << RESET << " check /tmp/zupd.log for details." << endl;
+            cerr << RED << "ERROR," << RESET << " check /tmp/zupd.log for details." << endl;
         }
     } else {
-        cout << YELLOW << "[*] Update cancelled by user." << endl;
+        cerr << YELLOW << "[*] Update cancelled by user." << endl;
     }
 }
 //koniec funkcji---------------------------------------------------------------
@@ -277,7 +277,7 @@ int main(int argc, char* argv[]) {
         (version && yes) || (help && yes) ||
         (version && reboot) || (version && shutdown) ||
         (fullupdate && version) || (fullupdate && help)) {
-        cout << RED << "Error: -r and -s are mutually exclusive. --help and --version cannot be combined with other options." << RESET << endl;
+        cerr << RED << "Error: -r and -s are mutually exclusive. --help and --version cannot be combined with other options." << RESET << endl;
 
     return 1;
         }
@@ -303,7 +303,7 @@ int main(int argc, char* argv[]) {
 
         //sprawdzanie sudo
         if (geteuid() != 0) {
-            cout << RED << "Run with sudo!\n" << RESET;
+            cerr << RED << "Run with sudo!\n" << RESET;
             return 1;
         }
 
@@ -320,7 +320,7 @@ int main(int argc, char* argv[]) {
             }
             update(status);
         } else {
-            cout << "\n" << RED << "System is up to date!" << RESET << endl;
+            cerr << "\n" << RED << "System is up to date!" << RESET << endl;
         }
 
         return 0;
