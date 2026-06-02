@@ -15,24 +15,6 @@ string ans;
 
 //funckcje pomocnicze------------------------------------------------------------
 
-// Nowa funkcja, która przechwytuje tekst wyjściowy z komend terminala
-string execCommand(const char* cmd) {
-    array<char, 128> buffer;
-    string result;
-
-    FILE* pipe = popen(cmd, "r");
-    if (!pipe) {
-        return "";
-    }
-
-    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-        result += buffer.data();
-    }
-
-    pclose(pipe);
-    return result;
-}
-
 //wiadomosc pomocy
 void helpmessage(const char* progName) {
     cout << RED << "Usage: " << RESET << progName << " [options]" << " or zpm upd/update [options]\n\n";
