@@ -57,6 +57,12 @@
     .nav-github{display:flex;align-items:center;gap:8px;color:var(--accent);text-decoration:none;font-size:0.78rem;letter-spacing:0.08em;text-transform:uppercase;border:1px solid var(--accent-border);padding:8px 16px;transition:all 0.3s;}
     .nav-github:hover{background:var(--accent-glow);box-shadow:0 0 20px var(--accent-glow-strong);}
 
+
+    .nav-actions{display:flex;align-items:center;gap:12px;}
+    .lang-switch{display:flex;align-items:center;border:1px solid var(--accent-border, var(--border-bright));background:rgba(10,15,10,0.55);}
+    .lang-btn{background:transparent;border:0;color:var(--text-dim);font-family:var(--mono);font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;padding:9px 10px;cursor:pointer;transition:all 0.2s;}
+    .lang-btn:hover,.lang-btn.active{color:var(--accent, var(--green));background:var(--accent-glow, var(--green-glow));}
+
     /* PAGE */
     .page{position:relative;z-index:1;padding:140px 40px 100px;max-width:900px;margin:0 auto;}
     .page-label{font-size:0.68rem;letter-spacing:0.2em;text-transform:uppercase;color:var(--accent-dark);margin-bottom:16px;display:flex;align-items:center;gap:12px;}
@@ -134,10 +140,13 @@
     <li><a href="https://zielina.pl/releases">Releases</a></li>
     <li><a href="https://zielina.pl/license" class="active">License</a></li>
   </ul>
+  <div class="nav-actions">
   <a class="nav-github" href="https://github.com/Zielina-Konrad-productions/ZPM" target="_blank">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
     GitHub
   </a>
+  <div class="lang-switch" aria-label="Language switcher"><button class="lang-btn" data-lang="en" onclick="setLanguage('en')">EN</button><button class="lang-btn" data-lang="pl" onclick="setLanguage('pl')">PL</button></div>
+  </div>
 </nav>
 
 <div class="page">
@@ -155,7 +164,7 @@
   <div class="callout">
     <span class="callout-icon">&#9432;</span>
     <p class="callout-text">
-      <strong>What this means:</strong> You can freely use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of ZPM — as long as the original copyright notice is included.
+      <strong>Co to oznacza:</strong> Możesz swobodnie używać, kopiować, modyfikować, łączyć, publikować, rozpowszechniać, sublicencjonować i/lub sprzedawać kopie ZPM — pod warunkiem dołączenia oryginalnej informacji o prawach autorskich.
       The full license is also available on
       <a href="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/LICENSE" target="_blank">GitHub &#8599;</a>.
     </p>
@@ -172,6 +181,22 @@
 </footer>
 
 <script>
+  const I18N = {
+    en:{nav_home:'Home',nav_releases:'Releases',nav_license:'License',label:'Legal',title:'License.<br/><span class="accent">Open Source.</span>',desc:"ZPM is released under the MIT License. You're free to use, modify, and distribute this software.",loading:'Fetching license...',means:'<strong>Co to oznacza:</strong> Możesz swobodnie używać, kopiować, modyfikować, łączyć, publikować, rozpowszechniać, sublicencjonować i/lub sprzedawać kopie ZPM — pod warunkiem dołączenia oryginalnej informacji o prawach autorskich.',view_gh:'GitHub ↗',view_raw:'View raw ↗',osi:'OSI Approved',type:'Type',year:'Year',authors:'Authors',source:'Source',mit:'MIT License',failed_title:'Failed to load license',failed_desc:'Could not fetch from GitHub.',view_direct:'View directly on GitHub ↗',footer:'Zielina Package Manager &middot; MIT License &middot; '},
+    pl:{nav_home:'Strona główna',nav_releases:'Wydania',nav_license:'Licencja',label:'Informacje prawne',title:'Licencja.<br/><span class="accent">Open Source.</span>',desc:'ZPM jest wydany na licencji MIT. Możesz swobodnie używać, modyfikować i rozpowszechniać to oprogramowanie.',loading:'Pobieranie licencji...',means:'<strong>Co to oznacza:</strong> Możesz swobodnie używać, kopiować, modyfikować, łączyć, publikować, rozpowszechniać, sublicencjonować i/lub sprzedawać kopie ZPM — pod warunkiem dołączenia oryginalnej informacji o prawach autorskich.',view_gh:'GitHub ↗',view_raw:'Zobacz surowy plik ↗',osi:'Zatwierdzona przez OSI',type:'Typ',year:'Rok',authors:'Autorzy',source:'Źródło',mit:'Licencja MIT',failed_title:'Nie udało się załadować licencji',failed_desc:'Nie można pobrać pliku z GitHuba.',view_direct:'Zobacz bezpośrednio na GitHubie ↗',footer:'Zielina Package Manager &middot; Licencja MIT &middot; '}
+  };
+  let currentLang = localStorage.getItem('zpm_lang') || 'en';
+  function tr(k){return (I18N[currentLang]&&I18N[currentLang][k])||I18N.en[k]||k;}
+  function setLanguage(lang){currentLang=lang==='pl'?'pl':'en';localStorage.setItem('zpm_lang',currentLang);applyLanguage();loadLicense();}
+  function applyLanguage(){
+    document.documentElement.lang=currentLang;
+    document.querySelectorAll('.lang-btn').forEach(b=>b.classList.toggle('active', b.dataset.lang===currentLang));
+    const nav=document.querySelectorAll('.nav-links a'); if(nav[0])nav[0].textContent=tr('nav_home'); if(nav[1])nav[1].textContent=tr('nav_releases'); if(nav[2])nav[2].textContent=tr('nav_license');
+    const label=document.querySelector('.page-label'); if(label)label.textContent=tr('label'); const title=document.querySelector('.page-title'); if(title)title.innerHTML=tr('title'); const desc=document.querySelector('.page-desc'); if(desc)desc.textContent=tr('desc');
+    const loading=document.querySelector('.loading-text'); if(loading)loading.textContent=tr('loading'); const note=document.querySelector('.license-note'); if(note)note.innerHTML=tr('means')+' <a href="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/LICENSE" target="_blank">'+tr('view_gh')+'</a>.';
+    const foot=document.querySelector('footer .footer-left p:not(.logo)'); if(foot) foot.innerHTML=tr('footer')+'<span class="dyn-version">'+(document.querySelector('footer .dyn-version')?.textContent || '...')+'</span>';
+  }
+
   const REPO = 'Zielina-Konrad-productions/ZPM';
 
   async function loadVersion() {
@@ -213,12 +238,12 @@
         <div class="license-header">
           <div class="license-type">
             <span>${escHtml(titleLine)}</span>
-            <span class="license-badge"><span class="badge-dot"></span>OSI Approved</span>
+            <span class="license-badge"><span class="badge-dot"></span>${tr('osi')}</span>
           </div>
           <div class="license-source">
             <a href="https://github.com/${REPO}/blob/main/LICENSE" target="_blank" rel="noopener">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
-              View raw &#8599;
+              ${tr('view_raw')}
             </a>
           </div>
         </div>
@@ -227,20 +252,20 @@
         </div>
         <div class="license-meta">
           <div class="meta-item">
-            <span class="meta-label">Type</span>
-            <span class="meta-value accent">MIT License</span>
+            <span class="meta-label">${tr('type')}</span>
+            <span class="meta-value accent">${tr('mit')}</span>
           </div>
           <div class="meta-item">
-            <span class="meta-label">Year</span>
+            <span class="meta-label">${tr('year')}</span>
             <span class="meta-value">${escHtml(year)}</span>
           </div>
           <div class="meta-item">
-            <span class="meta-label">Authors</span>
+            <span class="meta-label">${tr('authors')}</span>
             <span class="meta-value">${escHtml(authorsMatch)}</span>
           </div>
           <div class="meta-item">
-            <span class="meta-label">Source</span>
-            <span class="meta-value"><a href="https://github.com/${REPO}/blob/main/LICENSE" target="_blank" style="color:var(--accent);text-decoration:none;">GitHub &#8599;</a></span>
+            <span class="meta-label">${tr('source')}</span>
+            <span class="meta-value"><a href="https://github.com/${REPO}/blob/main/LICENSE" target="_blank" style="color:var(--accent);text-decoration:none;">${tr('view_gh')}</a></span>
           </div>
         </div>
       `;
@@ -248,8 +273,8 @@
       wrap.innerHTML = `
         <div style="padding:60px 40px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px;">
           <span style="font-size:2rem;opacity:0.3;">&#9888;</span>
-          <p style="font-family:var(--sans);font-size:1rem;font-weight:700;color:var(--text-dim);">Failed to load license</p>
-          <p style="font-size:0.78rem;color:var(--text-muted);max-width:320px;line-height:1.7;">Could not fetch from GitHub. <a href="https://github.com/${REPO}/blob/main/LICENSE" target="_blank" style="color:var(--accent)">View directly on GitHub &#8599;</a></p>
+          <p style="font-family:var(--sans);font-size:1rem;font-weight:700;color:var(--text-dim);">${tr('failed_title')}</p>
+          <p style="font-size:0.78rem;color:var(--text-muted);max-width:320px;line-height:1.7;">${tr('failed_desc')} <a href="https://github.com/${REPO}/blob/main/LICENSE" target="_blank" style="color:var(--accent)">${tr('view_direct')}</a></p>
         </div>
       `;
     }
@@ -259,6 +284,7 @@
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  applyLanguage();
   loadVersion();
   loadLicense();
 </script>
