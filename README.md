@@ -46,7 +46,7 @@ After installation, run `zhelp` to see the full guide.
 | `zrun`         | Run programs using ZPM                        |
 
 ---
-
+ZPM SUPPORTS openSUSE, Ferdora like systems ony on PRERELEASE VERSIONS!
 ## Update & Uninstall
 
 ```bash
