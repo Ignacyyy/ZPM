@@ -4,7 +4,9 @@ set -euo pipefail
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
 readonly LOG="/tmp/ZPM_INSTALL.log"
 readonly TARGET="/opt/ZPM"
-readonly REQUIRED_DEPS=(curl git wget python3 g++ sudo zip)
+readonly REQUIRED_DEPS_APT=(curl git wget python3 g++ sudo zip)
+readonly REQUIRED_DEPS_ZYPPER=(curl git wget python3 gcc-c++ sudo zip)
+readonly REQUIRED_DEPS_DNF=(curl git wget python3 gcc-c++ sudo zip)
 
 # ── LOGGING ───────────────────────────────────────────────────────────────────
 exec > >(tee -a "$LOG") 2>&1
@@ -13,39 +15,23 @@ echo "===== ZPM Manual Installer ====="
 # ── CLEANUP TRAP ──────────────────────────────────────────────────────────────
 cleanup() {
     local exit_code=$?
-
     if [ "$exit_code" -ne 0 ]; then
         echo ""
         echo "Installation FAILED (exit code: $exit_code)$(printf '%*s' $((14 - ${#exit_code})) '')"
         echo "See full log: $LOG$(printf '%*s' $((30 - ${#LOG})) '')"
     fi
-
     exit "$exit_code"
 }
 trap cleanup EXIT
 
 # ── HELPER FUNCTIONS ──────────────────────────────────────────────────────────
-die() {
-    echo "ERROR: $*" >&2
-    exit 1
-}
-
-info() {
-    echo "[*] $*"
-}
-
-ok() {
-    echo "[+] $*"
-}
-
-warn() {
-    echo "[!] WARNING: $*"
-}
+die()  { echo "ERROR: $*" >&2; exit 1; }
+info() { echo "[*] $*"; }
+ok()   { echo "[+] $*"; }
+warn() { echo "[!] WARNING: $*"; }
 
 ask() {
-    local _var="$1"
-    local _prompt="$2"
-    local _answer
+    local _var="$1" _prompt="$2" _answer
     while true; do
         read -rp "$_prompt [y/n] " _answer
         case "$_answer" in
@@ -61,10 +47,38 @@ if [ "$(id -u)" -ne 0 ]; then
     die "This script must be run as root. Use: sudo $0"
 fi
 
-# ── OS CHECK ──────────────────────────────────────────────────────────────────
-if ! command -v apt-get &>/dev/null; then
-    die "apt-get not found. This installer supports Debian/Ubuntu-based systems only."
-fi
+# ── PM DETECTION ─────────────────────────────────────────────────────────────
+detect_pm() {
+    if [ -f /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        case "${ID_LIKE:-} ${ID:-}" in
+            *debian*|*ubuntu*) echo "apt";    return ;;
+            *suse*|*opensuse*) echo "zypper"; return ;;
+            *fedora*|*rhel*|*centos*|*rocky*|*alma*) echo "dnf"; return ;;
+        esac
+    fi
+    # Fallback przez binaries
+    command -v apt-get &>/dev/null && echo "apt"    && return
+    command -v zypper  &>/dev/null && echo "zypper" && return
+    command -v dnf     &>/dev/null && echo "dnf"    && return
+    echo "unknown"
+}
+
+PM=$(detect_pm)
+
+case "$PM" in
+    apt)    info "Detected package manager: APT (Debian/Ubuntu)" ;;
+    zypper) info "Detected package manager: Zypper (openSUSE/SLES)" ;;
+    dnf)    info "Detected package manager: DNF (Fedora/RHEL/Rocky/Alma)" ;;
+    *)
+        die "Unsupported system. ZPM requires apt, zypper, or dnf.
+Supported distributions:
+  - Debian / Ubuntu (and derivatives)
+  - openSUSE / SLES
+  - Fedora / RHEL / CentOS / Rocky Linux / AlmaLinux"
+        ;;
+esac
 
 # ── CONFIRM INSTALL ───────────────────────────────────────────────────────────
 ask confirm "Start installation of ZPM?"
@@ -79,8 +93,16 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ── DEPENDENCIES ──────────────────────────────────────────────────────────────
 echo ""
 echo "====== ZPM Dependencies ======="
+
+# Wybierz listę zależności per PM
+case "$PM" in
+    apt)    DEPS=("${REQUIRED_DEPS_APT[@]}") ;;
+    zypper) DEPS=("${REQUIRED_DEPS_ZYPPER[@]}") ;;
+    dnf)    DEPS=("${REQUIRED_DEPS_DNF[@]}") ;;
+esac
+
 echo "Required packages:"
-for dep in "${REQUIRED_DEPS[@]}"; do
+for dep in "${DEPS[@]}"; do
     echo "  - $dep"
 done
 echo ""
@@ -88,27 +110,38 @@ echo ""
 ask dep "Install dependencies?"
 
 if [ "$dep" = "y" ]; then
-    export DEBIAN_FRONTEND=noninteractive
-
-    # ── WAIT FOR APT LOCK ──
-    apt_wait=0
-    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-        info "Waiting for dpkg lock... (${apt_wait}s)"
-        sleep 2
-        apt_wait=$((apt_wait + 2))
-        if [ "$apt_wait" -ge 60 ]; then
-            die "dpkg lock held for over 60s. Another process may be using apt."
-        fi
-    done
-
-    info "Updating package lists..."
-    apt-get update -y >> "$LOG" 2>&1 \
-        || die "apt-get update failed. Check your internet connection."
-
-    info "Installing dependencies..."
-    apt-get install -y "${REQUIRED_DEPS[@]}" > "$LOG" 2>&1 \
-        || die "Failed to install dependencies."
-
+    case "$PM" in
+        apt)
+            export DEBIAN_FRONTEND=noninteractive
+            # Czekaj na zwolnienie blokady dpkg
+            apt_wait=0
+            while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+                info "Waiting for dpkg lock... (${apt_wait}s)"
+                sleep 2
+                apt_wait=$((apt_wait + 2))
+                [ "$apt_wait" -ge 60 ] && die "dpkg lock held for over 60s."
+            done
+            info "Updating package lists..."
+            apt-get update -y >> "$LOG" 2>&1 \
+                || die "apt-get update failed. Check your internet connection."
+            info "Installing dependencies..."
+            apt-get install -y "${DEPS[@]}" >> "$LOG" 2>&1 \
+                || die "Failed to install dependencies."
+            ;;
+        zypper)
+            info "Refreshing repositories..."
+            zypper refresh >> "$LOG" 2>&1 \
+                || die "zypper refresh failed."
+            info "Installing dependencies..."
+            zypper install -y "${DEPS[@]}" >> "$LOG" 2>&1 \
+                || die "Failed to install dependencies."
+            ;;
+        dnf)
+            info "Installing dependencies..."
+            dnf install -y "${DEPS[@]}" >> "$LOG" 2>&1 \
+                || die "Failed to install dependencies."
+            ;;
+    esac
     ok "Dependencies installed successfully."
 else
     warn "Skipping dependency installation. The build may fail if packages are missing."
@@ -118,7 +151,6 @@ fi
 echo ""
 info "Installing to ${TARGET}..."
 
-# Remove existing installation
 if [ -d "$TARGET" ]; then
     info "Existing installation found. Removing ${TARGET}..."
     rm -rf "$TARGET" || die "Failed to remove existing installation: $TARGET"
@@ -143,14 +175,9 @@ echo ""
 echo "===== ZPM Compilation ====="
 
 BUILD_SCRIPT="$TARGET/src/build.sh"
-
-if [ ! -f "$BUILD_SCRIPT" ]; then
-    die "build.sh not found at: $BUILD_SCRIPT"
-fi
-
-if [ ! -x "$BUILD_SCRIPT" ]; then
-    chmod +x "$BUILD_SCRIPT" || die "Could not make build.sh executable."
-fi
+[ -f "$BUILD_SCRIPT" ] || die "build.sh not found at: $BUILD_SCRIPT"
+[ -x "$BUILD_SCRIPT" ] || chmod +x "$BUILD_SCRIPT" \
+    || die "Could not make build.sh executable."
 
 info "Recompiling ZPM (this may take a while)..."
 cd "$TARGET/src" || die "Failed to enter $TARGET/src"
@@ -168,7 +195,6 @@ cd "$TARGET" || true
 # ── SYMLINKS ──────────────────────────────────────────────────────────────────
 info "Updating symlinks in /usr/bin..."
 
-# Remove stale symlinks pointing to old TARGET/bin
 find /usr/bin -maxdepth 1 -type l | while read -r link; do
     target_link=$(readlink "$link" 2>/dev/null || true)
     if [[ "$target_link" == "${TARGET}/bin/"* ]]; then
@@ -176,7 +202,6 @@ find /usr/bin -maxdepth 1 -type l | while read -r link; do
     fi
 done
 
-# Create new symlinks
 if [ -d "$TARGET/bin" ] && [ -n "$(ls -A "$TARGET/bin" 2>/dev/null)" ]; then
     for bin_file in "$TARGET/bin"/*; do
         [ -f "$bin_file" ] || continue
@@ -193,6 +218,7 @@ fi
 rm -f "$TARGET/PREVERSION.txt" 2>/dev/null || true
 rm -rf "$SRC_DIR"
 cd ~
+
 # ── DONE ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "Installation complete!"
