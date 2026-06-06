@@ -2,11 +2,13 @@
 set -euo pipefail
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
-readonly LOG="/tmp/ZMP_INETINSTALL.log"
-readonly TMP="/tmp/ZMP_INETINSTALL_$$"
+readonly LOG="/tmp/ZPM_INETINSTALL.log"
+readonly TMP="/tmp/ZPM_INETINSTALL_$$"
 readonly TARGET="/opt/ZPM"
 readonly GITHUB_REPO="Zielina-Konrad-productions/ZPM"
-readonly REQUIRED_DEPS=(curl git wget python3 g++ sudo zip)
+readonly REQUIRED_DEPS_APT=(curl git wget python3 g++ sudo zip)
+readonly REQUIRED_DEPS_ZYPPER=(curl git wget python3 gcc-c++ sudo zip)
+readonly REQUIRED_DEPS_DNF=(curl git wget python3 gcc-c++ sudo zip)
 
 # ── LOGGING ───────────────────────────────────────────────────────────────────
 exec > >(tee -a "$LOG") 2>&1
@@ -16,40 +18,23 @@ echo "===== ZPM Internet Installer ====="
 cleanup() {
     local exit_code=$?
     rm -rf "$TMP"
-
     if [ "$exit_code" -ne 0 ]; then
         echo ""
         echo "Installation FAILED (exit code: $exit_code)$(printf '%*s' $((14 - ${#exit_code})) '')"
         echo "See full log: $LOG$(printf '%*s' $((30 - ${#LOG})) '')"
     fi
-
     exit "$exit_code"
 }
 trap cleanup EXIT
 
 # ── HELPER FUNCTIONS ──────────────────────────────────────────────────────────
-die() {
-    echo "ERROR: $*" >&2
-    exit 1
-}
-
-info() {
-    echo "[*] $*"
-}
-
-ok() {
-    echo "[+] $*"
-}
-
-warn() {
-    echo "[!] WARNING: $*"
-}
+die()  { echo "ERROR: $*" >&2; exit 1; }
+info() { echo "[*] $*"; }
+ok()   { echo "[+] $*"; }
+warn() { echo "[!] WARNING: $*"; }
 
 ask() {
-    # ask <variable_name> <prompt>
-    local _var="$1"
-    local _prompt="$2"
-    local _answer
+    local _var="$1" _prompt="$2" _answer
     while true; do
         read -rp "$_prompt [y/n] " _answer
         case "$_answer" in
@@ -65,10 +50,37 @@ if [ "$(id -u)" -ne 0 ]; then
     die "This script must be run as root. Use: sudo $0"
 fi
 
-# ── OS CHECK ──────────────────────────────────────────────────────────────────
-if ! command -v apt-get &>/dev/null; then
-    die "apt-get not found. This installer supports Debian/Ubuntu-based systems only."
-fi
+# ── PM DETECTION ─────────────────────────────────────────────────────────────
+detect_pm() {
+    if [ -f /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        case "${ID_LIKE:-} ${ID:-}" in
+            *debian*|*ubuntu*) echo "apt";    return ;;
+            *suse*|*opensuse*) echo "zypper"; return ;;
+            *fedora*|*rhel*|*centos*|*rocky*|*alma*) echo "dnf"; return ;;
+        esac
+    fi
+    command -v apt-get &>/dev/null && echo "apt"    && return
+    command -v zypper  &>/dev/null && echo "zypper" && return
+    command -v dnf     &>/dev/null && echo "dnf"    && return
+    echo "unknown"
+}
+
+PM=$(detect_pm)
+
+case "$PM" in
+    apt)    info "Detected package manager: APT (Debian/Ubuntu)" ;;
+    zypper) info "Detected package manager: Zypper (openSUSE/SLES)" ;;
+    dnf)    info "Detected package manager: DNF (Fedora/RHEL/Rocky/Alma)" ;;
+    *)
+        die "Unsupported system. ZPM requires apt, zypper, or dnf.
+Supported distributions:
+  - Debian / Ubuntu (and derivatives)
+  - openSUSE / SLES
+  - Fedora / RHEL / CentOS / Rocky Linux / AlmaLinux"
+        ;;
+esac
 
 # ── CONFIRM INSTALL ───────────────────────────────────────────────────────────
 ask confirm "Start installation of ZPM?"
@@ -80,8 +92,15 @@ fi
 # ── DEPENDENCIES ──────────────────────────────────────────────────────────────
 echo ""
 echo "====== ZPM Dependencies ======="
+
+case "$PM" in
+    apt)    DEPS=("${REQUIRED_DEPS_APT[@]}") ;;
+    zypper) DEPS=("${REQUIRED_DEPS_ZYPPER[@]}") ;;
+    dnf)    DEPS=("${REQUIRED_DEPS_DNF[@]}") ;;
+esac
+
 echo "Required packages:"
-for dep in "${REQUIRED_DEPS[@]}"; do
+for dep in "${DEPS[@]}"; do
     echo "  - $dep"
 done
 echo ""
@@ -89,27 +108,37 @@ echo ""
 ask dep "Install dependencies?"
 
 if [ "$dep" = "y" ]; then
-    export DEBIAN_FRONTEND=noninteractive
-
-    # ── WAIT FOR APT LOCK ──
-    apt_wait=0
-    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-        info "Waiting for dpkg lock... (${apt_wait}s)"
-        sleep 2
-        apt_wait=$((apt_wait + 2))
-        if [ "$apt_wait" -ge 60 ]; then
-            die "dpkg lock held for over 60s. Another process may be using apt."
-        fi
-    done
-
-    info "Updating package lists..."
-    apt-get update -y > "$LOG" 2>&1 \
-        || die "apt-get update failed. Check your internet connection."
-
-    info "Installing dependencies..."
-    apt-get install -y "${REQUIRED_DEPS[@]}" >> "$LOG" 2>&1 \
-        || die "Failed to install dependencies."
-
+    case "$PM" in
+        apt)
+            export DEBIAN_FRONTEND=noninteractive
+            apt_wait=0
+            while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+                info "Waiting for dpkg lock... (${apt_wait}s)"
+                sleep 2
+                apt_wait=$((apt_wait + 2))
+                [ "$apt_wait" -ge 60 ] && die "dpkg lock held for over 60s."
+            done
+            info "Updating package lists..."
+            apt-get update -y > "$LOG" 2>&1 \
+                || die "apt-get update failed. Check your internet connection."
+            info "Installing dependencies..."
+            apt-get install -y "${DEPS[@]}" >> "$LOG" 2>&1 \
+                || die "Failed to install dependencies."
+            ;;
+        zypper)
+            info "Refreshing repositories..."
+            zypper refresh >> "$LOG" 2>&1 \
+                || die "zypper refresh failed."
+            info "Installing dependencies..."
+            zypper install -y "${DEPS[@]}" >> "$LOG" 2>&1 \
+                || die "Failed to install dependencies."
+            ;;
+        dnf)
+            info "Installing dependencies..."
+            dnf install -y "${DEPS[@]}" >> "$LOG" 2>&1 \
+                || die "Failed to install dependencies."
+            ;;
+    esac
     ok "Dependencies installed successfully."
 else
     warn "Skipping dependency installation. The build may fail if packages are missing."
@@ -123,39 +152,30 @@ LATEST=$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest
     | grep '"tag_name"' \
     | cut -d '"' -f4) || die "Failed to reach GitHub API. Check your internet connection."
 
-if [ -z "${LATEST:-}" ]; then
-    die "Could not determine latest version. The GitHub API response was empty or malformed."
-fi
+[ -z "${LATEST:-}" ] && die "Could not determine latest version. GitHub API response was empty."
 
 ok "Latest version: $LATEST"
 
 # ── PREPARE TMP DIR ───────────────────────────────────────────────────────────
 mkdir -p "$TMP" || die "Failed to create temp directory: $TMP"
-cd "$TMP" || die "Failed to enter temp directory: $TMP"
+cd "$TMP"       || die "Failed to enter temp directory: $TMP"
 
 # ── DOWNLOAD ──────────────────────────────────────────────────────────────────
 TARBALL="${LATEST}.tar.gz"
 DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/archive/refs/tags/${LATEST}.tar.gz"
 
 info "Downloading $TARBALL..."
-if ! curl -fsSL "$DOWNLOAD_URL" -o "$TARBALL"; then
-    die "Download failed. URL: $DOWNLOAD_URL"
-fi
+curl -fsSL "$DOWNLOAD_URL" -o "$TARBALL" \
+    || die "Download failed. URL: $DOWNLOAD_URL"
 
-# Verify the tarball is not empty/corrupt
-if [ ! -s "$TARBALL" ]; then
-    die "Downloaded archive is empty or corrupt: $TARBALL"
-fi
+[ -s "$TARBALL" ] || die "Downloaded archive is empty or corrupt: $TARBALL"
 
 # ── EXTRACT ───────────────────────────────────────────────────────────────────
 info "Extracting archive..."
 tar -xzf "$TARBALL" >> "$LOG" 2>&1 || die "Failed to extract archive: $TARBALL"
 
-# Find extracted directory (GitHub names it ZPM-<version>)
 EXTRACTED_DIR=$(find "$TMP" -maxdepth 1 -type d -name "ZPM-*" | head -n1)
-if [ -z "$EXTRACTED_DIR" ]; then
-    die "Extraction produced no ZPM-* directory. Archive may be corrupt."
-fi
+[ -z "$EXTRACTED_DIR" ] && die "Extraction produced no ZPM-* directory. Archive may be corrupt."
 
 ok "Extracted to: $EXTRACTED_DIR"
 cd "$EXTRACTED_DIR" || die "Failed to enter extracted directory."
@@ -163,15 +183,14 @@ cd "$EXTRACTED_DIR" || die "Failed to enter extracted directory."
 # ── INSTALL TO TARGET ─────────────────────────────────────────────────────────
 info "Installing to ${TARGET}..."
 
-# Remove existing installation
 if [ -d "$TARGET" ]; then
     info "Existing installation found. Removing ${TARGET}..."
     rm -rf "$TARGET" || die "Failed to remove existing installation: $TARGET"
     ok "Old installation removed."
 fi
 
-mkdir -p "$TARGET" || die "Failed to create target directory: $TARGET"
-cp -r . "$TARGET/" || die "Failed to copy files to $TARGET"
+mkdir -p "$TARGET"       || die "Failed to create target directory: $TARGET"
+cp -r . "$TARGET/"       || die "Failed to copy files to $TARGET"
 ok "Files copied to $TARGET"
 
 # ── BIN PERMISSIONS ───────────────────────────────────────────────────────────
@@ -188,14 +207,9 @@ echo ""
 echo "===== ZPM Compilation ====="
 
 BUILD_SCRIPT="$TARGET/src/build.sh"
-
-if [ ! -f "$BUILD_SCRIPT" ]; then
-    die "build.sh not found at: $BUILD_SCRIPT"
-fi
-
-if [ ! -x "$BUILD_SCRIPT" ]; then
-    chmod +x "$BUILD_SCRIPT" || die "Could not make build.sh executable."
-fi
+[ -f "$BUILD_SCRIPT" ] || die "build.sh not found at: $BUILD_SCRIPT"
+[ -x "$BUILD_SCRIPT" ] || chmod +x "$BUILD_SCRIPT" \
+    || die "Could not make build.sh executable."
 
 info "Recompiling ZPM (this may take a while)..."
 cd "$TARGET/src" || die "Failed to enter $TARGET/src"
@@ -204,7 +218,7 @@ if bash build.sh; then
     ok "Recompilation complete."
 else
     echo "ERROR: Compilation failed!"
-    rm -rf /opt/ZPM
+    rm -rf "$TARGET"
     rm -rf "$TMP"
     exit 1
 fi
@@ -214,7 +228,6 @@ cd "$TARGET" || true
 # ── SYMLINKS ──────────────────────────────────────────────────────────────────
 info "Updating symlinks in /usr/bin..."
 
-# Remove stale symlinks pointing to old TARGET/bin
 find /usr/bin -maxdepth 1 -type l | while read -r link; do
     target_link=$(readlink "$link" 2>/dev/null || true)
     if [[ "$target_link" == "${TARGET}/bin/"* ]]; then
@@ -222,7 +235,6 @@ find /usr/bin -maxdepth 1 -type l | while read -r link; do
     fi
 done
 
-# Create new symlinks
 if [ -d "$TARGET/bin" ] && [ -n "$(ls -A "$TARGET/bin" 2>/dev/null)" ]; then
     for bin_file in "$TARGET/bin"/*; do
         [ -f "$bin_file" ] || continue
