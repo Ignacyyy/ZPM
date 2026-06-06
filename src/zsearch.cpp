@@ -1,209 +1,381 @@
 #include "main.h"
 using namespace std;
-// lowercase
-std::string toLower(std::string str) {
-    std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+
+// ─── helpers ──────────────────────────────────────────────────────────────────
+string toLower(string str) {
+    transform(str.begin(), str.end(), str.begin(), ::tolower);
     return str;
 }
 
-// highlight
-std::string highlight(const std::string& text, const std::string& query) {
-    std::string lowerText  = toLower(text);
-    std::string lowerQuery = toLower(query);
+string highlight(const string& text, const string& query) {
+    string lowerText  = toLower(text);
+    string lowerQuery = toLower(query);
     size_t pos = lowerText.find(lowerQuery);
-    if (pos == std::string::npos) return text;
+    if (pos == string::npos) return text;
     return text.substr(0, pos) +
-        YELLOW + text.substr(pos, query.length()) + RESET +
-        text.substr(pos + query.length());
+    YELLOW + text.substr(pos, query.length()) + RESET +
+    text.substr(pos + query.length());
 }
-//komunikat pomocy
+
+// ─── komunikaty ───────────────────────────────────────────────────────────────
 void helpmessage(const char* progName) {
-    cout << RED << "Usage: " << RESET << progName << " [options] or zpm search [options]\n\n";
+    cout << RED << "Usage: " << RESET << progName
+    << " <query> [options]  or  zpm search <query> [options]\n\n";
     cout << "Options:\n";
-    cout << "  -h, --help           Show help\n";
-    cout << "  -v, --version        Show version\n";
-    
+    cout << "  -h, --help     Show help\n";
+    cout << "  -v, --version  Show version\n";
 }
 
-// Komunikat wersji
 void versionmessage() {
-    cout << RED << "zupgr component version: v" << zpm_version::version() << " of ZPM\n" << RESET;
-    cout << "https://github.com/Zielina-Konrad-productions/ZPM" << endl;
-    cout << "Copyright (c) 2026 Ignacyyy & Ry3ball" << endl;
-    cout << "License: MIT" << endl;
+    cout << RED << "zsearch component version: v" << zpm_version::version() << " of ZPM\n" << RESET;
+    cout << "https://github.com/Zielina-Konrad-productions/ZPM\n";
+    cout << "Copyright (c) 2026 Ignacyyy & Ry3ball\nLicense: MIT\n";
 }
 
+// ─── wykrywanie PM ────────────────────────────────────────────────────────────
+string get_package_manager() {
+    FILE* f = fopen("/etc/os-release", "r");
+    if (f) {
+        char line[256];
+        string id, id_like;
+        while (fgets(line, sizeof(line), f)) {
+            string s(line);
+            if (!s.empty() && s.back() == '\n') s.pop_back();
+            auto stripQ = [](const string& v) {
+                string r = v;
+                if (r.size() >= 2 && r.front() == '"' && r.back() == '"')
+                    r = r.substr(1, r.size() - 2);
+                return r;
+            };
+            if      (s.rfind("ID=",      0) == 0) id      = stripQ(s.substr(3));
+            else if (s.rfind("ID_LIKE=", 0) == 0) id_like = stripQ(s.substr(8));
+        }
+        fclose(f);
+
+        auto word = [](const string& hay, const string& needle) {
+            size_t pos = hay.find(needle);
+            if (pos == string::npos) return false;
+            bool l = (pos == 0 || hay[pos-1] == ' ');
+            bool r = (pos + needle.size() == hay.size() || hay[pos+needle.size()] == ' ');
+            return l && r;
+        };
+
+        for (const string& src : {id_like, id}) {
+            if (word(src,"debian") || word(src,"ubuntu"))                  return "apt";
+            if (word(src,"suse")   || word(src,"opensuse"))                return "zypper";
+            if (word(src,"fedora") || word(src,"rhel") || word(src,"centos")
+                || word(src,"rocky")  || word(src,"alma"))                    return "dnf";
+        }
+    }
+    if (access("/usr/bin/apt-get", X_OK)==0 || access("/bin/apt-get", X_OK)==0) return "apt";
+    if (access("/usr/bin/zypper",  X_OK)==0) return "zypper";
+    if (access("/usr/bin/dnf",     X_OK)==0) return "dnf";
+    return "unknown";
+}
+
+// ─── sekcje wyszukiwania ──────────────────────────────────────────────────────
+
+void searchApt(const string& query, const string& queryTrimmed) {
+    string command = "apt-cache search " + query;
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe) { cerr << RED << "Error running apt-cache\n" << RESET; return; }
+
+    char buffer[512];
+    int  count = 0;
+    bool headerPrinted = false;
+
+    while (fgets(buffer, sizeof(buffer), pipe)) {
+        string line(buffer);
+        size_t dash = line.find(" - ");
+        if (dash != string::npos) {
+            if (!headerPrinted) {
+                cout << YELLOW << "=== APT results ===\n" << RESET;
+                headerPrinted = true;
+            }
+            string name = highlight(line.substr(0, dash), queryTrimmed);
+            string desc = highlight(line.substr(dash + 3), queryTrimmed);
+            cout << GREEN << "[APT]" << RESET << " " << name << "\n";
+            cout << "    " << desc;
+            count++;
+        }
+    }
+    pclose(pipe);
+
+    if (count == 0)
+        cout << YELLOW << "=== APT: no results ===\n" << RESET;
+    else
+        cout << "\n" << GREEN << " APT found: " << count << " packages\n" << RESET;
+}
+
+void searchZypper(const string& query, const string& queryTrimmed) {
+    // zypper search zwraca tabelę: S | Name | Summary | Type
+    string command = "zypper --no-refresh search " + query + " 2>/dev/null";
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe) { cerr << RED << "Error running zypper\n" << RESET; return; }
+
+    char buffer[512];
+    int  count = 0;
+    bool headerPrinted = false;
+    bool pastHeader    = false; // pomijamy linie nagłówka tabeli
+
+    while (fgets(buffer, sizeof(buffer), pipe)) {
+        string line(buffer);
+        line.erase(line.find_last_not_of(" \n\r\t") + 1);
+
+        // Linie separatora (--+--+--) i nagłówek (S | Name | ...)
+        if (line.find("-+-") != string::npos) { pastHeader = true; continue; }
+        if (!pastHeader) continue;
+        if (line.empty()) continue;
+
+        // Format: "i | vim | Vi IMproved | package"
+        // lub:    "  | vim | Vi IMproved | package"
+        auto splitPipe = [](const string& s) {
+            vector<string> parts;
+            size_t start = 0, pos;
+            while ((pos = s.find('|', start)) != string::npos) {
+                string part = s.substr(start, pos - start);
+                part.erase(0, part.find_first_not_of(" \t"));
+                part.erase(part.find_last_not_of(" \t") + 1);
+                parts.push_back(part);
+                start = pos + 1;
+            }
+            string last = s.substr(start);
+            last.erase(0, last.find_first_not_of(" \t"));
+            last.erase(last.find_last_not_of(" \t") + 1);
+            parts.push_back(last);
+            return parts;
+        };
+
+        vector<string> cols = splitPipe(line);
+        if (cols.size() < 3) continue;
+
+        string name    = cols[1];
+        string summary = cols[2];
+        if (name.empty()) continue;
+
+        if (!headerPrinted) {
+            cout << YELLOW << "=== Zypper results ===\n" << RESET;
+            headerPrinted = true;
+        }
+
+        cout << GREEN << "[ZYPPER]" << RESET << " "
+        << highlight(name, queryTrimmed) << "\n";
+        if (!summary.empty())
+            cout << "    " << highlight(summary, queryTrimmed) << "\n";
+        count++;
+    }
+    pclose(pipe);
+
+    if (count == 0)
+        cout << YELLOW << "=== Zypper: no results ===\n" << RESET;
+    else
+        cout << "\n" << GREEN << " Zypper found: " << count << " packages\n" << RESET;
+}
+
+void searchDnf(const string& query, const string& queryTrimmed) {
+    // dnf search zwraca bloki: "name.arch : summary"
+    string command = "dnf search " + query + " 2>/dev/null";
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe) { cerr << RED << "Error running dnf\n" << RESET; return; }
+
+    char buffer[512];
+    int  count = 0;
+    bool headerPrinted = false;
+
+    while (fgets(buffer, sizeof(buffer), pipe)) {
+        string line(buffer);
+        line.erase(line.find_last_not_of(" \n\r\t") + 1);
+        if (line.empty()) continue;
+        // Pomiń linie nagłówkowe dnf ("Last metadata...", "===...")
+        if (line.find("===") != string::npos) continue;
+        if (line.rfind("Last", 0) == 0) continue;
+
+        // Format: "vim-enhanced.x86_64 : Vi IMproved..."
+        size_t colon = line.find(" : ");
+        if (colon == string::npos) continue;
+
+        string nameArch = line.substr(0, colon);
+        string summary  = line.substr(colon + 3);
+        nameArch.erase(nameArch.find_last_not_of(" \t") + 1);
+
+        // Wytnij arch (.x86_64, .noarch itp.) dla czytelności
+        string name = nameArch;
+        size_t dot = nameArch.rfind('.');
+        if (dot != string::npos) name = nameArch.substr(0, dot);
+
+        if (!headerPrinted) {
+            cout << YELLOW << "=== DNF results ===\n" << RESET;
+            headerPrinted = true;
+        }
+
+        cout << GREEN << "[DNF]" << RESET << " "
+        << highlight(name, queryTrimmed) << "\n";
+        if (!summary.empty())
+            cout << "    " << highlight(summary, queryTrimmed) << "\n";
+        count++;
+    }
+    pclose(pipe);
+
+    if (count == 0)
+        cout << YELLOW << "=== DNF: no results ===\n" << RESET;
+    else
+        cout << "\n" << GREEN << " DNF found: " << count << " packages\n" << RESET;
+}
+
+void searchFlatpak(const string& query, const string& queryTrimmed) {
+    bool hasFlatpak = (access("/usr/bin/flatpak", X_OK) == 0 ||
+    access("/bin/flatpak",     X_OK) == 0);
+    if (!hasFlatpak) return;
+
+    string command = "flatpak search --columns=application,name,description "
+    + query + " 2>/dev/null";
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe) return;
+
+    char buffer[512];
+    int  count = 0;
+    bool headerPrinted = false;
+
+    while (fgets(buffer, sizeof(buffer), pipe)) {
+        string line(buffer);
+        line.erase(line.find_last_not_of(" \n\r\t") + 1);
+
+        size_t t1 = line.find('\t');
+        size_t t2 = line.find('\t', t1 + 1);
+        if (t1 == string::npos) continue;
+
+        string appId = line.substr(0, t1);
+        string name  = (t2 != string::npos) ? line.substr(t1+1, t2-t1-1) : line.substr(t1+1);
+        string desc  = (t2 != string::npos) ? line.substr(t2+1) : "";
+
+        if (!headerPrinted) {
+            cout << "\n" << YELLOW << "=== Flatpak results ===\n" << RESET;
+            headerPrinted = true;
+        }
+
+        cout << GREEN << "[FLATPAK]" << RESET << " "
+        << highlight(appId, queryTrimmed) << " - "
+        << highlight(name,  queryTrimmed) << "\n";
+        if (!desc.empty())
+            cout << "    " << highlight(desc, queryTrimmed) << "\n";
+        count++;
+    }
+    pclose(pipe);
+
+    if (count == 0)
+        cout << "\n" << YELLOW << "=== Flatpak: no results ===\n" << RESET;
+    else
+        cout << "\n" << GREEN << " Flatpak found: " << count << " packages\n" << RESET;
+}
+
+void searchSnap(const string& query, const string& queryTrimmed) {
+    bool hasSnap = (access("/usr/bin/snap", X_OK) == 0 ||
+    access("/bin/snap",     X_OK) == 0 ||
+    access("/snap/bin/snap",X_OK) == 0);
+    if (!hasSnap) return;
+
+    string command = "snap find " + query + " 2>/dev/null";
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe) return;
+
+    char buffer[512];
+    int  count = 0;
+    bool headerPrinted = false;
+
+    // Pierwsza linia to nagłówek — pomijamy
+    fgets(buffer, sizeof(buffer), pipe);
+
+    while (fgets(buffer, sizeof(buffer), pipe)) {
+        string line(buffer);
+        line.erase(line.find_last_not_of(" \n\r\t") + 1);
+        if (line.empty()) continue;
+
+        istringstream iss(line);
+        string name, version, publisher, notes, summary;
+        iss >> name >> version >> publisher >> notes;
+        getline(iss, summary);
+        if (!summary.empty())
+            summary.erase(0, summary.find_first_not_of(" \t"));
+
+        if (!headerPrinted) {
+            cout << "\n" << YELLOW << "=== Snap results ===\n" << RESET;
+            headerPrinted = true;
+        }
+
+        cout << GREEN << "[SNAP]" << RESET << " "
+        << highlight(name, queryTrimmed) << "\n";
+        if (!summary.empty())
+            cout << "    " << highlight(summary, queryTrimmed) << "\n";
+        count++;
+    }
+    pclose(pipe);
+
+    if (count == 0)
+        cout << "\n" << YELLOW << "=== Snap: no results ===\n" << RESET;
+    else
+        cout << "\n" << GREEN << " Snap found: " << count << " packages\n" << RESET;
+}
+
+// ─── main ─────────────────────────────────────────────────────────────────────
 int main(int argc, char* argv[]) {
     zpm_update::checkForUpdates();
-    using namespace std;
 
     bool showHelp    = false;
     bool showVersion = false;
+    string query;
 
     for (int i = 1; i < argc; ++i) {
         string arg = argv[i];
-        if      (arg == "--help"    || arg == "-h") showHelp    = true;
-        else if (arg == "--version" || arg == "-v") showVersion = true;
+
+        if      (arg == "--help"    || arg == "-h") { showHelp    = true; continue; }
+        else if (arg == "--version" || arg == "-v") { showVersion = true; continue; }
+
+        // Walidacja — blokuj shell injection
+        if (arg.find(';') != string::npos ||
+            arg.find('&') != string::npos ||
+            arg.find('|') != string::npos) {
+            cerr << RED << "Invalid characters in query!\n" << RESET;
+        return 1;
+            }
+
+            if (arg[0] != '-') query += arg + " ";
     }
 
     if (showVersion && showHelp) {
-        cout << YELLOW << "--version\n" << RESET;
-        versionmessage();
-        cout << YELLOW << "--help\n" << RESET;
-        helpmessage(argv[0]);
+        cout << YELLOW << "--version\n" << RESET; versionmessage();
+        cout << "\n" << YELLOW << "--help\n"    << RESET; helpmessage(argv[0]);
         return 0;
     }
-    if (showVersion) {
-        helpmessage(argv[0]);
-        return 0;
-    }
-    if (showHelp) {
-        versionmessage();
-        return 0;
-    }
+    if (showVersion) { versionmessage();     return 0; }
+    if (showHelp)    { helpmessage(argv[0]); return 0; }
 
-    std::string query;
-    for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
-        if (arg.find(';') != std::string::npos ||
-            arg.find('&') != std::string::npos ||
-            arg.find('|') != std::string::npos) {
-            std::cout << RED << "Invalid characters!\n" << RESET;
-            return 1;
-        }
-        if (arg[0] != '-') query += arg + " ";
+    // Usuń trailing space
+    string queryTrimmed = query;
+    if (!queryTrimmed.empty() && queryTrimmed.back() == ' ')
+        queryTrimmed.pop_back();
+
+    if (queryTrimmed.empty()) {
+        cerr << YELLOW << "No search query specified!\n" << RESET;
+        return 1;
     }
 
-    std::string queryTrimmed = query;
-    if (!queryTrimmed.empty()) queryTrimmed.pop_back(); // usuń trailing space
+    string pm = get_package_manager();
 
-    std::cout << GREEN << " Searching: " << RESET << queryTrimmed << "\n\n";
+    cout << GREEN << " Searching: " << RESET << queryTrimmed << "\n\n";
 
-    // ─── APT ─────────────────────────────────────────────────────────────────
-    {
-        std::string command = "apt-cache search " + query;
-        FILE* pipe = popen(command.c_str(), "r");
-        if (!pipe) {
-            std::cerr << RED << "Error running apt\n" << RESET;
-            return 1;
-        }
-
-        char buffer[256];
-        int count = 0;
-        bool headerPrinted = false;
-
-        while (fgets(buffer, sizeof(buffer), pipe)) {
-            std::string line(buffer);
-            size_t dash = line.find(" - ");
-            if (dash != std::string::npos) {
-                if (!headerPrinted) {
-                    std::cout << YELLOW << "=== APT results ===\n" << RESET;
-                    headerPrinted = true;
-                }
-                std::string name = highlight(line.substr(0, dash), queryTrimmed);
-                std::string desc = highlight(line.substr(dash + 3), queryTrimmed);
-                std::cout << GREEN << "[APT]" << RESET << " " << name << "\n";
-                std::cout << "    " << desc;
-                count++;
-            }
-        }
-        pclose(pipe);
-
-        if (count == 0)
-            std::cout << YELLOW << "=== APT: no results ===\n" << RESET;
-        else
-            std::cout << "\n" << GREEN << " APT found: " << count << " packages\n" << RESET;
+    // Natywny PM
+    if      (pm == "apt")    searchApt(query, queryTrimmed);
+    else if (pm == "zypper") searchZypper(query, queryTrimmed);
+    else if (pm == "dnf")    searchDnf(query, queryTrimmed);
+    else {
+        cerr << RED << "Error: Could not detect a supported package manager "
+        << "(apt / zypper / dnf).\n" << RESET;
+        return 1;
     }
 
-    // ─── FLATPAK ─────────────────────────────────────────────────────────────
-    bool hasFlatpak = (access("/usr/bin/flatpak", X_OK) == 0 ||
-                       access("/bin/flatpak",     X_OK) == 0);
-    if (hasFlatpak) {
-        std::string command = "flatpak search --columns=application,name,description " + query + " 2>/dev/null";
-        FILE* pipe = popen(command.c_str(), "r");
-
-        char buffer[512];
-        int count = 0;
-        bool headerPrinted = false;
-
-        while (fgets(buffer, sizeof(buffer), pipe)) {
-            std::string line(buffer);
-            line.erase(line.find_last_not_of(" \n\r\t") + 1);
-
-            size_t t1 = line.find('\t');
-            size_t t2 = line.find('\t', t1 + 1);
-            if (t1 == std::string::npos) continue;
-
-            std::string appId = line.substr(0, t1);
-            std::string name  = (t2 != std::string::npos) ? line.substr(t1 + 1, t2 - t1 - 1) : line.substr(t1 + 1);
-            std::string desc  = (t2 != std::string::npos) ? line.substr(t2 + 1) : "";
-
-            if (!headerPrinted) {
-                std::cout << "\n" << YELLOW << "=== Flatpak results ===\n" << RESET;
-                headerPrinted = true;
-            }
-
-            std::cout << GREEN << "[FLATPAK]" << RESET << " "
-                      << highlight(appId, queryTrimmed) << " - "
-                      << highlight(name,  queryTrimmed) << "\n";
-            if (!desc.empty())
-                std::cout << "    " << highlight(desc, queryTrimmed) << "\n";
-            count++;
-        }
-        pclose(pipe);
-
-        if (count == 0)
-            std::cout << "\n" << YELLOW << "=== Flatpak: no results ===\n" << RESET;
-        else
-            std::cout << "\n" << GREEN << " Flatpak found: " << count << " packages\n" << RESET;
-    }
-
-    // ─── SNAP ────────────────────────────────────────────────────────────────
-    bool hasSnap = (access("/usr/bin/snap", X_OK) == 0 ||
-                    access("/bin/snap",     X_OK) == 0 ||
-                    access("/snap/bin/snap",X_OK) == 0);
-    if (hasSnap) {
-        std::string command = "snap find " + query + " 2>/dev/null";
-        FILE* pipe = popen(command.c_str(), "r");
-
-        char buffer[512];
-        int count = 0;
-        bool headerPrinted = false;
-
-  
-        fgets(buffer, sizeof(buffer), pipe);
-
-        while (fgets(buffer, sizeof(buffer), pipe)) {
-            std::string line(buffer);
-            line.erase(line.find_last_not_of(" \n\r\t") + 1);
-            if (line.empty()) continue;
-
-           
-            std::istringstream iss(line);
-            std::string name, version, publisher, notes, summary;
-            iss >> name >> version >> publisher >> notes;
-            std::getline(iss, summary);
-            if (!summary.empty() && summary[0] == ' ')
-                summary.erase(0, summary.find_first_not_of(" \t"));
-
-            if (!headerPrinted) {
-                std::cout << "\n" << YELLOW << "=== Snap results ===\n" << RESET;
-                headerPrinted = true;
-            }
-
-            std::cout << GREEN << "[SNAP]" << RESET << " "
-                      << highlight(name, queryTrimmed) << "\n";
-            if (!summary.empty())
-                std::cout << "    " << highlight(summary, queryTrimmed) << "\n";
-            count++;
-        }
-        pclose(pipe);
-
-        if (count == 0)
-            std::cout << "\n" << YELLOW << "=== Snap: no results ===\n" << RESET;
-        else
-            std::cout << "\n" << GREEN << " Snap found: " << count << " packages\n" << RESET;
-    }
+    // Zawsze: Flatpak i Snap
+    searchFlatpak(query, queryTrimmed);
+    searchSnap(query, queryTrimmed);
 
     return 0;
 }

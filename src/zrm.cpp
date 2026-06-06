@@ -1,3 +1,4 @@
+
 #include "main.h"
 
 using namespace std;
@@ -6,6 +7,7 @@ const string LOG_PATH = "/tmp/zrm.log";
 
 volatile sig_atomic_t g_interrupted = 0;
 string g_flatpakFlag = "";
+string g_pm          = "apt"; // wykrywany w main(), używany w helperach
 
 struct PackageResult {
     string name;
@@ -17,7 +19,7 @@ struct RemoveTarget {
     string name;
     bool   useFlatpak = false;
     bool   useSnap    = false;
-    bool   purge      = false;
+    bool   purge      = false; // tylko APT
 };
 
 // ─── wiadomość pomocy ─────────────────────────────────────────────────────────
@@ -25,8 +27,8 @@ void helpmessage(const char* progName) {
     cout << RED << "Usage: " << RESET << progName << " [options] [packages...]"
          << " or zpm rm/remove [options] [packages...]\n\n";
     cout << RED << "Options:\n" << RESET;
-    cout << "  (auto)         Picks APT / Flatpak / Snap per package\n";
-    cout << "  --purge, -p    APT purge instead of remove\n";
+    cout << "  (auto)         Picks native PM / Flatpak / Snap per package\n";
+    cout << "  --purge, -p    APT purge instead of remove (APT only)\n";
     cout << "  --version, -v  Show version information\n";
     cout << "  --help,    -h  Show this help message\n";
 }
@@ -41,29 +43,74 @@ void versionmessage() {
 // ─── signal ───────────────────────────────────────────────────────────────────
 void handleSigint(int) { g_interrupted = 1; }
 
+// ─── wykrywanie PM ────────────────────────────────────────────────────────────
+string get_package_manager() {
+    FILE* f = fopen("/etc/os-release", "r");
+    if (f) {
+        char line[256];
+        string id, id_like;
+        while (fgets(line, sizeof(line), f)) {
+            string s(line);
+            if (!s.empty() && s.back() == '\n') s.pop_back();
+            auto stripQ = [](const string& v) {
+                string r = v;
+                if (r.size() >= 2 && r.front() == '"' && r.back() == '"')
+                    r = r.substr(1, r.size() - 2);
+                return r;
+            };
+            if      (s.rfind("ID=",      0) == 0) id      = stripQ(s.substr(3));
+            else if (s.rfind("ID_LIKE=", 0) == 0) id_like = stripQ(s.substr(8));
+        }
+        fclose(f);
+
+        auto word = [](const string& hay, const string& needle) {
+            size_t pos = hay.find(needle);
+            if (pos == string::npos) return false;
+            bool l = (pos == 0 || hay[pos-1] == ' ');
+            bool r = (pos + needle.size() == hay.size() || hay[pos+needle.size()] == ' ');
+            return l && r;
+        };
+
+        for (const string& src : {id_like, id}) {
+            if (word(src,"debian") || word(src,"ubuntu"))                  return "apt";
+            if (word(src,"suse")   || word(src,"opensuse"))                return "zypper";
+            if (word(src,"fedora") || word(src,"rhel") || word(src,"centos")
+             || word(src,"rocky")  || word(src,"alma"))                    return "dnf";
+        }
+    }
+    if (access("/usr/bin/apt-get", X_OK)==0 || access("/bin/apt-get", X_OK)==0) return "apt";
+    if (access("/usr/bin/zypper",  X_OK)==0) return "zypper";
+    if (access("/usr/bin/dnf",     X_OK)==0) return "dnf";
+    return "unknown";
+}
+
 // ─── flatpak remote detection ─────────────────────────────────────────────────
 string getFlatpakRemoteFlag() {
-    if (system("flatpak remotes --system 2>/dev/null | grep -q flathub") == 0)
-        return "--system";
-    if (system("flatpak remotes --user 2>/dev/null | grep -q flathub") == 0)
-        return "--user";
+    if (system("flatpak remotes --system 2>/dev/null | grep -q flathub") == 0) return "--system";
+    if (system("flatpak remotes --user   2>/dev/null | grep -q flathub") == 0) return "--user";
     return "";
 }
 
 // ─── detection helpers ────────────────────────────────────────────────────────
-bool isInstalledAPT(const string& pkg) {
-    string cmd = "dpkg-query -W -f='${Status}' " + pkg + " 2>/dev/null";
-    FILE* p = popen(cmd.c_str(), "r");
-    if (!p) return false;
-    char buf[128]; string status;
-    if (fgets(buf, sizeof(buf), p)) status = buf;
-    pclose(p);
-    return status.find("install ok installed") != string::npos;
+
+// Czy pakiet jest zainstalowany przez natywny PM?
+bool isInstalledNative(const string& pkg) {
+    if (g_pm == "apt") {
+        string cmd = "dpkg-query -W -f='${Status}' " + pkg + " 2>/dev/null";
+        FILE* p = popen(cmd.c_str(), "r");
+        if (!p) return false;
+        char buf[128]; string status;
+        if (fgets(buf, sizeof(buf), p)) status = buf;
+        pclose(p);
+        return status.find("install ok installed") != string::npos;
+    }
+    // zypper i dnf — oba używają rpm
+    return system(("rpm -q " + pkg + " >/dev/null 2>&1").c_str()) == 0;
 }
 
 bool isInstalledFlatpak(const string& pkg) {
-    string cmd = "flatpak list " + g_flatpakFlag + " --columns=application | grep -Fx \""
-                 + pkg + "\" >/dev/null 2>&1";
+    string cmd = "flatpak list " + g_flatpakFlag
+                 + " --columns=application | grep -Fx \"" + pkg + "\" >/dev/null 2>&1";
     return system(cmd.c_str()) == 0;
 }
 
@@ -101,30 +148,38 @@ vector<string> getInstalledFlatpaks(const string& query = "") {
     return results;
 }
 
+// ─── etykieta natywnego PM w menu ─────────────────────────────────────────────
+string nativeLabel() {
+    if (g_pm == "zypper") return "Zypper: ";
+    if (g_pm == "dnf")    return "DNF:    ";
+    return "APT:    ";
+}
+
 // ─── removal source menu ──────────────────────────────────────────────────────
 string chooseRemoveMenu(const string& pkg,
-                        bool aptInstalled,
+                        bool nativeInstalled,
                         bool snapInstalled,
                         bool flatpakInstalled,
-                        bool snapSystemAvail,
-                        bool flatpakSystemAvail) {
-
+                        bool snapAvail,
+                        bool flatpakAvail) {
     struct Option { int num; string key; };
     vector<Option> options;
     int idx = 1;
 
     cout << "\n" << BOLD << "Package: " << CYAN << pkg << RESET << "\n";
 
-    cout << "  " << BOLD << idx << ". APT:     " << RESET;
-    if (aptInstalled) {
+    // 1. Natywny PM
+    cout << "  " << BOLD << idx << ". " << nativeLabel() << RESET;
+    if (nativeInstalled) {
         cout << GREEN << "installed" << RESET << "\n";
-        options.push_back({idx, "apt"});
+        options.push_back({idx, "native"});
     } else {
         cout << RED << "none" << RESET << "\n";
     }
     idx++;
 
-    if (snapSystemAvail) {
+    // 2. Snap
+    if (snapAvail) {
         cout << "  " << BOLD << idx << ". Snap:    " << RESET;
         if (snapInstalled) {
             cout << GREEN << "installed" << RESET << "\n";
@@ -135,7 +190,8 @@ string chooseRemoveMenu(const string& pkg,
         idx++;
     }
 
-    if (flatpakSystemAvail) {
+    // 3. Flatpak
+    if (flatpakAvail) {
         cout << "  " << BOLD << idx << ". Flatpak: " << RESET;
         if (flatpakInstalled) {
             cout << GREEN << "installed" << RESET << "\n";
@@ -178,7 +234,7 @@ vector<string> chooseFlatpakToRemove(const vector<string>& installed, const stri
     if (!query.empty()) cout << " matching '" << query << "'";
     cout << ":\n" << RESET;
     for (size_t i = 0; i < installed.size(); ++i)
-        cout << "  " << (i + 1) << ". " << installed[i] << "\n";
+        cout << "  " << (i+1) << ". " << installed[i] << "\n";
     cout << "  0. Cancel\n" << BOLD << "Enter number(s) to remove (e.g. 1 3): " << RESET;
 
     string input;
@@ -194,7 +250,7 @@ vector<string> chooseFlatpakToRemove(const vector<string>& installed, const stri
         try {
             int n = stoi(tok);
             if (n == 0) return {};
-            if (n >= 1 && n <= (int)installed.size()) selected.push_back(installed[n - 1]);
+            if (n >= 1 && n <= (int)installed.size()) selected.push_back(installed[n-1]);
         } catch (...) {}
         pos = end;
     }
@@ -202,26 +258,40 @@ vector<string> chooseFlatpakToRemove(const vector<string>& installed, const stri
 }
 
 // ─── removers ─────────────────────────────────────────────────────────────────
-int removeAPT(const string& pkg, bool purge, float startPct, float endPct, int idx, int total) {
-    string op    = purge ? "purge" : "remove";
-    string label = to_string(idx) + "/" + to_string(total) + " | APT " + op + ": " + pkg;
+
+int removeNative(const string& pkg, bool purge,
+                 float startPct, float endPct, int idx, int total) {
+
+    string pmLabel = (g_pm == "zypper") ? "Zypper" :
+                     (g_pm == "dnf")    ? "DNF"    : "APT";
+    string op = (g_pm == "apt" && purge) ? "purge" : "remove";
+    string label = to_string(idx) + "/" + to_string(total)
+                   + " | " + pmLabel + " " + op + ": " + pkg;
 
     progressbar_start(startPct, label + " — removing...");
-    setenv("DEBIAN_FRONTEND", "noninteractive", 1);
-    int st = system(("apt-get -y " + op + " " + pkg + " >> " + LOG_PATH + " 2>&1").c_str());
-    if (g_interrupted) return 130;
 
+    int st = 1;
+    if (g_pm == "apt") {
+        setenv("DEBIAN_FRONTEND", "noninteractive", 1);
+        st = system(("apt-get -y " + op + " " + pkg + " >> " + LOG_PATH + " 2>&1").c_str());
+    } else if (g_pm == "zypper") {
+        st = system(("zypper remove -y " + pkg + " >> " + LOG_PATH + " 2>&1").c_str());
+    } else if (g_pm == "dnf") {
+        st = system(("dnf remove -y " + pkg + " >> " + LOG_PATH + " 2>&1").c_str());
+    }
+
+    if (g_interrupted) return 130;
     progressbar_update(endPct, label + (st == 0 ? " — done" : " — failed"));
     return (st == 0) ? 0 : 1;
 }
 
 int removeFlatpak(const string& pkg, float startPct, float endPct, int idx, int total) {
     string label = to_string(idx) + "/" + to_string(total) + " | Flatpak: " + pkg;
-
     progressbar_start(startPct, label + " — removing...");
+
     string cmd = "flatpak uninstall " + g_flatpakFlag + " -y --delete-data "
                  + pkg + " >> " + LOG_PATH + " 2>&1";
-    int st = system(cmd.c_str());
+    system(cmd.c_str());
     if (g_interrupted) return 130;
 
     bool stillInstalled = isInstalledFlatpak(pkg);
@@ -231,8 +301,8 @@ int removeFlatpak(const string& pkg, float startPct, float endPct, int idx, int 
 
 int removeSnap(const string& pkg, float startPct, float endPct, int idx, int total) {
     string label = to_string(idx) + "/" + to_string(total) + " | Snap: " + pkg;
-
     progressbar_start(startPct, label + " — removing...");
+
     int st = system(("snap remove " + pkg + " >> " + LOG_PATH + " 2>&1").c_str());
     if (g_interrupted) return 130;
 
@@ -246,8 +316,8 @@ vector<RemoveTarget> resolveRemoveTargets(const vector<string>& packages,
     vector<RemoveTarget> targets;
 
     for (const string& pkg : packages) {
-        bool aptInst  = isInstalledAPT(pkg);
-        bool snapInst = hasSnap && isInstalledSnap(pkg);
+        bool nativeInst = isInstalledNative(pkg);
+        bool snapInst   = hasSnap    && isInstalledSnap(pkg);
 
         bool flatpakInst = false;
         vector<string> flatpakMatches;
@@ -261,10 +331,10 @@ vector<RemoveTarget> resolveRemoveTargets(const vector<string>& packages,
             }
         }
 
-        string source = chooseRemoveMenu(pkg, aptInst, snapInst, flatpakInst,
-                                          hasSnap, hasFlatpak);
+        string source = chooseRemoveMenu(pkg, nativeInst, snapInst, flatpakInst,
+                                         hasSnap, hasFlatpak);
 
-        if (source == "apt") {
+        if (source == "native") {
             targets.push_back({pkg, false, false, purge});
         } else if (source == "snap") {
             targets.push_back({pkg, false, true, false});
@@ -292,49 +362,48 @@ void runRemoveLoop(const vector<RemoveTarget>& targets) {
             return;
         }
 
-        const string& p      = targets[i].name;
+        const string& p    = targets[i].name;
         float startPct = (100.0f *  i)      / totalPkgs;
-        float endPct   = (100.0f * (i + 1)) / totalPkgs;
-
+        float endPct   = (100.0f * (i+1))   / totalPkgs;
         PackageResult res; res.name = p;
 
+        auto handleResult = [&](int st, const string& successMsg, const string& failMsg) {
+            if (st == 130) {
+                progressbar_finish("Cancelled!");
+                cout << "\n" << YELLOW << "Cancelled.\n" << RESET;
+                return false;
+            }
+            if (st == 0) {
+                res.message = successMsg; res.success = true;
+            } else {
+                res.message = RED + failMsg + RESET; anyFailed = true;
+            }
+            return true;
+        };
+
+        bool cont = true;
         if (targets[i].useFlatpak) {
             int st = removeFlatpak(p, startPct, endPct, i+1, totalPkgs);
-            if (st == 130) { progressbar_finish("Cancelled!"); cout << "\n" << YELLOW << "Cancelled.\n" << RESET; return; }
-            if (st == 0) {
-                res.message = "Package " + p + " removed successfully." + RESET;
-                res.success = true;
-            } else {
-                res.message = RED + "Package " + p + " removal failed." + RESET;
-                anyFailed   = true;
-            }
+            cont = handleResult(st,
+                "Package " + p + " removed successfully.",
+                "Package " + p + " removal failed.");
         } else if (targets[i].useSnap) {
             int st = removeSnap(p, startPct, endPct, i+1, totalPkgs);
-            if (st == 130) { progressbar_finish("Cancelled!"); cout << "\n" << YELLOW << "Cancelled.\n" << RESET; return; }
-            if (st == 0) {
-                res.message = "Package " + p + " removed successfully." + RESET;
-                res.success = true;
-            } else {
-                res.message = RED + "Package " + p + " removal failed." + RESET;
-                anyFailed   = true;
-            }
+            cont = handleResult(st,
+                "Package " + p + " removed successfully.",
+                "Package " + p + " removal failed.");
         } else {
-            int st = removeAPT(p, targets[i].purge, startPct, endPct, i+1, totalPkgs);
-            if (st == 130) { progressbar_finish("Cancelled!"); cout << "\n" << YELLOW << "Cancelled.\n" << RESET; return; }
-            if (st == 0) {
-                string op = targets[i].purge ? "purged" : "removed";
-                res.message = "Package " + p + " " + op + " successfully." + RESET;
-                res.success = true;
-            } else {
-                res.message = RED + "Package " + p + " removal failed." + RESET;
-                anyFailed   = true;
-            }
+            int st = removeNative(p, targets[i].purge, startPct, endPct, i+1, totalPkgs);
+            string op = (g_pm == "apt" && targets[i].purge) ? "purged" : "removed";
+            cont = handleResult(st,
+                "Package " + p + " " + op + " successfully.",
+                "Package " + p + " removal failed.");
         }
 
+        if (!cont) return;
         results.push_back(res);
     }
 
-    // ── finalizacja ───────────────────────────────────────────────────────────
     if (anyFailed) {
         progressbar_finish("Done with errors!");
         cout << "\n";
@@ -362,13 +431,22 @@ int main(int argc, char* argv[]) {
     bool purge       = false;
     vector<string> packages;
 
+    g_pm = get_package_manager();
+
+    if (g_pm == "unknown") {
+        cout << RED << "Error: Could not detect a supported package manager "
+             << "(apt / zypper / dnf).\n" << RESET;
+        return 1;
+    }
+
     bool hasFlatpak = (system("command -v flatpak >/dev/null 2>&1") == 0);
     bool hasSnap    = (system("command -v snap    >/dev/null 2>&1") == 0);
 
     if (hasFlatpak) {
         g_flatpakFlag = getFlatpakRemoteFlag();
         if (g_flatpakFlag.empty()) {
-            cout << YELLOW << "Warning: No flathub remote found for flatpak (tried --system and --user).\n" << RESET;
+            cout << YELLOW << "Warning: No flathub remote found for flatpak "
+                 << "(tried --system and --user).\n" << RESET;
             hasFlatpak = false;
         }
     }
@@ -381,20 +459,23 @@ int main(int argc, char* argv[]) {
         else packages.push_back(arg);
     }
 
+    // --purge ma sens tylko na APT
+    if (purge && g_pm != "apt") {
+        cout << YELLOW << "Warning: --purge is APT-only, ignored on " << g_pm << ".\n" << RESET;
+        purge = false;
+    }
+
     if ((purge && showVersion) || (purge && showHelp)) {
         cout << RED << "Error: --purge cannot be combined with --help or --version.\n" << RESET;
         return 1;
     }
 
     if (showVersion && showHelp) {
-        cout << YELLOW << "--version" << RESET << "\n";
-        versionmessage();
-        cout << "\n" << YELLOW << "--help" << RESET << "\n";
-        helpmessage(argv[0]);
+        cout << YELLOW << "--version" << RESET << "\n"; versionmessage();
+        cout << "\n" << YELLOW << "--help" << RESET << "\n"; helpmessage(argv[0]);
         return 0;
     }
-
-    if (showVersion) { versionmessage(); return 0; }
+    if (showVersion) { versionmessage();     return 0; }
     if (showHelp)    { helpmessage(argv[0]); return 0; }
 
     if (geteuid() != 0) {
@@ -414,7 +495,7 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    cout << "\n" << RED << "Auto mode: APT/Flatpak/Snap per package\n" << RESET;
+    cout << "\n" << RED << "Auto mode: " << g_pm << " / Flatpak / Snap per package\n" << RESET;
     cout << "Removing packages...\n\n";
 
     runRemoveLoop(targets);
