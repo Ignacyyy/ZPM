@@ -19,7 +19,7 @@ echo "Using system compiler: $($CXX_CMD --version | head -n 1)"
 if [ "$GCC_VERSION" -lt 10 ]; then
     echo "ERROR: Your system g++ version ($GCC_VERSION) is too old!"
     echo "ZPM requires GCC 10 or newer for full C++20 compliance."
-    echo "Please update your compiler or use update-alternatives to switch to a newer version."
+    echo "Please update your system compiler."
     exit 1
 fi
 
