@@ -61,13 +61,13 @@ sudo zuninstall
 
 ## Info
 
-| Property          | Value                          |
-|-------------------|--------------------------------|
-| Version           | 2.0.2                          |
-| Supported distros | Debian / Ubuntu (APT)          |
-| Installation path | `/opt/ZPM`                     |
-| Commands location | `/usr/bin/z*` (symbolic links) |
-| Language          | C++                            |
+| Property          | Value                                        |
+|-------------------|----------------------------------------------|
+| Version           | 2.0.2                                        |
+| Supported distros | Debian, Fedora, openSUSE, (zypper, apt, dnf) |
+| Installation path | `/opt/ZPM`                                   |
+| Commands location | `/usr/bin/z*` (symbolic links)               |
+| Language          | C++                                          |
 
 ---
 
