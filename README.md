@@ -46,7 +46,6 @@ After installation, run `zhelp` to see the full guide.
 | `zrun`         | Run programs using ZPM                        |
 
 ---
-ZPM SUPPORTS openSUSE, Ferdora like systems ony on PRERELEASE VERSIONS!
 ## Update & Uninstall
 
 ```bash
@@ -70,7 +69,7 @@ sudo zuninstall
 | Language          | C++                                          |
 
 ---
-
+ZPM SUPPORTS openSUSE, Ferdora like systems ony on PRERELEASE VERSIONS!
 ## License
 
 [MIT](LICENSE)
