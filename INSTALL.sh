@@ -144,7 +144,7 @@ if [ "$dep" = "y" ]; then
     esac
     ok "Dependencies installed successfully."
 else
-    warn "Skipping dependency installation. The build may fail if packages are missing."
+    warn "Skipping dependency installation. The ZPM instalation and usage may fail if packages are missing."
 fi
 
 # ── INSTALL TO TARGET ─────────────────────────────────────────────────────────
@@ -222,6 +222,6 @@ cd ~
 # ── DONE ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "Installation complete!"
-echo "type zhelp to gain more info about ZPM"
+echo "type zhome to gain more info about ZPM"
 printf "Path    : %-34s\n" "$TARGET"
 printf "Log     : %-34s\n" "$LOG"
