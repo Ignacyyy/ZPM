@@ -25,7 +25,7 @@ struct RemoveTarget {
 // ─── wiadomość pomocy ─────────────────────────────────────────────────────────
 void helpmessage(const char* progName) {
     cout << RED << "Usage: " << RESET << progName << " [options] [packages...]"
-         << " or zpm rm/remove [options] [packages...]\n\n";
+         << " or zpm rm/remove [options] [packages...]\n";
     cout << RED << "Options:\n" << RESET;
     cout << "  (auto)         Picks native PM / Flatpak / Snap per package\n";
     cout << "  --purge, -p    APT purge instead of remove (APT only)\n";
