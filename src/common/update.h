@@ -1,5 +1,7 @@
 #pragma once
 #include "main.h"
+#include <chrono>
+#include <fstream>
 
 namespace zpm_update {
 
@@ -39,10 +41,39 @@ static inline bool updateInfoEnabled() {
     return true;
 }
 
+// ───────────────────────── CACHE CZASU ─────────────────────────
+
+static inline bool shouldCheckForUpdates() {
+    std::ifstream in("/tmp/zpm_last_update_check");
+    if (in.is_open()) {
+        long long last_check = 0;
+        in >> last_check;
+        in.close();
+
+        auto now = std::chrono::system_clock::now().time_since_epoch();
+        long long current_time = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+
+        // 15 minut = 900 sekund
+        if (current_time - last_check < 900) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static inline void saveCheckTime() {
+    std::ofstream out("/tmp/zpm_last_update_check");
+    if (out.is_open()) {
+        auto now = std::chrono::system_clock::now().time_since_epoch();
+        long long current_time = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+        out << current_time;
+    }
+}
+
 // ───────────────────────── REMOTE VERSION ─────────────────────────
 
 static inline std::string get_latest_version() {
-    // POPRAWKA: Wyciszenie stderr (2>/dev/null) oraz blok try-except w Pythonie
+    // Wyciszenie błędów curla i parsowania JSON w Pythonie
     std::string cmd =
         "curl -fsSL -H 'User-Agent: ZPM' "
         "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases/latest 2>/dev/null "
@@ -82,7 +113,6 @@ static inline std::string get_installed_version() {
 // ───────────────────────── VERSION PARSE ─────────────────────────
 
 static inline std::vector<int> parse_version(const std::string& ver) {
-    // POPRAWKA: obsługa "-preX", więcej niż 2 segmenty
     std::string v = ver;
 
     size_t pos = v.find("-pre");
@@ -117,7 +147,6 @@ static inline bool is_newer(const std::string& latest, const std::string& curren
     auto a = parse_version(latest);
     auto b = parse_version(current);
 
-    // POPRAWKA: porównanie wszystkich segmentów, nie tylko [0] i [1]
     for (size_t i = 0; i < a.size(); i++) {
         if (a[i] > b[i]) return true;
         if (a[i] < b[i]) return false;
@@ -131,8 +160,15 @@ static inline void checkForUpdates() {
     if (!updateInfoEnabled())
         return;
 
+    // Sprawdzenie czy minęło 15 minut
+    if (!shouldCheckForUpdates())
+        return;
+
     std::string current = get_installed_version();
     std::string latest  = get_latest_version();
+
+    // Zapisanie czasu po próbie pobrania najnowszej wersji
+    saveCheckTime();
 
     if (latest.empty() || current == "none")
         return;
