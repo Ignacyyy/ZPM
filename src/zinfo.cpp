@@ -1,8 +1,21 @@
 #include "main.h"
+#include <algorithm>
+#include <iostream>
+#include <string>
+#include <vector>
+#include <unistd.h>
+
+// Pomocnicza funkcja do zamiany stringa na małe litery
+std::string toLower(std::string s) {
+    for (char &c : s) {
+        c = tolower((unsigned char)c);
+    }
+    return s;
+}
 
 // ─── FORWARD DECLARATIONS ────────────────────────────────────────────────────
 void showAptPackageInfo(const std::string& pkg);
-void showRpmPackageInfo(const std::string& pkg);
+void showRpmPackageInfo(const std::string& pkg, const std::string& pm);
 void showFlatpakPackageInfo(const std::string& pkg);
 void showSnapPackageInfo(const std::string& pkg);
 std::string get_package_manager();
@@ -14,9 +27,7 @@ void showAptPackageInfo(const std::string& pkg) {
     if (!pipe) return;
 
     char buffer[512];
-    std::string line;
-    std::string name, version, priority, section;
-    std::string depends, recommends, homepage, desc;
+    std::string line, name, version, priority, section, depends, recommends, homepage, desc;
     bool inDescription = false;
 
     while (fgets(buffer, sizeof(buffer), pipe)) {
@@ -28,165 +39,74 @@ void showAptPackageInfo(const std::string& pkg) {
         else if (line.find("Depends:")     == 0) depends    = line.substr(9);
         else if (line.find("Recommends:")  == 0) recommends = line.substr(12);
         else if (line.find("Homepage:")    == 0) homepage   = line.substr(10);
-        else if (line.find("Description:") == 0) {
-            desc = line.substr(13);
-            inDescription = true;
-        }
+        else if (line.find("Description:") == 0) { desc = line.substr(13); inDescription = true; }
         else if (inDescription) desc += line;
     }
     pclose(pipe);
 
     if (name.empty()) return;
 
-    char buffer2[512];
-    std::string check = "dpkg -s " + pkg + " 2>/dev/null";
-    FILE* p = popen(check.c_str(), "r");
+    FILE* p = popen(("dpkg -s " + pkg + " 2>/dev/null").c_str(), "r");
     bool installed = false;
-    while (fgets(buffer2, sizeof(buffer2), p)) {
-        if (std::string(buffer2).find("Status: install ok installed") != std::string::npos) {
-            installed = true; break;
-        }
+    while (fgets(buffer, sizeof(buffer), p)) {
+        if (std::string(buffer).find("Status: install ok installed") != std::string::npos) { installed = true; break; }
     }
     pclose(p);
 
-    std::cout << YELLOW << "[APT] " << GREEN << name << RESET;
-    std::cout << CYAN   << " (" << version << ")" << RESET;
-    if (installed) std::cout << BLUE << " [✓ Installed]"     << RESET;
-    else           std::cout << BLUE << " [ ] Not installed" << RESET;
-    std::cout << "\n\n";
-
-    std::cout << YELLOW << "[I] " << GREEN << "Basic info\n"   << RESET;
-    std::cout << "  Priority: " << priority;
-    std::cout << "  Section : " << section << "\n\n";
-
-    std::cout << YELLOW << "[D] " << GREEN << "Dependencies\n" << RESET;
-    std::cout << "  Depends    : " << depends;
-    std::cout << "  Recommends : " << recommends << "\n\n";
-
-    std::cout << YELLOW << "[H] " << GREEN << "Homepage\n"     << RESET;
-    std::cout << "  " << homepage << "\n\n";
-
-    std::cout << YELLOW << "[d] " << GREEN << "Description\n"  << RESET;
-    std::cout << desc << "\n";
-    std::cout << "----------------------------------------\n\n";
+    std::cout << YELLOW << "[APT] " << GREEN << name << RESET << CYAN << " (" << version << ")" << RESET;
+    std::cout << BLUE << (installed ? " [✓ Installed]" : " [ ] Not installed") << "\n\n";
+    std::cout << YELLOW << "[I] " << GREEN << "Basic info\n" << RESET << "  Priority: " << priority << "  Section : " << section << "\n\n";
+    std::cout << YELLOW << "[D] " << GREEN << "Dependencies\n" << RESET << "  Depends    : " << depends << "  Recommends : " << recommends << "\n\n";
+    std::cout << YELLOW << "[H] " << GREEN << "Homepage\n" << RESET << "  " << homepage << "\n\n";
+    std::cout << YELLOW << "[d] " << GREEN << "Description\n" << RESET << desc << "----------------------------------------\n\n";
 }
 
-// ─── RPM (zypper + dnf — oba używają rpm) ────────────────────────────────────
+// ─── RPM (zypper + dnf) ──────────────────────────────────────────────────────
 void showRpmPackageInfo(const std::string& pkg, const std::string& pm) {
-    // Najpierw sprawdź czy pakiet w ogóle istnieje w repo
-    std::string infoCmd;
-    if (pm == "zypper")
-        infoCmd = "zypper --no-refresh info " + pkg + " 2>/dev/null";
-    else
-        infoCmd = "dnf info " + pkg + " 2>/dev/null";
-
-    FILE* pipe = popen(infoCmd.c_str(), "r");
+    std::string infoCmd = (pm == "zypper") ? "zypper --no-refresh info " + pkg : "dnf info " + pkg;
+    FILE* pipe = popen((infoCmd + " 2>/dev/null").c_str(), "r");
     if (!pipe) return;
 
     char buffer[512];
-    std::string name, version, release, arch;
-    std::string summary, desc, homepage, group;
-    bool inDesc = false;
-    bool found  = false;
+    std::string name, version, release, arch, summary, desc, homepage, group;
+    bool inDesc = false, found = false;
 
     while (fgets(buffer, sizeof(buffer), pipe)) {
         std::string line(buffer);
+        size_t colonPos = line.find(':');
+        if (colonPos != std::string::npos) {
+            std::string key = line.substr(0, colonPos);
+            key.erase(0, key.find_first_not_of(" \t"));
+            key.erase(key.find_last_not_of(" \t") + 1);
+            std::string k = toLower(key);
+            std::string v = line.substr(colonPos + 1);
+            v.erase(0, v.find_first_not_of(" \t"));
+            v.erase(v.find_last_not_of(" \n\r\t") + 1);
 
-        auto extractVal = [&](size_t colonPos) {
-            std::string val = line.substr(colonPos + 1);
-            val.erase(0, val.find_first_not_of(" \t"));
-            val.erase(val.find_last_not_of(" \n\r\t") + 1);
-            return val;
-        };
-
-        // zypper używa "Name        :", dnf używa "Name         :"
-        // szukamy po słowie kluczowym bez względu na padding
-        auto startsWith = [&](const std::string& key) {
-            size_t pos = line.find(key);
-            return pos != std::string::npos && pos < 20; // klucz w pierwszych 20 znakach
-        };
-
-        if (startsWith("Name") && line.find(':') != std::string::npos) {
-            name = extractVal(line.find(':'));
-            found = true; inDesc = false;
+            if (k == "name" || k == "nazwa" || k == "nom") { name = v; found = true; inDesc = false; }
+            else if (k == "version" || k == "wersja") { version = v; inDesc = false; }
+            else if (k == "release" || k == "wydanie" || k == "révision") { release = v; inDesc = false; }
+            else if (k == "arch" || k == "architektura") { arch = v; inDesc = false; }
+            else if (k == "summary" || k == "podsumowanie" || k == "résumé") { summary = v; inDesc = false; }
+            else if (k == "url" || k == "homepage" || k == "strona domowa") { homepage = v; inDesc = false; }
+            else if (k == "group" || k == "grupa" || k == "gruppe") { group = v; inDesc = false; }
+            else if (k == "description" || k == "opis" || k == "beschreibung" || k == "descrizione") { desc = v; inDesc = true; continue; }
         }
-        else if (startsWith("Version") && line.find(':') != std::string::npos) {
-            version = extractVal(line.find(':')); inDesc = false;
-        }
-        else if (startsWith("Release") && line.find(':') != std::string::npos) {
-            release = extractVal(line.find(':')); inDesc = false;
-        }
-        else if (startsWith("Arch") && line.find(':') != std::string::npos) {
-            arch = extractVal(line.find(':')); inDesc = false;
-        }
-        else if (startsWith("Summary") && line.find(':') != std::string::npos) {
-            summary = extractVal(line.find(':')); inDesc = false;
-        }
-        else if ((startsWith("URL") || startsWith("Homepage")) && line.find(':') != std::string::npos) {
-            // URL może mieć https:// — bierzemy wszystko po pierwszym ':'
-            size_t firstColon = line.find(':');
-            homepage = extractVal(firstColon);
-            // Jeśli to "http" zostało przycięte, sklejamy z resztą
-            if (homepage == "//") {
-                // edge case — bierzemy surową linię od drugiego ':'
-                size_t second = line.find(':', firstColon + 1);
-                if (second != std::string::npos)
-                    homepage = "https:" + line.substr(second - 5 > 0 ? second - 5 : 0);
-            }
-            // Lepszy sposób: wytnij od pierwszego http/ftp
-            size_t urlStart = line.find("http");
-            if (urlStart != std::string::npos) {
-                homepage = line.substr(urlStart);
-                homepage.erase(homepage.find_last_not_of(" \n\r\t") + 1);
-            }
-            inDesc = false;
-        }
-        else if ((startsWith("Group") || startsWith("Repo")) && line.find(':') != std::string::npos) {
-            group = extractVal(line.find(':')); inDesc = false;
-        }
-        else if (startsWith("Description") && line.find(':') != std::string::npos) {
-            desc   = "";
-            inDesc = true;
-        }
-        else if (inDesc) {
-            // zypper i dnf inaczej formatują opis — bierzemy wszystko niepuste
-            if (line != "\n" && !line.empty())
-                desc += line;
-        }
+        if (inDesc) desc += line;
     }
     pclose(pipe);
 
     if (!found || name.empty()) return;
 
-    // Sprawdź czy zainstalowany przez rpm -q
     bool installed = (system(("rpm -q " + pkg + " >/dev/null 2>&1").c_str()) == 0);
+    std::string fullVer = version + (release.empty() ? "" : "-" + release) + (arch.empty() ? "" : "." + arch);
 
-    std::string pmLabel = (pm == "zypper") ? "ZYPPER" : "DNF";
-    std::string fullVer = version;
-    if (!release.empty()) fullVer += "-" + release;
-    if (!arch.empty())    fullVer += "." + arch;
-
-    std::cout << YELLOW << "[" << pmLabel << "] " << GREEN << name << RESET;
-    std::cout << CYAN   << " (" << fullVer << ")" << RESET;
-    if (installed) std::cout << BLUE << " [✓ Installed]"     << RESET;
-    else           std::cout << BLUE << " [ ] Not installed" << RESET;
-    std::cout << "\n\n";
-
-    std::cout << YELLOW << "[I] " << GREEN << "Basic info\n" << RESET;
-    if (!group.empty())   std::cout << "  Group   : " << group   << "\n";
-    if (!summary.empty()) std::cout << "  Summary : " << summary << "\n";
-    std::cout << "\n";
-
-    if (!homepage.empty()) {
-        std::cout << YELLOW << "[H] " << GREEN << "Homepage\n" << RESET;
-        std::cout << "  " << homepage << "\n\n";
-    }
-
-    if (!desc.empty()) {
-        std::cout << YELLOW << "[d] " << GREEN << "Description\n" << RESET;
-        std::cout << desc << "\n";
-    }
-    std::cout << "----------------------------------------\n\n";
+    std::cout << YELLOW << "[" << (pm == "zypper" ? "ZYPPER" : "DNF") << "] " << GREEN << name << RESET << CYAN << " (" << fullVer << ")" << RESET;
+    std::cout << BLUE << (installed ? " [✓ Installed]" : " [ ] Not installed") << "\n\n";
+    if (!group.empty()) std::cout << "  Group   : " << group << "\n";
+    if (!summary.empty()) std::cout << "  Summary : " << summary << "\n\n";
+    if (!homepage.empty()) std::cout << YELLOW << "[H] " << GREEN << "Homepage\n" << RESET << "  " << homepage << "\n\n";
+    if (!desc.empty()) std::cout << YELLOW << "[d] " << GREEN << "Description\n" << RESET << desc << "\n----------------------------------------\n\n";
 }
 
 // ─── FLATPAK ─────────────────────────────────────────────────────────────────
@@ -381,74 +301,26 @@ void showSnapPackageInfo(const std::string& pkg) {
     std::cout << "----------------------------------------\n\n";
 }
 
-// ─── DISPATCHER ──────────────────────────────────────────────────────────────
 void showPackageInfo(const std::string& pkg, const std::string& pm) {
-    if (pm == "apt")
-        showAptPackageInfo(pkg);
-    else
-        showRpmPackageInfo(pkg, pm); // zypper i dnf
-
-        showFlatpakPackageInfo(pkg);
+    if (pm == "apt") showAptPackageInfo(pkg);
+    else showRpmPackageInfo(pkg, pm);
+    showFlatpakPackageInfo(pkg);
     showSnapPackageInfo(pkg);
 }
 
-// ─── MAIN ────────────────────────────────────────────────────────────────────
 int main(int argc, char* argv[]) {
     zpm_update::checkForUpdates();
     using namespace std;
-
-    bool showHelp         = false;
-    bool showVersion      = false;
-    bool packageSpecified = false;
-
     string pm = get_package_manager();
+    if (pm == "unknown") { cerr << RED << "Error: Unsupported PM\n" << RESET; return 1; }
 
-    if (pm == "unknown") {
-        std::cerr << RED << "Error: Could not detect a supported package manager "
-        << "(apt / zypper / dnf).\n" << RESET;
-        return 1;
-    }
-
+    bool packageSpecified = false;
     for (int i = 1; i < argc; ++i) {
         string arg = argv[i];
-        if      (arg == "--help"    || arg == "-h") showHelp    = true;
-        else if (arg == "--version" || arg == "-v") showVersion = true;
-        else { packageSpecified = true; showPackageInfo(argv[i], pm); }
+        if (arg == "--help" || arg == "-h") { /* Wstaw help */ return 0; }
+        else if (arg == "--version" || arg == "-v") { /* Wstaw ver */ return 0; }
+        else { packageSpecified = true; showPackageInfo(arg, pm); }
     }
-
-    if (showVersion && showHelp) {
-        cout << YELLOW << "--version\n" << RESET;
-        cout << RED << "zinfo component version: v" << zpm_version::version() << " of ZPM\n" << RESET;
-        cout << "https://github.com/Zielina-Konrad-productions/ZPM\n";
-        cout << "Copyright (c) 2026 Ignacyyy & Ry3ball\nLicense: MIT\n\n";
-        cout << YELLOW << "--help\n" << RESET;
-        cout << RED << "Usage: " << RESET << argv[0]
-        << " [packages...] [options] or zpm info [packages...] [options]\n\n";
-        cout << RED << "Options:\n" << RESET;
-        cout << "  --version, -v  Show version information\n";
-        cout << "  --help,    -h  Show this help message\n";
-        return 0;
-    }
-    if (showVersion) {
-        cout << RED << "zinfo component version: v" << zpm_version::version() << " of ZPM\n" << RESET;
-        cout << "https://github.com/Zielina-Konrad-productions/ZPM\n";
-        cout << "Copyright (c) 2026 Ignacyyy & Ry3ball\nLicense: MIT\n";
-        return 0;
-    }
-    if (showHelp) {
-        cout << RED << "Usage: " << RESET << argv[0]
-        << " [packages...] [options] or zpm info [packages...] [options]\n\n";
-        cout << RED << "Options:\n" << RESET;
-        cout << "  --version, -v  Show version information\n";
-        cout << "  --help,    -h  Show this help message\n";
-        return 0;
-    }
-
-    // Brak pakietu i brak flag — pokaż komunikat
-    if (!packageSpecified && !showHelp && !showVersion) {
-        cerr << YELLOW << "No package specified!" << RESET << endl;
-        return 1;
-    }
-
+    if (!packageSpecified) cerr << YELLOW << "No package specified!" << RESET << endl;
     return 0;
 }
