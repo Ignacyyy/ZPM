@@ -1,5 +1,15 @@
 #include "main.h"
+#include <sstream> // Potrzebne do obsługi istringstream przy parsowaniu DNF
+
 using namespace std;
+
+// Pomocnicza funkcja do zamiany całego stringa na małe litery
+string toLower(string s) {
+    for (char &c : s) {
+        c = tolower((unsigned char)c);
+    }
+    return s;
+}
 
 // ─── komunikaty ───────────────────────────────────────────────────────────────
 void helpmessage(const char* progName) {
@@ -64,28 +74,53 @@ void listNative(const string& pm) {
         }
         pclose(p);
 
-    } else if (pm == "dnf") {
+    } else if (pm == "dnf") { // <--- Tutaj poprawiłem klamry!
         cout << YELLOW << "=== DNF packages ===\n" << RESET;
-        // dnf list installed: "name.arch  version  repo"
+        // dnf list installed zwraca kolumny: pakiet.arch  wersja  repo
         FILE* p = popen("dnf list installed 2>/dev/null", "r");
         if (!p) return;
         char buf[512];
-        bool pastHeader = false;
+
         while (fgets(buf, sizeof(buf), p)) {
             string line(buf);
             line.erase(line.find_last_not_of(" \n\r\t") + 1);
-            // Nagłówek "Installed Packages"
-            if (line.find("Installed Packages") != string::npos) { pastHeader = true; continue; }
-            if (!pastHeader || line.empty()) continue;
-            // Wytnij arch z nazwy
-            string name = line.substr(0, line.find(' '));
-            size_t dot = name.rfind('.');
-            if (dot != string::npos) name = name.substr(0, dot);
-            cout << line << "\n";
+            if (line.empty()) continue;
+
+            // Odsiew linii dekoracyjnych
+            if (line.find("====") != string::npos) continue;
+
+            // Używamy strumienia, żeby bezpiecznie wyciągać kolumny niezależnie od spacji
+            istringstream iss(line);
+            string pkg, ver;
+            if (!(iss >> pkg)) continue;
+
+            // Kuloodporna czarna lista nagłówków i logów DNF5 (PL i EN)
+            string pkgLower = toLower(pkg);
+            if (pkgLower == "installed" || pkgLower == "zainstalowane" ||
+                pkgLower == "aktualizowanie" || pkgLower == "załadowano" ||
+                pkgLower == "updating" || pkgLower == "repositories" ||
+                pkgLower == "loading" || pkgLower == "repozytoria" ||
+                pkgLower == "package" || pkgLower == "pakiet" ||
+                pkgLower == "name" || pkgLower == "nazwa" ||
+                pkgLower == "wersja" || pkgLower == "version" ||
+                pkgLower == "dopasowane" || pkgLower == "pola:") {
+                continue;
+                }
+
+                // Jeśli linia zawiera wersję, to mamy właściwy pakiet
+                if (iss >> ver) {
+                    // Wytnij architekturę (.x86_64, .noarch itp.) z nazwy pakietu
+                    string name = pkg;
+                    size_t dot = pkg.rfind('.');
+                    if (dot != string::npos && dot > 0) name = pkg.substr(0, dot);
+
+                    // Wypisujemy w eleganckim, jednolitym formacie ZPM: nazwa (wersja)
+                    cout << name << " (" << ver << ")\n";
+                }
         }
         pclose(p);
-    }
-}
+    } // <--- Zamknięcie else if (pm == "dnf")
+} // <--- Prawidłowe zamknięcie całej funkcji listNative()
 
 void listFlatpak() {
     bool hasFlatpak = (access("/usr/bin/flatpak", X_OK) == 0 ||
