@@ -42,7 +42,7 @@ string ZPM_prever() {
 // Komunikat pomocy
 void helpmessage(const char* progName) {
     cout << RED << "Usage: " << RESET << progName << " [options] or zpm upgr/upgrade [options]\n";
-    cout << "Options:\n";
+    cout << RED << "Options:\n" << RESET;
     cout << "  -h, --help           Show help\n";
     cout << "  -v, --version        Show version\n";
     cout << "  -f, --force          Force reinstall even if already up to date\n";
