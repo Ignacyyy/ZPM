@@ -34,7 +34,38 @@ void versionmessage() {
 void listNative(const string& pm) {
     if (pm == "apt") {
         cout << YELLOW << "=== APT packages ===\n" << RESET;
-        system("apt list --installed 2>/dev/null");
+
+        // Odpalamy apt list przez popen, żeby sparsować wyjście
+        FILE* p = popen("apt list --installed 2>/dev/null", "r");
+        if (!p) return;
+        char buf[512];
+
+        while (fgets(buf, sizeof(buf), p)) {
+            string line(buf);
+            line.erase(line.find_last_not_of(" \n\r\t") + 1);
+            if (line.empty()) continue;
+
+            // Odsiewamy nagłówek "Listing... Done" / "Listowanie... Gotowe"
+            if (line.find("Listing...") != string::npos || line.find("Listowanie...") != string::npos) {
+                continue;
+            }
+
+            istringstream iss(line);
+            string pkg, ver;
+
+            // Pierwsza kolumna to pakiet/repozytorium (np. tmux/noble-updates,now)
+            if (!(iss >> pkg)) continue;
+            // Druga kolumna to wersja (np. 3.4-1ubuntu0.1)
+            if (!(iss >> ver)) continue;
+
+            // Wytnij z nazwy pakietu wszystko od slasha '/' (informacje o repozytorium/stanie)
+            size_t slash = pkg.find('/');
+            string name = (slash != string::npos) ? pkg.substr(0, slash) : pkg;
+
+            // Wypisujemy w identycznym formacie jak DNF: nazwa (wersja)
+            cout << name << " (" << ver << ")\n";
+        }
+        pclose(p);
 
     } else if (pm == "zypper") {
         cout << YELLOW << "=== Zypper packages ===\n" << RESET;
@@ -76,7 +107,6 @@ void listNative(const string& pm) {
 
     } else if (pm == "dnf") {
         cout << YELLOW << "=== DNF packages ===\n" << RESET;
-        // Poprawione pod DNF 5: dnf list --installed
         FILE* p = popen("dnf list --installed 2>/dev/null", "r");
         if (!p) return;
         char buf[512];
@@ -86,15 +116,12 @@ void listNative(const string& pm) {
             line.erase(line.find_last_not_of(" \n\r\t") + 1);
             if (line.empty()) continue;
 
-            // Odsiew linii dekoracyjnych
             if (line.find("====") != string::npos) continue;
 
-            // Używamy strumienia, żeby bezpiecznie wyciągać kolumny niezależnie od spacji
             istringstream iss(line);
             string pkg, ver;
             if (!(iss >> pkg)) continue;
 
-            // Kuloodporna czarna lista nagłówków i logów DNF5 (PL i EN)
             string pkgLower = toLower(pkg);
             if (pkgLower == "installed" || pkgLower == "zainstalowane" ||
                 pkgLower == "aktualizowanie" || pkgLower == "załadowano" ||
@@ -107,14 +134,11 @@ void listNative(const string& pm) {
                 continue;
                 }
 
-                // Jeśli linia zawiera wersję, to mamy właściwy pakiet
                 if (iss >> ver) {
-                    // Wytnij architekturę (.x86_64, .noarch itp.) z nazwy pakietu
                     string name = pkg;
                     size_t dot = pkg.rfind('.');
                     if (dot != string::npos && dot > 0) name = pkg.substr(0, dot);
 
-                    // Wypisujemy w eleganckim, jednolitym formacie ZPM: nazwa (wersja)
                     cout << name << " (" << ver << ")\n";
                 }
         }
