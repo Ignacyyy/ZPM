@@ -60,25 +60,7 @@ void PAGE2(){
       std::cout << "\n" << BOLD << "Common options:" << RESET << std::endl;
       std::cout << "  --help, -h    Show help for a specific command" << std::endl;
       std::cout << "  --version, -v Show version" << std::endl;
-      
-      // args
-      std::cout << "\n" << RED << "Command-specific arguments:" << RESET << std::endl;
-      std::cout << CYAN << "------------------------------------------------------------" << RESET << std::endl;
-      std::cout << "  zupd   -full    Full system upgrade" << std::endl;
-      std::cout << "  zupd   -r   Reboot after update" << std::endl;
-      std::cout << "  zupd   -s   Shutdown after update" << std::endl;
-      std::cout << "  zupd   --yes, -y   Automatic yes to prompts" << std::endl;
-      std::cout << CYAN << "------------------------------------------------------------" << RESET << std::endl;
-      std::cout << "  zrm    -p   Purge (remove config files)" << std::endl;
-      std::cout << CYAN << "------------------------------------------------------------" << RESET << std::endl;
-      std::cout << "  zupgr  --force, -f  Force update ZPM" << std::endl;
-      std::cout << "  zupgr  --experimental, -ex  update ZPM to prerelease ver" << std::endl;
-      std::cout << CYAN << "------------------------------------------------------------" << RESET << std::endl;
-      std::cout << "  zlist  --apt, -apt   List only apt packages" << std::endl;
-      std::cout << "  zlist  --flatpak, -f   List only flatpak packages" << std::endl;
-      std::cout << "  zlist  --snap, -s   List only snap packages" << std::endl;
-      std::cout << CYAN << "------------------------------------------------------------" << RESET << std::endl;
-      
+    
       // examples
       std::cout << "\n" << BOLD << "Examples:" << RESET << std::endl;
       std::cout << "  zinst firefox" << std::endl;
@@ -138,24 +120,6 @@ void PAGE1_PAGE2(){
     std::cout << "\n" << BOLD << "Common options:" << RESET << std::endl;
     std::cout << "  --help, -h    Show help for a specific command" << std::endl;
     std::cout << "  --version, -v Show version" << std::endl;
-
-    // args
-    std::cout << "\n" << RED << "Command-specific arguments:" << RESET << std::endl;
-    std::cout << CYAN << "------------------------------------------------------------" << RESET << std::endl;
-    std::cout << "  zupd   -full    Full system upgrade" << std::endl;
-    std::cout << "  zupd   -r   Reboot after update" << std::endl;
-    std::cout << "  zupd   -s   Shutdown after update" << std::endl;
-    std::cout << "  zupd   --yes, -y   Automatic yes to prompts" << std::endl;
-    std::cout << CYAN << "------------------------------------------------------------" << RESET << std::endl;
-    std::cout << "  zrm    -p   Purge (remove config files)" << std::endl;
-    std::cout << CYAN << "------------------------------------------------------------" << RESET << std::endl;
-    std::cout << "  zupgr  --force, -f  Force update ZPM" << std::endl;
-    std::cout << "  zupgr  --experimental, -ex  update ZPM to prerelease ver" << std::endl;
-    std::cout << CYAN << "------------------------------------------------------------" << RESET << std::endl;
-    std::cout << "  zlist  --apt, -apt   List only apt packages" << std::endl;
-    std::cout << "  zlist  --flatpak, -f   List only flatpak packages" << std::endl;
-    std::cout << "  zlist  --snap, -s   List only snap packages" << std::endl;
-    std::cout << CYAN << "------------------------------------------------------------" << RESET << std::endl;
 
     // examples
     std::cout << "\n" << BOLD << "Examples:" << RESET << std::endl;
