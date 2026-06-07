@@ -29,7 +29,7 @@ void PAGE1() {
     std::cout << "  ARM mode does NOT affect normal usage" << std::endl;
     std::cout << std::endl;
    
-    //zhelp page info
+    //zhome page info
     std::cout << BOLD << "Type zhome -p2 to see PAGE2." << std::endl;
 }
 
