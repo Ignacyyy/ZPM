@@ -12,6 +12,7 @@ void show_version() {
 void show_help() {
     cout << RED << "Usage: " << RESET << "zpm <command> [options]" << endl;
     cout << RED << "Commands:" << RESET << endl;
+    cout << "  home            Home page of ZPM" << endl;
     cout << "  update, upd     Perform a system upgrade (zupd)" << endl;
     cout << "  upgrade, upgr   Upgrade ZPM itself (zupgr)" << endl;
     cout << "  install, inst   Install package (zinst)" << endl;
@@ -26,8 +27,6 @@ void show_help() {
     cout << RED << "Options:" << RESET << endl;
     cout << "  --help, -h      Show this help message" << endl;
     cout << "  --version, -v   Show version information" << endl;
-    cout << "" << endl;
-    cout << BOLD << "type zhome, for detailed info about ZPM." << RESET << endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -56,7 +55,7 @@ int main(int argc, char* argv[]) {
         else if (cmd == "clean") target = "zclean";
         else if (cmd == "info") target = "zinfo";
         else if (cmd == "uninstall") target = "zuninstall";
-        else if (cmd == "help") target = "zhelp";
+        else if (cmd == "home") target = "zhome";
         else if (cmd == "run") target = "zrun";
         else {
             cerr << "unknown command: " << cmd << "\n";
