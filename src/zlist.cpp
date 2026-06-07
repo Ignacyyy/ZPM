@@ -195,6 +195,13 @@ int main(int argc, char* argv[]) {
         else if (arg == "--snap"    || arg == "-s") onlySnap    = true;
     }
 
+    if ((showHelp    && (onlyNative || onlyFlatpak || onlySnap)) ||
+        (showVersion && (onlyNative || onlyFlatpak || onlySnap))) {
+        cerr << RED << "Error: --help and --version cannot be combined with other options."
+        << RESET << endl;
+        return 1;
+    }
+
     if (showVersion && showHelp) {
         cout << YELLOW << "--version\n" << RESET; versionmessage();
         cout << "\n" << YELLOW << "--help\n" << RESET; helpmessage(argv[0]);
