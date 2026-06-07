@@ -12,66 +12,7 @@ bool fullupdate = false;
 string ans;
 //koniec zmiennych globalnych--------------------------------------------------
 
-
-//funckje----------------------------------------------------------------------
-string get_package_manager() {
-    // Priorytet 1: /etc/os-release — ID_LIKE / ID
-    FILE* f = fopen("/etc/os-release", "r");
-    if (f) {
-        char line[256];
-        string id, id_like;
-        while (fgets(line, sizeof(line), f)) {
-            string s(line);
-            // Usuń \n
-            if (!s.empty() && s.back() == '\n') s.pop_back();
-
-            auto stripQuotes = [](const string& v) {
-                string r = v;
-                if (r.size() >= 2 && r.front() == '"' && r.back() == '"')
-                    r = r.substr(1, r.size() - 2);
-                return r;
-            };
-
-            if (s.rfind("ID=", 0) == 0)
-                id = stripQuotes(s.substr(3));
-            else if (s.rfind("ID_LIKE=", 0) == 0)
-                id_like = stripQuotes(s.substr(8));
-        }
-        fclose(f);
-
-        // Sprawdź ID_LIKE i ID pod kątem znanych rodzin
-        auto containsWord = [](const string& haystack, const string& needle) {
-            size_t pos = haystack.find(needle);
-            if (pos == string::npos) return false;
-            bool leftOk  = (pos == 0 || haystack[pos-1] == ' ');
-            bool rightOk = (pos + needle.size() == haystack.size()
-                            || haystack[pos + needle.size()] == ' ');
-            return leftOk && rightOk;
-        };
-
-        for (const string& src : {id_like, id}) {
-            if (containsWord(src, "debian") || containsWord(src, "ubuntu"))
-                return "apt";
-            if (containsWord(src, "suse") || containsWord(src, "opensuse"))
-                return "zypper";
-            if (containsWord(src, "fedora") || containsWord(src, "rhel")
-                || containsWord(src, "centos") || containsWord(src, "rocky")
-                || containsWord(src, "alma"))
-                return "dnf";
-        }
-    }
-
-    // Priorytet 2: fallback przez bezpośrednie ścieżki binarek
-    if (access("/usr/bin/apt-get", X_OK) == 0 || access("/bin/apt-get", X_OK) == 0)
-        return "apt";
-    if (access("/usr/bin/zypper", X_OK) == 0)
-        return "zypper";
-    if (access("/usr/bin/dnf", X_OK) == 0)
-        return "dnf";
-
-    return "unknown";
-}
-
+//funkcje pomocnicze-----------------------------------------------------------
 string execCommand(const char* cmd) {
     array<char, 128> buffer;
     string result;
@@ -85,7 +26,7 @@ string execCommand(const char* cmd) {
 
 void helpmessage(const char* progName) {
     cout << RED << "Usage: " << RESET << progName << " [options]"
-         << " or zpm upd/update [options]\n\n";
+    << " or zpm upd/update [options]\n\n";
     cout << RED << "Options:" << RESET << endl;
     cout << "  --full, -f     Perform a full system upgrade" << endl;
     cout << "  -r             Reboot the system after update" << endl;
@@ -97,61 +38,65 @@ void helpmessage(const char* progName) {
 
 void versionmessage() {
     cout << RED << "zupd component version: v" << zpm_version::version()
-         << " of ZPM\n" << RESET;
+    << " of ZPM\n" << RESET;
     cout << "https://github.com/Zielina-Konrad-productions/ZPM" << endl;
     cout << "Copyright (c) 2026 Ignacyyy & Ry3ball" << endl;
     cout << "License: MIT" << endl;
 }
 
 //-----------------------------------------------------------------------------
-// repo() — wyświetla repozytoria zależnie od PM
+// repo()
 //-----------------------------------------------------------------------------
 void repo(const string& pm) {
     bool hasflatpak = (system("command -v flatpak >/dev/null 2>&1") == 0);
     bool hassnap    = (system("command -v snap    >/dev/null 2>&1") == 0);
 
     cout << YELLOW << "[SYS] " << RESET << flush;
-    system("lsb_release -ds 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"'");
+    system("lsb_release -ds 2>/dev/null || grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '\"'");
 
-    // --- APT ---
     if (pm == "apt") {
         cout << "\n" << YELLOW << "[D]" << RESET << GREEN << " APT Repositories:\n" << RESET;
         string repoCmd =
-            "{ "
-            "grep -rh '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; "
-            "grep -rh '^URIs:' /etc/apt/sources.list.d/ /usr/lib/apt/sources.list.d/ 2>/dev/null"
-            "  | sed 's/^URIs:[[:space:]]*/deb /'; "
-            "} | sort -u | grep -v '^[[:space:]]*$'"
-            "  | sed 's|^|" + YELLOW + "- " + RESET + "|'";
+        "{ "
+        "grep -rh '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; "
+        "grep -rh '^URIs:' /etc/apt/sources.list.d/ /usr/lib/apt/sources.list.d/ 2>/dev/null"
+        "  | sed 's/^URIs:[[:space:]]*/deb /'; "
+        "} | sort -u | grep -v '^[[:space:]]*$'"
+        "  | sed 's|^|" + YELLOW + "- " + RESET + "|'";
         system(repoCmd.c_str());
-
         string checkCmd =
-            "{ grep -rh '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; "
-            "grep -rh '^URIs:' /etc/apt/sources.list.d/ 2>/dev/null; }"
-            " | grep -qv '^[[:space:]]*$'";
+        "{ grep -rh '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; "
+        "grep -rh '^URIs:' /etc/apt/sources.list.d/ 2>/dev/null; }"
+        " | grep -qv '^[[:space:]]*$'";
         if (system(checkCmd.c_str()) != 0)
             cout << YELLOW << "- (no repos found in standard locations)" << RESET << "\n";
     }
-
-    // --- ZYPPER ---
     else if (pm == "zypper") {
         cout << "\n" << YELLOW << "[Z]" << RESET << GREEN << " Zypper Repositories:\n" << RESET;
         string repoCmd = "zypper repos --uri 2>/dev/null"
-                         " | awk -F'|' 'NR>2 && $3~/Yes/{print \"" +
-                         YELLOW + "- " + RESET + "\" $2 \" | \" $6}'"
-                         " | sed 's/  */ /g'";
-        if (system(repoCmd.c_str()) != 0)
-            cout << YELLOW << "- (no zypper repos found)" << RESET << "\n";
+        " | awk -F'|' 'NR>2 && $3~/Yes/{print \"" +
+        YELLOW + "- " + RESET + "\" $2 \" | \" $6}'"
+        " | sed 's/  */ /g'";
+        system(repoCmd.c_str());
     }
-
-    // --- DNF ---
     else if (pm == "dnf") {
         cout << "\n" << YELLOW << "[R]" << RESET << GREEN << " DNF Repositories:\n" << RESET;
-        string repoCmd = "dnf repolist enabled 2>/dev/null"
-                         " | tail -n +2"
-                         " | awk '{print \"" + YELLOW + "- " + RESET + "\" $0}'";
-        if (system(repoCmd.c_str()) != 0)
-            cout << YELLOW << "- (no dnf repos found)" << RESET << "\n";
+        // Używamy popen żeby sprawdzić czy jest output
+        FILE* p = popen("dnf repolist enabled 2>/dev/null | tail -n +2", "r");
+        if (p) {
+            char buf[512];
+            bool any = false;
+            while (fgets(buf, sizeof(buf), p)) {
+                string line(buf);
+                line.erase(line.find_last_not_of(" \n\r\t") + 1);
+                if (line.empty()) continue;
+                cout << YELLOW << "- " << RESET << line << "\n";
+                any = true;
+            }
+            pclose(p);
+            if (!any)
+                cout << YELLOW << "- (no dnf repos found)" << RESET << "\n";
+        }
     }
 
     if (hasflatpak) {
@@ -164,10 +109,10 @@ void repo(const string& pm) {
 }
 
 //-----------------------------------------------------------------------------
-// UpdateStatus — wspólna dla wszystkich PM
+// UpdateStatus
 //-----------------------------------------------------------------------------
 struct UpdateStatus {
-    bool native     = false; // apt / zypper / dnf — cokolwiek jest głównym PM
+    bool native     = false;
     bool flatpak    = false;
     bool snap       = false;
     bool hasflatpak = false;
@@ -176,9 +121,6 @@ struct UpdateStatus {
     bool any() const { return native || flatpak || snap; }
 };
 
-// Ile kroków — wspólne dla wszystkich PM
-// Stałe: CHECKING + CLEANUP = 2
-// Opcje: native PM, Flatpak, Snap
 static int countSteps(const UpdateStatus& s) {
     int n = 2;
     if (s.native)                    n++;
@@ -187,14 +129,11 @@ static int countSteps(const UpdateStatus& s) {
     return n;
 }
 
-// Pomocnicza — sprawdź flatpak i snap (wspólne dla wszystkich PM)
 static void checkUniversalManagers(UpdateStatus& s) {
     s.hasflatpak = (system("command -v flatpak >/dev/null 2>&1") == 0);
     s.hassnap    = (system("command -v snap    >/dev/null 2>&1") == 0);
-
     if (s.hasflatpak)
         s.flatpak = (system("flatpak remote-ls --updates 2>/dev/null | grep -q .") == 0);
-
     if (s.hassnap)
         s.snap = (system("snap refresh --list 2>/dev/null | grep -qvE '^(Name|All snaps)'") == 0);
 }
@@ -213,21 +152,19 @@ UpdateStatus aptCheckUpdates() {
 }
 
 void aptUpdate(const UpdateStatus& status) {
-    // Lista pakietów
     cout << RED << "\nPackages to update (APT):\n" << RESET;
-    string aptList = "apt-get dist-upgrade -s 2>/dev/null | grep '^Inst '"
-                     " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $2}'";
-    system(aptList.c_str());
+    system(("apt-get dist-upgrade -s 2>/dev/null | grep '^Inst '"
+    " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $2}'").c_str());
 
     if (status.hasflatpak && status.flatpak) {
         cout << RED << "\nPackages to update (Flatpak):\n" << RESET;
         system(("flatpak remote-ls --updates --columns=name 2>/dev/null"
-                " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $0}'").c_str());
+        " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $0}'").c_str());
     }
     if (status.hassnap && status.snap) {
         cout << RED << "\nPackages to update (Snap):\n" << RESET;
         system(("snap refresh --list 2>/dev/null | grep -vE '^(Name|All snaps)'"
-                " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $1}'").c_str());
+        " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $1}'").c_str());
     }
 
     if (!yes) {
@@ -254,14 +191,14 @@ void aptUpdate(const UpdateStatus& status) {
         progressbar_set_state(UiState::APT, ++step);
         system("echo -----updating_APT----- >> /tmp/zupd.log");
         const char* cmd = fullupdate
-            ? "DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y "
-              "--with-new-pkgs "
-              "-o APT::Get::Always-Include-Phased-Updates=true "
-              "-o Dpkg::Options::=\"--force-confdef\" "
-              "-o Dpkg::Options::=\"--force-confold\" >> /tmp/zupd.log 2>&1"
-            : "DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y "
-              "-o Dpkg::Options::=\"--force-confdef\" "
-              "-o Dpkg::Options::=\"--force-confold\" >> /tmp/zupd.log 2>&1";
+        ? "DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y "
+        "--with-new-pkgs "
+        "-o APT::Get::Always-Include-Phased-Updates=true "
+        "-o Dpkg::Options::=\"--force-confdef\" "
+        "-o Dpkg::Options::=\"--force-confold\" >> /tmp/zupd.log 2>&1"
+        : "DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y "
+        "-o Dpkg::Options::=\"--force-confdef\" "
+        "-o Dpkg::Options::=\"--force-confold\" >> /tmp/zupd.log 2>&1";
         if (system(cmd) != 0) ok = false;
     }
 
@@ -270,7 +207,6 @@ void aptUpdate(const UpdateStatus& status) {
         system("echo ----updating_flatpak---- >> /tmp/zupd.log");
         if (system("flatpak update -y >> /tmp/zupd.log 2>&1") != 0) ok = false;
     }
-
     if (status.hassnap && status.snap) {
         progressbar_set_state(UiState::SNAP, ++step);
         system("echo ----updating_snap---- >> /tmp/zupd.log");
@@ -287,36 +223,29 @@ void aptUpdate(const UpdateStatus& status) {
     }
     if (status.hassnap) {
         system("snap list --all 2>/dev/null "
-               "| awk '/disabled/{print $1, $3}' "
-               "| while read name rev; do snap remove \"$name\" --revision=\"$rev\"; done "
-               ">> /tmp/zupd.log 2>&1");
+        "| awk '/disabled/{print $1, $3}' "
+        "| while read name rev; do snap remove \"$name\" --revision=\"$rev\"; done "
+        ">> /tmp/zupd.log 2>&1");
         system("rm -rf /var/lib/snapd/cache/* >> /tmp/zupd.log 2>&1");
     }
 
-    if (ok) {
-        progressbar_set_state(UiState::DONE, total);
-        progressbar_finish("DONE!");
-    } else {
-        progressbar_set_state(UiState::ERROR, step);
-        progressbar_finish("ERROR!");
-        cout << RED << "ERROR," << RESET << " check /tmp/zupd.log for details." << endl;
-        return;
-    }
+    if (ok) { progressbar_set_state(UiState::DONE, total); progressbar_finish("DONE!"); }
+    else    { progressbar_set_state(UiState::ERROR, step); progressbar_finish("ERROR!");
+        cout << RED << "ERROR," << RESET << " check /tmp/zupd.log for details." << endl; return; }
 
-    cout << YELLOW << "[RAPORT]" << RESET << " /tmp/zupd.log" << endl;
-    if (reboot)        { cout << YELLOW << "[*] Rebooting in 3s..."   << RESET << endl; system("sleep 3 && reboot"); }
-    else if (shutdown) { cout << YELLOW << "[*] Shutting down in 3s..." << RESET << endl; system("sleep 3 && shutdown -h now"); }
+        cout << YELLOW << "[RAPORT]" << RESET << " /tmp/zupd.log" << endl;
+        if (reboot)        { cout << YELLOW << "[*] Rebooting in 3s..."    << RESET << endl; system("sleep 3 && reboot"); }
+        else if (shutdown) { cout << YELLOW << "[*] Shutting down in 3s..." << RESET << endl; system("sleep 3 && shutdown -h now"); }
 }
 
 //=============================================================================
-// ZYPPER (openSUSE / SLES)
+// ZYPPER
 //=============================================================================
 UpdateStatus zypperCheckUpdates() {
     UpdateStatus s;
     cout << endl;
     cout << YELLOW << "[*] Refreshing package cache..." << RESET << endl;
     system("zypper refresh -q 2>/dev/null");
-    // zypper list-updates zwraca wiersz z 'v |' dla każdego dostępnego update
     s.native = (system("zypper list-updates 2>/dev/null | grep -q '^v '") == 0);
     checkUniversalManagers(s);
     return s;
@@ -325,17 +254,17 @@ UpdateStatus zypperCheckUpdates() {
 void zypperUpdate(const UpdateStatus& status) {
     cout << RED << "\nPackages to update (Zypper):\n" << RESET;
     system(("zypper list-updates 2>/dev/null | grep '^v '"
-            " | awk -F'|' '{print \"" + YELLOW + "[+] " + RESET + "\" $3}'").c_str());
+    " | awk -F'|' '{print \"" + YELLOW + "[+] " + RESET + "\" $3}'").c_str());
 
     if (status.hasflatpak && status.flatpak) {
         cout << RED << "\nPackages to update (Flatpak):\n" << RESET;
         system(("flatpak remote-ls --updates --columns=name 2>/dev/null"
-                " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $0}'").c_str());
+        " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $0}'").c_str());
     }
     if (status.hassnap && status.snap) {
         cout << RED << "\nPackages to update (Snap):\n" << RESET;
         system(("snap refresh --list 2>/dev/null | grep -vE '^(Name|All snaps)'"
-                " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $1}'").c_str());
+        " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $1}'").c_str());
     }
 
     if (!yes) {
@@ -353,7 +282,6 @@ void zypperUpdate(const UpdateStatus& status) {
 
     progressbar_start(total);
 
-    // ZYPPER nie ma dpkg, ale sprawdzamy bazę rpm
     progressbar_set_state(UiState::CHECKING, ++step);
     system("echo -----checking_system_consistency----- > /tmp/zupd.log");
     system("rpm --rebuilddb >> /tmp/zupd.log 2>&1");
@@ -363,8 +291,8 @@ void zypperUpdate(const UpdateStatus& status) {
         progressbar_set_state(UiState::ZYPPER, ++step);
         system("echo -----updating_zypper----- >> /tmp/zupd.log");
         const char* cmd = fullupdate
-            ? "zypper dup -y --no-confirm >> /tmp/zupd.log 2>&1"
-            : "zypper update -y >> /tmp/zupd.log 2>&1";
+        ? "zypper dup -y --no-confirm >> /tmp/zupd.log 2>&1"
+        : "zypper update -y >> /tmp/zupd.log 2>&1";
         if (system(cmd) != 0) ok = false;
     }
 
@@ -373,7 +301,6 @@ void zypperUpdate(const UpdateStatus& status) {
         system("echo ----updating_flatpak---- >> /tmp/zupd.log");
         if (system("flatpak update -y >> /tmp/zupd.log 2>&1") != 0) ok = false;
     }
-
     if (status.hassnap && status.snap) {
         progressbar_set_state(UiState::SNAP, ++step);
         system("echo ----updating_snap---- >> /tmp/zupd.log");
@@ -388,50 +315,64 @@ void zypperUpdate(const UpdateStatus& status) {
         system("rm -rf /var/tmp/flatpak-cache-* >> /tmp/zupd.log 2>&1");
     }
 
-    if (ok) {
-        progressbar_set_state(UiState::DONE, total);
-        progressbar_finish("DONE!");
-    } else {
-        progressbar_set_state(UiState::ERROR, step);
-        progressbar_finish("ERROR!");
-        cout << RED << "ERROR," << RESET << " check /tmp/zupd.log for details." << endl;
-        return;
-    }
+    if (ok) { progressbar_set_state(UiState::DONE, total); progressbar_finish("DONE!"); }
+    else    { progressbar_set_state(UiState::ERROR, step); progressbar_finish("ERROR!");
+        cout << RED << "ERROR," << RESET << " check /tmp/zupd.log for details." << endl; return; }
 
-    cout << YELLOW << "[RAPORT]" << RESET << " /tmp/zupd.log" << endl;
-    if (reboot)        { cout << YELLOW << "[*] Rebooting in 3s..."    << RESET << endl; system("sleep 3 && reboot"); }
-    else if (shutdown) { cout << YELLOW << "[*] Shutting down in 3s..." << RESET << endl; system("sleep 3 && shutdown -h now"); }
+        cout << YELLOW << "[RAPORT]" << RESET << " /tmp/zupd.log" << endl;
+        if (reboot)        { cout << YELLOW << "[*] Rebooting in 3s..."    << RESET << endl; system("sleep 3 && reboot"); }
+        else if (shutdown) { cout << YELLOW << "[*] Shutting down in 3s..." << RESET << endl; system("sleep 3 && shutdown -h now"); }
 }
 
 //=============================================================================
-// DNF (Fedora / RHEL / Rocky / Alma)
+// DNF
 //=============================================================================
 UpdateStatus dnfCheckUpdates() {
     UpdateStatus s;
     cout << endl;
     cout << YELLOW << "[*] Refreshing package cache..." << RESET << endl;
-    system("dnf check-update -q 2>/dev/null; true"); // check-update zwraca 100 gdy są updates — ignorujemy kod
-    // Sprawdź czy są updates: kod 100 = są, 0 = brak, inne = błąd
-    int ret = system("dnf check-update -q >/dev/null 2>&1");
+
+    // dnf check-update: kod 100 = są updates, 0 = brak, inne = błąd
+    // Wywołujemy raz — wynik idzie do /dev/null, kod wyjścia zachowujemy
+    int ret = system("dnf check-update -q --refresh >/dev/null 2>&1");
     s.native = (WEXITSTATUS(ret) == 100);
+
     checkUniversalManagers(s);
     return s;
 }
 
 void dnfUpdate(const UpdateStatus& status) {
     cout << RED << "\nPackages to update (DNF):\n" << RESET;
-    system(("dnf list updates 2>/dev/null | tail -n +2"
-            " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $1}'").c_str());
+
+    // Używamy popen zamiast system() — żeby kolory ANSI nie psuły output
+    FILE* p = popen("dnf list updates 2>/dev/null | tail -n +2", "r");
+    if (p) {
+        char buf[512];
+        bool any = false;
+        while (fgets(buf, sizeof(buf), p)) {
+            string line(buf);
+            line.erase(line.find_last_not_of(" \n\r\t") + 1);
+            if (line.empty()) continue;
+            // Wytnij arch z nazwy (vim-enhanced.x86_64 → vim-enhanced)
+            string name = line.substr(0, line.find(' '));
+            size_t dot = name.rfind('.');
+            if (dot != string::npos) name = name.substr(0, dot);
+            cout << YELLOW << "[+] " << RESET << name << "\n";
+            any = true;
+        }
+        pclose(p);
+        if (!any) cout << YELLOW << "(no packages listed)" << RESET << "\n";
+    }
 
     if (status.hasflatpak && status.flatpak) {
         cout << RED << "\nPackages to update (Flatpak):\n" << RESET;
         system(("flatpak remote-ls --updates --columns=name 2>/dev/null"
-                " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $0}'").c_str());
+        " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $0}'").c_str());
     }
     if (status.hassnap && status.snap) {
         cout << RED << "\nPackages to update (Snap):\n" << RESET;
         system(("snap refresh --list 2>/dev/null | grep -vE '^(Name|All snaps)'"
-                " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $1}'").c_str());
+        " | awk '{print \"" + YELLOW + "[+] " + RESET + "\" $1}'").c_str());
     }
 
     if (!yes) {
@@ -458,8 +399,8 @@ void dnfUpdate(const UpdateStatus& status) {
         progressbar_set_state(UiState::DNF, ++step);
         system("echo -----updating_DNF----- >> /tmp/zupd.log");
         const char* cmd = fullupdate
-            ? "dnf distro-sync -y >> /tmp/zupd.log 2>&1"
-            : "dnf upgrade -y     >> /tmp/zupd.log 2>&1";
+        ? "dnf distro-sync -y >> /tmp/zupd.log 2>&1"
+        : "dnf upgrade -y     >> /tmp/zupd.log 2>&1";
         if (system(cmd) != 0) ok = false;
     }
 
@@ -468,7 +409,6 @@ void dnfUpdate(const UpdateStatus& status) {
         system("echo ----updating_flatpak---- >> /tmp/zupd.log");
         if (system("flatpak update -y >> /tmp/zupd.log 2>&1") != 0) ok = false;
     }
-
     if (status.hassnap && status.snap) {
         progressbar_set_state(UiState::SNAP, ++step);
         system("echo ----updating_snap---- >> /tmp/zupd.log");
@@ -484,23 +424,18 @@ void dnfUpdate(const UpdateStatus& status) {
         system("rm -rf /var/tmp/flatpak-cache-* >> /tmp/zupd.log 2>&1");
     }
 
-    if (ok) {
-        progressbar_set_state(UiState::DONE, total);
-        progressbar_finish("DONE!");
-    } else {
-        progressbar_set_state(UiState::ERROR, step);
-        progressbar_finish("ERROR!");
-        cout << RED << "ERROR," << RESET << " check /tmp/zupd.log for details." << endl;
-        return;
-    }
+    if (ok) { progressbar_set_state(UiState::DONE, total); progressbar_finish("DONE!"); }
+    else    { progressbar_set_state(UiState::ERROR, step); progressbar_finish("ERROR!");
+        cout << RED << "ERROR," << RESET << " check /tmp/zupd.log for details." << endl; return; }
 
-    cout << YELLOW << "[RAPORT]" << RESET << " /tmp/zupd.log" << endl;
-    if (reboot)        { cout << YELLOW << "[*] Rebooting in 3s..."    << RESET << endl; system("sleep 3 && reboot"); }
-    else if (shutdown) { cout << YELLOW << "[*] Shutting down in 3s..." << RESET << endl; system("sleep 3 && shutdown -h now"); }
+        cout << YELLOW << "[RAPORT]" << RESET << " /tmp/zupd.log" << endl;
+        if (reboot)        { cout << YELLOW << "[*] Rebooting in 3s..."    << RESET << endl; system("sleep 3 && reboot"); }
+        else if (shutdown) { cout << YELLOW << "[*] Shutting down in 3s..." << RESET << endl; system("sleep 3 && shutdown -h now"); }
 }
 
-
-// main-----------------------------------------------------------
+//=============================================================================
+// main
+//=============================================================================
 int main(int argc, char* argv[]) {
 
     string pm = get_package_manager();
@@ -521,62 +456,61 @@ int main(int argc, char* argv[]) {
         (version && yes)     || (help    && yes)      ||
         (version && reboot)  || (version && shutdown) ||
         (fullupdate && version) || (fullupdate && help)) {
-        cout << RED << "Error: -r and -s are mutually exclusive. "
-             << "--help and --version cannot be combined with other options."
-             << RESET << endl;
-        return 1;
-    }
+        cerr << RED << "Error: -r and -s are mutually exclusive. "
+        << "--help and --version cannot be combined with other options."
+        << RESET << endl;
+    return 1;
+        }
 
-    if (version && help) {
-        cout << YELLOW << "--version" << RESET << endl; versionmessage();
-        cout << endl;
-        cout << YELLOW << "--help"    << RESET << endl; helpmessage(argv[0]);
+        if (version && help) {
+            cout << YELLOW << "--version" << RESET << endl; versionmessage();
+            cout << endl;
+            cout << YELLOW << "--help"    << RESET << endl; helpmessage(argv[0]);
+            return 0;
+        }
+        if (version) { versionmessage();     return 0; }
+        if (help)    { helpmessage(argv[0]); return 0; }
+
+        if (geteuid() != 0) {
+            cerr << RED << "Run with sudo!\n" << RESET;
+            return 1;
+        }
+
+        if (pm == "unknown") {
+            cerr << RED << "Error: Could not detect a supported package manager "
+            << "(apt / zypper / dnf).\n" << RESET;
+            return 1;
+        }
+
+        repo(pm);
+
+        if (pm == "apt") {
+            UpdateStatus s = aptCheckUpdates();
+            if (s.any()) {
+                if (fullupdate) { cout << YELLOW << "FULL UPDATE MODE" << RESET << endl; sleep(1); }
+                aptUpdate(s);
+            } else {
+                cout << "\n" << RED << "System is up to date!" << RESET << endl;
+            }
+        }
+        else if (pm == "zypper") {
+            UpdateStatus s = zypperCheckUpdates();
+            if (s.any()) {
+                if (fullupdate) { cout << YELLOW << "FULL UPDATE MODE (dup)" << RESET << endl; sleep(1); }
+                zypperUpdate(s);
+            } else {
+                cout << "\n" << RED << "System is up to date!" << RESET << endl;
+            }
+        }
+        else if (pm == "dnf") {
+            UpdateStatus s = dnfCheckUpdates();
+            if (s.any()) {
+                if (fullupdate) { cout << YELLOW << "FULL UPDATE MODE (distro-sync)" << RESET << endl; sleep(1); }
+                dnfUpdate(s);
+            } else {
+                cout << "\n" << RED << "System is up to date!" << RESET << endl;
+            }
+        }
+
         return 0;
-    }
-    if (version) { versionmessage();     return 0; }
-    if (help)    { helpmessage(argv[0]); return 0; }
-
-    if (geteuid() != 0) {
-        cout << RED << "Run with sudo!\n" << RESET;
-        return 1;
-    }
-
-    // Nieznany system — wyjdź czytelnie
-    if (pm == "unknown") {
-        cout << RED << "Error: Could not detect a supported package manager "
-             << "(apt / zypper / dnf).\n" << RESET;
-        return 1;
-    }
-
-    repo(pm);
-
-    if (pm == "apt") {
-        UpdateStatus s = aptCheckUpdates();
-        if (s.any()) {
-            if (fullupdate) { cout << YELLOW << "FULL UPDATE MODE" << RESET << endl; sleep(1); }
-            aptUpdate(s);
-        } else {
-            cout << "\n" << RED << "System is up to date!" << RESET << endl;
-        }
-    }
-    else if (pm == "zypper") {
-        UpdateStatus s = zypperCheckUpdates();
-        if (s.any()) {
-            if (fullupdate) { cout << YELLOW << "FULL UPDATE MODE (dup)" << RESET << endl; sleep(1); }
-            zypperUpdate(s);
-        } else {
-            cout << "\n" << RED << "System is up to date!" << RESET << endl;
-        }
-    }
-    else if (pm == "dnf") {
-        UpdateStatus s = dnfCheckUpdates();
-        if (s.any()) {
-            if (fullupdate) { cout << YELLOW << "FULL UPDATE MODE (distro-sync)" << RESET << endl; sleep(1); }
-            dnfUpdate(s);
-        } else {
-            cout << "\n" << RED << "System is up to date!" << RESET << endl;
-        }
-    }
-
-    return 0;
 }
