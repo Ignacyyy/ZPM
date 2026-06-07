@@ -44,7 +44,7 @@ void PAGE2(){
       // commands
       std::cout << RED << "Commands:" << RESET << std::endl;
       std::cout << "  " << GREEN << "zhome" << RESET << "      - Display home page" << std::endl;
-      std::cout << "  " << GREEN << "zpm" << RESET << "        - Unified wrapper (e.g., zpm install, zpm update)" << std::endl;
+      std::cout << "  " << GREEN << "zpm" << RESET << "        - Unified wrapper" << std::endl;
       std::cout << "  " << GREEN << "zupd" << RESET << "       - Update system packages" << std::endl;
       std::cout << "  " << GREEN << "zinst" << RESET << "      - Install package" << std::endl;
       std::cout << "  " << GREEN << "zrm" << RESET << "        - Remove package" << std::endl;
@@ -104,7 +104,7 @@ void PAGE1_PAGE2(){
     // commands
     std::cout << RED << "Commands:" << RESET << std::endl;
     std::cout << "  " << GREEN << "zhome" << RESET << "      - Display home page" << std::endl;
-    std::cout << "  " << GREEN << "zpm" << RESET << "        - Unified wrapper (e.g., zpm install, zpm update)" << std::endl;
+    std::cout << "  " << GREEN << "zpm" << RESET << "        - Unified wrapper" << std::endl;
     std::cout << "  " << GREEN << "zupd" << RESET << "       - Update system packages" << std::endl;
     std::cout << "  " << GREEN << "zinst" << RESET << "      - Install package" << std::endl;
     std::cout << "  " << GREEN << "zrm" << RESET << "        - Remove package" << std::endl;
