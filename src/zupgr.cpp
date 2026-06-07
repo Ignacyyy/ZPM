@@ -41,7 +41,7 @@ string ZPM_prever() {
 
 // Komunikat pomocy
 void helpmessage(const char* progName) {
-    cout << RED << "Usage: " << RESET << progName << " [options] or zpm upgr/upgrade [options]\n\n";
+    cout << RED << "Usage: " << RESET << progName << " [options] or zpm upgr/upgrade [options]\n";
     cout << "Options:\n";
     cout << "  -h, --help           Show help\n";
     cout << "  -v, --version        Show version\n";
