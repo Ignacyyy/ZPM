@@ -7,47 +7,6 @@ void showFlatpakPackageInfo(const std::string& pkg);
 void showSnapPackageInfo(const std::string& pkg);
 std::string get_package_manager();
 
-// ─── WYKRYWANIE PM ───────────────────────────────────────────────────────────
-std::string get_package_manager() {
-    FILE* f = fopen("/etc/os-release", "r");
-    if (f) {
-        char line[256];
-        std::string id, id_like;
-        while (fgets(line, sizeof(line), f)) {
-            std::string s(line);
-            if (!s.empty() && s.back() == '\n') s.pop_back();
-            auto stripQ = [](const std::string& v) {
-                std::string r = v;
-                if (r.size() >= 2 && r.front() == '"' && r.back() == '"')
-                    r = r.substr(1, r.size() - 2);
-                return r;
-            };
-            if      (s.rfind("ID=",      0) == 0) id      = stripQ(s.substr(3));
-            else if (s.rfind("ID_LIKE=", 0) == 0) id_like = stripQ(s.substr(8));
-        }
-        fclose(f);
-
-        auto word = [](const std::string& hay, const std::string& needle) {
-            size_t pos = hay.find(needle);
-            if (pos == std::string::npos) return false;
-            bool l = (pos == 0 || hay[pos-1] == ' ');
-            bool r = (pos + needle.size() == hay.size() || hay[pos+needle.size()] == ' ');
-            return l && r;
-        };
-
-        for (const std::string& src : {id_like, id}) {
-            if (word(src,"debian") || word(src,"ubuntu"))                    return "apt";
-            if (word(src,"suse")   || word(src,"opensuse"))                  return "zypper";
-            if (word(src,"fedora") || word(src,"rhel") || word(src,"centos")
-                || word(src,"rocky")  || word(src,"alma"))                      return "dnf";
-        }
-    }
-    if (access("/usr/bin/apt-get", X_OK)==0 || access("/bin/apt-get", X_OK)==0) return "apt";
-    if (access("/usr/bin/zypper",  X_OK)==0) return "zypper";
-    if (access("/usr/bin/dnf",     X_OK)==0) return "dnf";
-    return "unknown";
-}
-
 // ─── APT ─────────────────────────────────────────────────────────────────────
 void showAptPackageInfo(const std::string& pkg) {
     std::string command = "apt show " + pkg + " 2>/dev/null";
