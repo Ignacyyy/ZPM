@@ -78,7 +78,8 @@ int main(int argc, char* argv[]) {
         "zupd",
         "ZPM",
         "zpm",
-        "zrun"
+        "zrun",
+        "zhome"
     };
 
     vector<string> dirs = {
