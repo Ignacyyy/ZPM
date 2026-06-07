@@ -36,7 +36,7 @@
 #include "version.h"    // version (VERSION.txt)
 #include "zhelp-default-page.h" // zhelp default page
 #include "progressbar.h" // progressbar
-
+#include "pm_detect.h" // apt, dnf, zypper detection
 
 
 
