@@ -4,8 +4,8 @@ using namespace std;
 
 // Komunikat pomocy
 void helpmessage(const char* progName) {
-    cout << RED << "Usage: " << RESET << progName << " [options] or zpm uninstall [options]\n\n";
-    cout << "Options:\n";
+    cout << RED << "Usage: " << RESET << progName << " [options] or zpm uninstall [options]\n";
+    cout << RED << "Options:\n" << RESET;
     cout << "  -h, --help           Show help\n";
     cout << "  -v, --version        Show version\n";
 }
