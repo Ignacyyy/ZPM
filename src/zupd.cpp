@@ -63,25 +63,15 @@ void repo(const string& pm) {
     // --- ZYPPER ---
     else if (pm == "zypper") {
         cout << "\n" << YELLOW << "[Z]" << RESET << GREEN << " Zypper Repositories:\n" << RESET;
-        FILE* p = popen("LC_ALL=C zypper repos --uri 2>/dev/null | grep '^|' | grep -v 'Alias' | grep -v 'Name'", "r");
-        if (p) {
-            char buf[512];
-            bool found = false;
-            while (fgets(buf, sizeof(buf), p)) {
-                string line(buf);
-                if (line.find('|') != string::npos) {
-                    cout << YELLOW << "- " << RESET << line;
-                    found = true;
-                }
-            }
-            pclose(p);
-            if (!found) cout << YELLOW << "- (no active zypper repos found)\n" << RESET;
-        }
+        // Szukamy linii zaczynających się od cyfry (ID repozytorium), dzielimy po '|', bierzemy 2 kolumnę (Alias) i usuwamy z niej białe znaki
+        string zypper_cmd = "zypper lr 2>/dev/null | awk -F'|' '/^[[:space:]]*[0-9]+/ {print $2}' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | sed 's|^|" + YELLOW + "- " + RESET + "|'";
+        system(zypper_cmd.c_str());
     }
     // --- DNF ---
     else if (pm == "dnf") {
         cout << "\n" << YELLOW << "[R]" << RESET << GREEN << " DNF Repositories:\n" << RESET;
-        string dnf_cmd = "grep -h '^name=' /etc/yum.repos.d/*.repo 2>/dev/null | cut -d= -f2 | sed 's|^|" + YELLOW + "- " + RESET + "|'";
+        // Wyciszamy dnf flagą -q (brak komunikatów o aktualizacji metadanych), ignorujemy nagłówek (NR>1) i bierzemy pierwszą kolumnę (ID repo)
+        string dnf_cmd = "dnf repolist -q 2>/dev/null | awk 'NR>1 {print $1}' | grep -v '^[[:space:]]*$' | sed 's|^|" + YELLOW + "- " + RESET + "|'";
         system(dnf_cmd.c_str());
     }
 
