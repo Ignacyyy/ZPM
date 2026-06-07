@@ -1,6 +1,6 @@
 # Zielina Package Manager (ZPM)
 
-> A modern, unified package management interface for Debian/Fedora/openSuse (apt, dnf, zypper) — combining APT, Flatpak, and Snap into one fast, user-friendly tool.
+> A modern, unified package management interface for Debian/Fedora/openSUSE (apt, dnf, zypper) — combining APT, Flatpak, and Snap into one fast, user-friendly tool.
 
 ---
 
