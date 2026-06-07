@@ -144,7 +144,7 @@ if [ "$dep" = "y" ]; then
     esac
     ok "Dependencies installed successfully."
 else
-    warn "Skipping dependency installation. The ZPM instalation and usage may fail if packages are missing."
+    warn "Skipping dependency installation. The ZPM instalation and usage will fail if packages are missing."
 fi
 
 # ── INSTALL TO TARGET ─────────────────────────────────────────────────────────
