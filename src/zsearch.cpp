@@ -13,14 +13,14 @@ string highlight(const string& text, const string& query) {
     size_t pos = lowerText.find(lowerQuery);
     if (pos == string::npos) return text;
     return text.substr(0, pos) +
-           YELLOW + text.substr(pos, query.length()) + RESET +
-           text.substr(pos + query.length());
+    YELLOW + text.substr(pos, query.length()) + RESET +
+    text.substr(pos + query.length());
 }
 
 // ─── komunikaty ───────────────────────────────────────────────────────────────
 void helpmessage(const char* progName) {
     cout << RED << "Usage: " << RESET << progName
-         << " <query> [options]  or  zpm search <query> [options]\n\n";
+    << " <query> [options]  or  zpm search <query> [options]\n\n";
     cout << "Options:\n";
     cout << "  -h, --help     Show help\n";
     cout << "  -v, --version  Show version\n";
@@ -31,6 +31,7 @@ void versionmessage() {
     cout << "https://github.com/Zielina-Konrad-productions/ZPM\n";
     cout << "Copyright (c) 2026 Ignacyyy & Ry3ball\nLicense: MIT\n";
 }
+
 // ─── sekcje wyszukiwania ──────────────────────────────────────────────────────
 
 void searchApt(const string& query, const string& queryTrimmed) {
@@ -117,7 +118,7 @@ void searchZypper(const string& query, const string& queryTrimmed) {
         }
 
         cout << GREEN << "[ZYPPER]" << RESET << " "
-             << highlight(name, queryTrimmed) << "\n";
+        << highlight(name, queryTrimmed) << "\n";
         if (!summary.empty())
             cout << "    " << highlight(summary, queryTrimmed) << "\n";
         count++;
@@ -131,8 +132,9 @@ void searchZypper(const string& query, const string& queryTrimmed) {
 }
 
 void searchDnf(const string& query, const string& queryTrimmed) {
-    // Próbuj najpierw z cache, żeby nie wisieć na wolnym repo
-    string command = "dnf search --cacheonly " + query + " 2>/dev/null";
+    // dnf search zwraca bloki w stylu "name.arch : summary" (DNF4)
+    // lub "name.arch: summary" (DNF5)
+    string command = "dnf search " + query + " 2>/dev/null";
     FILE* pipe = popen(command.c_str(), "r");
     if (!pipe) { cerr << RED << "Error running dnf\n" << RESET; return; }
 
@@ -144,17 +146,30 @@ void searchDnf(const string& query, const string& queryTrimmed) {
         string line(buffer);
         line.erase(line.find_last_not_of(" \n\r\t") + 1);
         if (line.empty()) continue;
-        // Pomiń linie nagłówkowe dnf ("Last metadata...", "===...")
+
+        // Pomiń stare linie nagłówkowe dnf ("Last metadata...", "===...")
         if (line.find("===") != string::npos) continue;
         if (line.rfind("Last", 0) == 0) continue;
 
-        // Format: "vim-enhanced.x86_64 : Vi IMproved..."
-        size_t colon = line.find(" : ");
+        // Szukaj dwukropka zamiast " : ", żeby wspierać DNF4 oraz DNF5
+        size_t colon = line.find(':');
         if (colon == string::npos) continue;
 
         string nameArch = line.substr(0, colon);
-        string summary  = line.substr(colon + 3);
+        string summary  = line.substr(colon + 1);
+
+        // Usuń spacje z końca nazwy (dla kompatybilności wstecznej z DNF4)
         nameArch.erase(nameArch.find_last_not_of(" \t") + 1);
+
+        // Jeśli w "nazwie" nadal znajdują się spacje, to prawdopodobnie jest to linia
+        // informacyjna z logów DNF5, np. "Updating and loading repositories:"
+        // lub "Matched items to search for: vim" - pomijamy.
+        if (nameArch.find(' ') != string::npos) continue;
+
+        // Usuń spacje na początku opisu
+        if (!summary.empty()) {
+            summary.erase(0, summary.find_first_not_of(" \t"));
+        }
 
         // Wytnij arch (.x86_64, .noarch itp.) dla czytelności
         string name = nameArch;
@@ -167,7 +182,7 @@ void searchDnf(const string& query, const string& queryTrimmed) {
         }
 
         cout << GREEN << "[DNF]" << RESET << " "
-             << highlight(name, queryTrimmed) << "\n";
+        << highlight(name, queryTrimmed) << "\n";
         if (!summary.empty())
             cout << "    " << highlight(summary, queryTrimmed) << "\n";
         count++;
@@ -182,11 +197,11 @@ void searchDnf(const string& query, const string& queryTrimmed) {
 
 void searchFlatpak(const string& query, const string& queryTrimmed) {
     bool hasFlatpak = (access("/usr/bin/flatpak", X_OK) == 0 ||
-                       access("/bin/flatpak",     X_OK) == 0);
+    access("/bin/flatpak",     X_OK) == 0);
     if (!hasFlatpak) return;
 
     string command = "flatpak search --columns=application,name,description "
-                     + query + " 2>/dev/null";
+    + query + " 2>/dev/null";
     FILE* pipe = popen(command.c_str(), "r");
     if (!pipe) return;
 
@@ -212,8 +227,8 @@ void searchFlatpak(const string& query, const string& queryTrimmed) {
         }
 
         cout << GREEN << "[FLATPAK]" << RESET << " "
-             << highlight(appId, queryTrimmed) << " - "
-             << highlight(name,  queryTrimmed) << "\n";
+        << highlight(appId, queryTrimmed) << " - "
+        << highlight(name,  queryTrimmed) << "\n";
         if (!desc.empty())
             cout << "    " << highlight(desc, queryTrimmed) << "\n";
         count++;
@@ -228,8 +243,8 @@ void searchFlatpak(const string& query, const string& queryTrimmed) {
 
 void searchSnap(const string& query, const string& queryTrimmed) {
     bool hasSnap = (access("/usr/bin/snap", X_OK) == 0 ||
-                    access("/bin/snap",     X_OK) == 0 ||
-                    access("/snap/bin/snap",X_OK) == 0);
+    access("/bin/snap",     X_OK) == 0 ||
+    access("/snap/bin/snap",X_OK) == 0);
     if (!hasSnap) return;
 
     string command = "snap find " + query + " 2>/dev/null";
@@ -261,7 +276,7 @@ void searchSnap(const string& query, const string& queryTrimmed) {
         }
 
         cout << GREEN << "[SNAP]" << RESET << " "
-             << highlight(name, queryTrimmed) << "\n";
+        << highlight(name, queryTrimmed) << "\n";
         if (!summary.empty())
             cout << "    " << highlight(summary, queryTrimmed) << "\n";
         count++;
@@ -293,10 +308,10 @@ int main(int argc, char* argv[]) {
             arg.find('&') != string::npos ||
             arg.find('|') != string::npos) {
             cerr << RED << "Invalid characters in query!\n" << RESET;
-            return 1;
-        }
+        return 1;
+            }
 
-        if (arg[0] != '-') query += arg + " ";
+            if (arg[0] != '-') query += arg + " ";
     }
 
     if (showVersion && showHelp) {
@@ -327,7 +342,7 @@ int main(int argc, char* argv[]) {
     else if (pm == "dnf")    searchDnf(query, queryTrimmed);
     else {
         cerr << RED << "Error: Could not detect a supported package manager "
-             << "(apt / zypper / dnf).\n" << RESET;
+        << "(apt / zypper / dnf).\n" << RESET;
         return 1;
     }
 
