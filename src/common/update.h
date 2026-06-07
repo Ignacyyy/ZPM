@@ -42,14 +42,18 @@ static inline bool updateInfoEnabled() {
 // ───────────────────────── REMOTE VERSION ─────────────────────────
 
 static inline std::string get_latest_version() {
-    // POPRAWKA: prawidłowe repo + python3 zamiast sed (pewniejsze parsowanie)
+    // POPRAWKA: Wyciszenie stderr (2>/dev/null) oraz blok try-except w Pythonie
     std::string cmd =
         "curl -fsSL -H 'User-Agent: ZPM' "
-        "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases/latest"
-        " | python3 -c \""
-        "import sys, json; "
-        "r = json.load(sys.stdin); "
-        "print(r['tag_name'].lstrip('v'))\"";
+        "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases/latest 2>/dev/null "
+        "| python3 -c \"\n"
+        "import sys, json\n"
+        "try:\n"
+        "    r = json.load(sys.stdin)\n"
+        "    print(r.get('tag_name', '').lstrip('v'))\n"
+        "except:\n"
+        "    pass\n"
+        "\" 2>/dev/null";
 
     std::string v = exec(cmd.c_str());
     v.erase(std::remove(v.begin(), v.end(), '\n'), v.end());
