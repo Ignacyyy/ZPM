@@ -21,8 +21,8 @@ inline std::string get_package_manager() {
 
             auto stripQuotes = [](const std::string& v) {
                 std::string r = v;
-                if (r.size() >= 2 && r.front() == '"' && r.back() == '"')
-                    r = r.substr(1, r.size() - 2);
+                if (!r.empty() && r.front() == '"') r.erase(0, 1);
+                if (!r.empty() && r.back()  == '"') r.pop_back();
                 return r;
             };
 
