@@ -14,7 +14,7 @@ string toLower(string s) {
 // ─── komunikaty ───────────────────────────────────────────────────────────────
 void helpmessage(const char* progName) {
     cout << RED << "Usage: " << RESET << progName
-    << " [options]  or  zpm list [options]\n\n";
+    << " [options] or zpm list [options]\n\n";
     cout << RED << "Options:\n" << RESET;
     cout << "  --version,  -v  Show version information\n";
     cout << "  --help,     -h  Show this help message\n";
