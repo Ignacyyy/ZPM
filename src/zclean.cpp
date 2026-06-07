@@ -14,6 +14,55 @@ struct Step {
 };
 //koniec struktury step----------------------------------------------------------
 
+//-----------------------------------------------------------------------------
+// CleanStatus
+//-----------------------------------------------------------------------------
+struct CleanStatus {
+    bool native     = false;
+    bool flatpak    = false;
+    bool snap       = false;
+    bool hasflatpak = false;
+    bool hassnap    = false;
+
+    bool any() const { return native || flatpak || snap; }
+};
+
+static void checkUniversalManagers(CleanStatus& s) {
+    s.hasflatpak = (system("command -v flatpak >/dev/null 2>&1") == 0);
+    s.hassnap    = (system("command -v snap    >/dev/null 2>&1") == 0);
+    if (s.hasflatpak)
+        s.flatpak = (system("flatpak list --unused --columns=application 2>/dev/null | grep -q .") == 0)
+                 || (system("ls -d /var/tmp/flatpak-cache-* 2>/dev/null | grep -q .") == 0);
+    if (s.hassnap)
+        s.snap = (system("snap list --all 2>/dev/null | grep -q disabled") == 0)
+              || (system("find /var/lib/snapd/cache -type f 2>/dev/null | grep -q .") == 0);
+}
+
+CleanStatus aptCheckClean() {
+    CleanStatus s;
+    s.native = (system("apt-get -s autoremove 2>/dev/null | grep -q '^Remv '") == 0)
+            || (system("apt-get -s autoclean  2>/dev/null | grep -q '^Del '") == 0);
+    checkUniversalManagers(s);
+    return s;
+}
+
+CleanStatus zypperCheckClean() {
+    CleanStatus s;
+    s.native = (system("zypper packages --unneeded 2>/dev/null"
+                       " | awk -F'|' 'NR>4 && $1~/i/{print $3}' | grep -q .") == 0)
+            || (system("find /var/cache/zypp/packages -type f 2>/dev/null | grep -q .") == 0);
+    checkUniversalManagers(s);
+    return s;
+}
+
+CleanStatus dnfCheckClean() {
+    CleanStatus s;
+    s.native = (system("dnf repoquery --unneeded -q 2>/dev/null | grep -q .") == 0)
+            || (system("find /var/cache/dnf -name '*.rpm' 2>/dev/null | grep -q .") == 0);
+    checkUniversalManagers(s);
+    return s;
+}
+
 //funkcje pomocnicze-------------------------------------------------------------
 
 void helpmessage(const char* progName) {
@@ -240,11 +289,21 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    info();
-
-    if      (pm == "apt")    aptClean();
-    else if (pm == "zypper") zypperClean();
-    else if (pm == "dnf")    dnfClean();
+    if (pm == "apt") {
+        CleanStatus s = aptCheckClean();
+        if (s.any()) { info(); aptClean(); }
+        else cout << "\n" << RED << "System is already cleaned!" << RESET << endl;
+    }
+    else if (pm == "zypper") {
+        CleanStatus s = zypperCheckClean();
+        if (s.any()) { info(); zypperClean(); }
+        else cout << "\n" << RED << "System is already cleaned!" << RESET << endl;
+    }
+    else if (pm == "dnf") {
+        CleanStatus s = dnfCheckClean();
+        if (s.any()) { info(); dnfClean(); }
+        else cout << "\n" << RED << "System is already cleaned!" << RESET << endl;
+    }
 
     return 0;
 }
