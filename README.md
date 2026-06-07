@@ -33,7 +33,7 @@ After installation, run `zhelp` to see the full guide.
 | Command        | Description                                   |
 |----------------|-----------------------------------------------|
 | `zpm`          | Main interface — run `zpm --help` for details |
-| `zhelp`        | Display help message                          |
+| `zhome`        | Display home page                             |
 | `zinst`        | Install a package                             |
 | `zrm`          | Remove a package                              |
 | `zupgr`        | Update ZPM itself                             |
