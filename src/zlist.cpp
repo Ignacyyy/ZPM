@@ -74,10 +74,10 @@ void listNative(const string& pm) {
         }
         pclose(p);
 
-    } else if (pm == "dnf") { // <--- Tutaj poprawiłem klamry!
+    } else if (pm == "dnf") {
         cout << YELLOW << "=== DNF packages ===\n" << RESET;
-        // dnf list installed zwraca kolumny: pakiet.arch  wersja  repo
-        FILE* p = popen("dnf list installed 2>/dev/null", "r");
+        // Poprawione pod DNF 5: dnf list --installed
+        FILE* p = popen("dnf list --installed 2>/dev/null", "r");
         if (!p) return;
         char buf[512];
 
@@ -119,14 +119,14 @@ void listNative(const string& pm) {
                 }
         }
         pclose(p);
-    } // <--- Zamknięcie else if (pm == "dnf")
-} // <--- Prawidłowe zamknięcie całej funkcji listNative()
+    }
+}
 
 void listFlatpak() {
-    bool hasFlatpak = (access("/usr/bin/flatpak", X_OK) == 0 ||
-    access("/bin/flatpak",     X_OK) == 0);
+    bool hasFlatpak = (system("command -v flatpak >/dev/null 2>&1") == 0);
+
     if (!hasFlatpak) {
-        cerr << RED << "Flatpak not installed\n" << RESET;
+        cerr << "" << endl;
         return;
     }
     cout << "\n" << YELLOW << "=== Flatpak packages ===\n" << RESET;
@@ -142,11 +142,10 @@ void listFlatpak() {
 }
 
 void listSnap() {
-    bool hasSnap = (access("/usr/bin/snap",     X_OK) == 0 ||
-    access("/bin/snap",          X_OK) == 0 ||
-    access("/snap/bin/snap",     X_OK) == 0);
+    bool hasSnap = (system("command -v snap >/dev/null 2>&1") == 0);
+
     if (!hasSnap) {
-        cerr << RED << "Snap not installed\n" << RESET;
+        cerr << "" << endl;
         return;
     }
     cout << "\n" << YELLOW << "=== Snap packages ===\n" << RESET;
