@@ -132,8 +132,9 @@ void searchZypper(const string& query, const string& queryTrimmed) {
 }
 
 void searchDnf(const string& query, const string& queryTrimmed) {
-    // dnf search zwraca bloki w stylu "name.arch : summary" (DNF4)
-    // lub "name.arch: summary" (DNF5)
+    // dnf search zwraca:
+    // DNF4: "name.arch : summary"
+    // DNF5: " name.arch | summary " (format tabeli)
     string command = "dnf search " + query + " 2>/dev/null";
     FILE* pipe = popen(command.c_str(), "r");
     if (!pipe) { cerr << RED << "Error running dnf\n" << RESET; return; }
@@ -147,31 +148,47 @@ void searchDnf(const string& query, const string& queryTrimmed) {
         line.erase(line.find_last_not_of(" \n\r\t") + 1);
         if (line.empty()) continue;
 
-        // Pomiń stare linie nagłówkowe dnf ("Last metadata...", "===...")
+        // Pomiń linie dekoracyjne/nagłówki tekstowe
         if (line.find("===") != string::npos) continue;
         if (line.rfind("Last", 0) == 0) continue;
 
-        // Szukaj dwukropka zamiast " : ", żeby wspierać DNF4 oraz DNF5
-        size_t colon = line.find(':');
-        if (colon == string::npos) continue;
+        // Dynamiczne wykrywanie separatora: najpierw szukamy '|' (DNF5), potem ':' (DNF4)
+        size_t sep = line.find('|');
+        bool isDnf5 = (sep != string::npos);
+        if (!isDnf5) {
+            sep = line.find(':');
+        }
+        if (sep == string::npos) continue;
 
-        string nameArch = line.substr(0, colon);
-        string summary  = line.substr(colon + 1);
+        string nameArch = line.substr(0, sep);
+        string summary  = line.substr(sep + 1);
 
-        // Usuń spacje z końca nazwy (dla kompatybilności wstecznej z DNF4)
-        nameArch.erase(nameArch.find_last_not_of(" \t") + 1);
-
-        // Jeśli w "nazwie" nadal znajdują się spacje, to prawdopodobnie jest to linia
-        // informacyjna z logów DNF5, np. "Updating and loading repositories:"
-        // lub "Matched items to search for: vim" - pomijamy.
-        if (nameArch.find(' ') != string::npos) continue;
-
-        // Usuń spacje na początku opisu
-        if (!summary.empty()) {
-            summary.erase(0, summary.find_first_not_of(" \t"));
+        // Oczyszczenie nazwy pakietu z białych znaków (potrzebne zwłaszcza w tabeli DNF5)
+        if (!nameArch.empty()) {
+            size_t first = nameArch.find_first_not_of(" \t");
+            if (first == string::npos) continue;
+            size_t last = nameArch.find_last_not_of(" \t");
+            nameArch = nameArch.substr(first, last - first + 1);
         }
 
-        // Wytnij arch (.x86_64, .noarch itp.) dla czytelności
+        // Ignoruj nagłówki kolumn tabeli DNF5 (zarówno EN jak i PL)
+        if (nameArch == "Name" || nameArch == "Pakiet") continue;
+
+        // Jeśli w wyczyszczonej nazwie wciąż są spacje, to linia logowania DNF, np.:
+        // "Matched items to search for" albo "Updating and loading repositories" -> pomijamy
+        if (nameArch.find(' ') != string::npos) continue;
+
+        // Oczyszczenie opisu (summary) z białych znaków z przodu
+        if (!summary.empty()) {
+            size_t first = summary.find_first_not_of(" \t");
+            if (first != string::npos) {
+                summary = summary.substr(first);
+            } else {
+                summary = "";
+            }
+        }
+
+        // Wytnij architekturę (.x86_64, .noarch itp.) dla czytelności
         string name = nameArch;
         size_t dot = nameArch.rfind('.');
         if (dot != string::npos) name = nameArch.substr(0, dot);
