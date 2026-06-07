@@ -20,8 +20,8 @@ string highlight(const string& text, const string& query) {
 // ─── komunikaty ───────────────────────────────────────────────────────────────
 void helpmessage(const char* progName) {
     cout << RED << "Usage: " << RESET << progName
-    << " <query> [options]  or  zpm search <query> [options]\n\n";
-    cout << "Options:\n";
+    << " <query> [options] or zpm search <query> [options]\n\n";
+    cout << RED << "Options:\n" << RESET;
     cout << "  -h, --help     Show help\n";
     cout << "  -v, --version  Show version\n";
 }
