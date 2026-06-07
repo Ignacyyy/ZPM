@@ -26,7 +26,7 @@ string execCommand(const char* cmd) {
 
 void helpmessage(const char* progName) {
     cout << RED << "Usage: " << RESET << progName << " [options]"
-    << " or zpm upd/update [options]\n\n";
+    << " or zpm upd/update [options]\n";
     cout << RED << "Options:" << RESET << endl;
     cout << "  --full, -f     Perform a full system upgrade" << endl;
     cout << "  -r             Reboot the system after update" << endl;
