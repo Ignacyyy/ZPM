@@ -30,7 +30,7 @@ void PAGE1() {
     std::cout << std::endl;
    
     //zhelp page info
-    std::cout << BOLD << "Type zhelp -p2 to see PAGE2." << std::endl;
+    std::cout << BOLD << "Type zhome -p2 to see PAGE2." << std::endl;
 }
 
 void PAGE2(){
@@ -75,7 +75,7 @@ void PAGE2(){
       std::cout << "" << std::endl;
   
       //page 1 info
-      std::cout << BOLD << "Type zhelp -p1 to see PAGE1." << std::endl;
+      std::cout << BOLD << "Type zhome -p1 to see PAGE1." << std::endl;
 }
 
 void PAGE1_PAGE2(){
