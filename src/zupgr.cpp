@@ -61,11 +61,15 @@ void versionmessage() {
 string ZPM_repover() {
     string cmd =
         "curl -fsSL -H 'User-Agent: ZPM' "
-        "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases/latest"
-        " | python3 -c \""
-        "import sys, json; "
-        "r = json.load(sys.stdin); "
-        "print(r['tag_name'].lstrip('v'))\"";
+        "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases/latest 2>/dev/null "
+        "| python3 -c \"\n"
+        "import sys, json\n"
+        "try:\n"
+        "    r = json.load(sys.stdin)\n"
+        "    print(r.get('tag_name', '').lstrip('v'))\n"
+        "except:\n"
+        "    pass\n"
+        "\" 2>/dev/null";
 
     string v = exec(cmd.c_str());
     v.erase(remove(v.begin(), v.end(), '\n'), v.end());
@@ -83,12 +87,17 @@ string ZPM_repover() {
 string ZPM_repoprever() {
     string cmd =
         "curl -fsSL -H 'User-Agent: ZPM' "
-        "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases"
-        " | python3 -c \""
-        "import sys, json; "
-        "releases = json.load(sys.stdin); "
-        "pre = [r for r in releases if r.get('prerelease', False)]; "
-        "print(pre[0]['tag_name'].lstrip('v') if pre else '')\"";
+        "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases 2>/dev/null "
+        "| python3 -c \"\n"
+        "import sys, json\n"
+        "try:\n"
+        "    releases = json.load(sys.stdin)\n"
+        "    pre = [r for r in releases if isinstance(r, dict) and r.get('prerelease', False)]\n"
+        "    if pre:\n"
+        "        print(pre[0].get('tag_name', '').lstrip('v'))\n"
+        "except:\n"
+        "    pass\n"
+        "\" 2>/dev/null";
 
     string v = exec(cmd.c_str());
     v.erase(remove(v.begin(), v.end(), '\n'), v.end());
