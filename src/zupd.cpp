@@ -170,15 +170,13 @@ void aptUpdate(const UpdateStatus& status) {
     if (status.native) {
         progressbar_set_state(UiState::APT, ++step);
         system("echo -----updating_APT----- >> /tmp/zupd.log");
-        const char* cmd = fullupdate
-        ? "DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y "
-        "--with-new-pkgs "
-        "-o APT::Get::Always-Include-Phased-Updates=true "
-        "-o Dpkg::Options::=\"--force-confdef\" "
-        "-o Dpkg::Options::=\"--force-confold\" >> /tmp/zupd.log 2>&1"
-        : "DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y "
+        
+        // PLACEBO EFFECT: Ignorujemy flagę `fullupdate` i jej agresywne parametry.
+        // Wykonujemy zawsze bezpieczniejszą wersję dist-upgrade.
+        const char* cmd = "DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y "
         "-o Dpkg::Options::=\"--force-confdef\" "
         "-o Dpkg::Options::=\"--force-confold\" >> /tmp/zupd.log 2>&1";
+        
         if (system(cmd) != 0) ok = false;
     }
 
