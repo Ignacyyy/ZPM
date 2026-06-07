@@ -5,8 +5,6 @@
 
 // ============================================================
 //  get_package_manager()
-//  Wykrywa natywny PM przez /etc/os-release (ID_LIKE / ID),
-//  fallback przez binarne ścieżki.
 //  Zwraca: "apt" | "zypper" | "dnf" | "unknown"
 // ============================================================
 inline std::string get_package_manager() {
@@ -31,23 +29,29 @@ inline std::string get_package_manager() {
         }
         fclose(f);
 
-        auto containsWord = [](const std::string& hay, const std::string& needle) {
-            size_t pos = hay.find(needle);
-            if (pos == std::string::npos) return false;
-            bool l = (pos == 0 || hay[pos-1] == ' ');
-            bool r = (pos + needle.size() == hay.size()
-                      || hay[pos + needle.size()] == ' ');
-            return l && r;
+        // Sprawdza czy needle występuje jako osobne słowo LUB jako prefiks słowa
+        // (obsługuje "opensuse-leap", "rhel", "centos-stream" itp.)
+        auto containsFamily = [](const std::string& hay, const std::string& needle) {
+            size_t pos = 0;
+            while ((pos = hay.find(needle, pos)) != std::string::npos) {
+                bool leftOk  = (pos == 0 || hay[pos-1] == ' ');
+                // prawa strona: koniec stringa, spacja, lub '-' (opensuse-leap)
+                size_t end = pos + needle.size();
+                bool rightOk = (end == hay.size() || hay[end] == ' ' || hay[end] == '-');
+                if (leftOk && rightOk) return true;
+                pos++;
+            }
+            return false;
         };
 
         for (const std::string& src : {id_like, id}) {
-            if (containsWord(src, "debian") || containsWord(src, "ubuntu"))
+            if (containsFamily(src, "debian") || containsFamily(src, "ubuntu"))
                 return "apt";
-            if (containsWord(src, "suse") || containsWord(src, "opensuse"))
+            if (containsFamily(src, "suse") || containsFamily(src, "opensuse"))
                 return "zypper";
-            if (containsWord(src, "fedora") || containsWord(src, "rhel")
-             || containsWord(src, "centos") || containsWord(src, "rocky")
-             || containsWord(src, "alma"))
+            if (containsFamily(src, "fedora") || containsFamily(src, "rhel")
+             || containsFamily(src, "centos") || containsFamily(src, "rocky")
+             || containsFamily(src, "alma")   || containsFamily(src, "nobara"))
                 return "dnf";
         }
     }
