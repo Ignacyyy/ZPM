@@ -270,7 +270,7 @@ int main(int argc, char* argv[]) {
     };
     auto printHelp = [&]() {
         cout << RED << "Usage: " << RESET << argv[0]
-             << " <package>  or  zpm run <package>\n\n";
+             << " <package> or zpm run <package>\n\n";
         cout << RED << "Options:\n" << RESET;
         cout << "  Finds the app in native PM / Flatpak / Snap and launches it.\n";
         cout << "  Search supports fuzzy matching (e.g. 'firefox' finds 'firefox-esr').\n";
