@@ -141,7 +141,7 @@ if [ "$dep" = "y" ]; then
     esac
     ok "Dependencies installed successfully."
 else
-    warn "Skipping dependency installation. The build may fail if packages are missing."
+    warn "Skipping dependency installation. The ZPM instalation and usage will fail if packages are missing."
 fi
 
 # ── FETCH LATEST VERSION ──────────────────────────────────────────────────────
@@ -259,7 +259,7 @@ rm -rf "$TMP"
 
 echo ""
 echo "Installation complete!"
-echo "type zhelp to gain more info about ZPM"
+echo "type zhome to gain more info about ZPM"
 printf "Version : %-34s\n" "$VERSION_CLEAN"
 printf "Path    : %-34s\n" "$TARGET"
 printf "Log     : %-34s\n" "$LOG"
