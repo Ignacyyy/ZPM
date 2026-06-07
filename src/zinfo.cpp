@@ -1,9 +1,6 @@
 #include "main.h"
-#include <algorithm>
-#include <iostream>
-#include <string>
-#include <vector>
-#include <unistd.h>
+
+using namespace std;
 
 // Pomocnicza funkcja do zamiany stringa na małe litery
 std::string toLower(std::string s) {
@@ -19,6 +16,21 @@ void showRpmPackageInfo(const std::string& pkg, const std::string& pm);
 void showFlatpakPackageInfo(const std::string& pkg);
 void showSnapPackageInfo(const std::string& pkg);
 std::string get_package_manager();
+
+// ─── komunikaty ───────────────────────────────────────────────────────────────
+void helpmessage(const char* progName) {
+    cout << RED << "Usage: " << RESET << progName
+    << " <package> [options] or zpm info <package> [options]\n";
+    cout << RED << "Options:\n" << RESET;
+    cout << "  --help,     -h  Show this help message\n";
+    cout << "  --version,  -v  Show version information\n";
+}
+
+void versionmessage() {
+    cout << RED << "zinfo component version: v" << zpm_version::version() << " of ZPM\n" << RESET;
+    cout << "https://github.com/Zielina-Konrad-productions/ZPM\n";
+    cout << "Copyright (c) 2026 Ignacyyy & Ry3ball\nLicense: MIT\n";
+}
 
 // ─── APT ─────────────────────────────────────────────────────────────────────
 void showAptPackageInfo(const std::string& pkg) {
@@ -310,17 +322,40 @@ void showPackageInfo(const std::string& pkg, const std::string& pm) {
 
 int main(int argc, char* argv[]) {
     zpm_update::checkForUpdates();
-    using namespace std;
-    string pm = get_package_manager();
-    if (pm == "unknown") { cerr << RED << "Error: Unsupported PM\n" << RESET; return 1; }
 
-    bool packageSpecified = false;
+    bool showHelp    = false;
+    bool showVersion = false;
+    vector<string> packages;
+
     for (int i = 1; i < argc; ++i) {
         string arg = argv[i];
-        if (arg == "--help" || arg == "-h") { /* Wstaw help */ return 0; }
-        else if (arg == "--version" || arg == "-v") { /* Wstaw ver */ return 0; }
-        else { packageSpecified = true; showPackageInfo(arg, pm); }
+        if      (arg == "--help"    || arg == "-h") showHelp    = true;
+        else if (arg == "--version" || arg == "-v") showVersion = true;
+        else packages.push_back(arg);
     }
-    if (!packageSpecified) cerr << YELLOW << "No package specified!" << RESET << endl;
+
+    if (showVersion && showHelp) {
+        cout << YELLOW << "--version\n" << RESET; versionmessage();
+        cout << "\n" << YELLOW << "--help\n"    << RESET; helpmessage(argv[0]);
+        return 0;
+    }
+    if (showVersion) { versionmessage();     return 0; }
+    if (showHelp)    { helpmessage(argv[0]); return 0; }
+
+    if (packages.empty()) {
+        cerr << YELLOW << "No package specified!\n" << RESET;
+        return 1;
+    }
+
+    string pm = get_package_manager();
+    if (pm == "unknown") {
+        cerr << RED << "Error: Could not detect a supported package manager "
+        << "(apt / zypper / dnf).\n" << RESET;
+        return 1;
+    }
+
+    for (const string& pkg : packages)
+        showPackageInfo(pkg, pm);
+
     return 0;
 }
