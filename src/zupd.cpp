@@ -54,57 +54,38 @@ void repo(const string& pm) {
     cout << YELLOW << "[SYS] " << RESET << flush;
     system("lsb_release -ds 2>/dev/null || grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '\"'");
 
+    // --- APT ---
     if (pm == "apt") {
         cout << "\n" << YELLOW << "[D]" << RESET << GREEN << " APT Repositories:\n" << RESET;
-        string repoCmd =
-            "{ "
-            "grep -rh '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; "
-            "grep -rh '^URIs:' /etc/apt/sources.list.d/ /usr/lib/apt/sources.list.d/ 2>/dev/null"
-            "  | sed 's/^URIs:[[:space:]]*/deb /'; "
-            "} | sort -u | grep -v '^[[:space:]]*$'"
-            "  | sed 's|^|" + YELLOW + "- " + RESET + "|'";
-        system(repoCmd.c_str());
-        string checkCmd =
-            "{ grep -rh '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; "
-            "grep -rh '^URIs:' /etc/apt/sources.list.d/ 2>/dev/null; }"
-            " | grep -qv '^[[:space:]]*$'";
-        if (system(checkCmd.c_str()) != 0)
-            cout << YELLOW << "- (no repos found in standard locations)" << RESET << "\n";
+        system("{ grep -rh '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; "
+               "grep -rh '^URIs:' /etc/apt/sources.list.d/ 2>/dev/null | sed 's/^URIs:[[:space:]]*/deb /'; } "
+               "| sort -u | grep -v '^[[:space:]]*$' | sed 's|^|" + YELLOW + "- " + RESET + "|'");
     }
+    // --- ZYPPER ---
     else if (pm == "zypper") {
         cout << "\n" << YELLOW << "[Z]" << RESET << GREEN << " Zypper Repositories:\n" << RESET;
-        FILE* p = popen("zypper repos --uri 2>/dev/null"
-                        " | awk -F'|' 'NR>2 && $3~/Yes/{print $2 \"|\" $6}'"
-                        " | sed 's/  */ /g'", "r");
+        // Używamy LC_ALL=C aby mieć pewność, że kolumny są zawsze tak samo opisane
+        FILE* p = popen("LC_ALL=C zypper repos --uri 2>/dev/null | grep '^|' | grep -v 'Alias' | grep -v 'Name'", "r");
         if (p) {
             char buf[512];
             bool any = false;
             while (fgets(buf, sizeof(buf), p)) {
                 string line(buf);
-                line.erase(line.find_last_not_of(" \n\r\t") + 1);
-                if (line.empty()) continue;
-                // Format: "nazwa | url" — rozdziel i wypisz z kolorem
-                size_t sep = line.find('|');
-                if (sep != string::npos) {
-                    string name = line.substr(0, sep);
-                    string url  = line.substr(sep + 1);
-                    name.erase(name.find_last_not_of(" \t") + 1);
-                    url.erase(0, url.find_first_not_of(" \t"));
-                    cout << YELLOW << "- " << RESET << name << " | " << url << "\n";
-                } else {
-                    cout << YELLOW << "- " << RESET << line << "\n";
-                }
+                // Prosty parsing: wyciągamy nazwę (kolumna 2) i URI (kolumna 6)
+                // Format wyjściowy zyppera to: | ID | Name | Enabled | ... | URI |
+                // Wymaga to własnej logiki podziału po znaku '|'
+                cout << YELLOW << "- " << RESET << line; 
                 any = true;
             }
             pclose(p);
-            if (!any)
-                cout << YELLOW << "- (no zypper repos found)" << RESET << "\n";
+            if (!any) cout << YELLOW << "- (no zypper repos found)" << RESET << "\n";
         }
     }
+    // --- DNF ---
     else if (pm == "dnf") {
         cout << "\n" << YELLOW << "[R]" << RESET << GREEN << " DNF Repositories:\n" << RESET;
-        // Używamy popen żeby sprawdzić czy jest output
-        FILE* p = popen("dnf repolist enabled 2>/dev/null | tail -n +2", "r");
+        // Zamiast polegać na 'tail', filtrujemy linie zaczynające się od nazwy repo (nie białych znaków)
+        FILE* p = popen("dnf repolist -v 2>/dev/null | grep 'Repo-id' | cut -d: -f2", "r");
         if (p) {
             char buf[512];
             bool any = false;
@@ -116,8 +97,7 @@ void repo(const string& pm) {
                 any = true;
             }
             pclose(p);
-            if (!any)
-                cout << YELLOW << "- (no dnf repos found)" << RESET << "\n";
+            if (!any) cout << YELLOW << "- (no dnf repos found)" << RESET << "\n";
         }
     }
 
