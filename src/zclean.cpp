@@ -30,52 +30,6 @@ void versionmessage() {
     cout << "Copyright (c) 2026 Ignacyyy & Ry3ball\nLicense: MIT\n";
 }
 
-// Wykrywanie PM — identyczna logika jak w zupd.cpp
-string get_package_manager() {
-    FILE* f = fopen("/etc/os-release", "r");
-    if (f) {
-        char line[256];
-        string id, id_like;
-        while (fgets(line, sizeof(line), f)) {
-            string s(line);
-            if (!s.empty() && s.back() == '\n') s.pop_back();
-
-            auto stripQuotes = [](const string& v) {
-                string r = v;
-                if (r.size() >= 2 && r.front() == '"' && r.back() == '"')
-                    r = r.substr(1, r.size() - 2);
-                return r;
-            };
-
-            if      (s.rfind("ID=",      0) == 0) id      = stripQuotes(s.substr(3));
-            else if (s.rfind("ID_LIKE=", 0) == 0) id_like = stripQuotes(s.substr(8));
-        }
-        fclose(f);
-
-        auto containsWord = [](const string& hay, const string& needle) {
-            size_t pos = hay.find(needle);
-            if (pos == string::npos) return false;
-            bool l = (pos == 0 || hay[pos-1] == ' ');
-            bool r = (pos + needle.size() == hay.size() || hay[pos + needle.size()] == ' ');
-            return l && r;
-        };
-
-        for (const string& src : {id_like, id}) {
-            if (containsWord(src, "debian") || containsWord(src, "ubuntu")) return "apt";
-            if (containsWord(src, "suse")   || containsWord(src, "opensuse")) return "zypper";
-            if (containsWord(src, "fedora") || containsWord(src, "rhel")
-             || containsWord(src, "centos") || containsWord(src, "rocky")
-             || containsWord(src, "alma"))  return "dnf";
-        }
-    }
-
-    if (access("/usr/bin/apt-get", X_OK) == 0 || access("/bin/apt-get", X_OK) == 0) return "apt";
-    if (access("/usr/bin/zypper",  X_OK) == 0) return "zypper";
-    if (access("/usr/bin/dnf",     X_OK) == 0) return "dnf";
-
-    return "unknown";
-}
-
 void info() {
     cout << RED << "cleaning system...." << RESET << "\n\n";
 }
