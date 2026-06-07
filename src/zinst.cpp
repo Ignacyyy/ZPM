@@ -24,7 +24,7 @@ struct InstallTarget {
 // ─── wiadomość pomocy ─────────────────────────────────────────────────────────
 void helpmessage(const char* progName) {
     cout << RED << "Usage: " << RESET << progName << " [options] [packages...]"
-         << " or zpm inst/install [options] [packages...]\n\n";
+         << " or zpm inst/install [options] [packages...]\n";
     cout << RED << "Options:\n" << RESET;
     cout << "  (auto)         Picks native PM / Flatpak / Snap per package\n";
     cout << "  --version, -v  Show version information\n";
