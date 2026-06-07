@@ -18,7 +18,7 @@ struct Step {
 
 void helpmessage(const char* progName) {
     cout << RED << "Usage: " << RESET << progName
-         << " [options] or zpm clean [options]\n\n";
+         << " [options] or zpm clean [options]\n";
     cout << RED << "Options:\n" << RESET;
     cout << "  --version, -v  Show version information\n";
     cout << "  --help,    -h  Show this help message\n";
