@@ -500,13 +500,13 @@ body[data-channel="pre"] .toggle-btn.active {
 .release-card:nth-child(6) { animation-delay: 0.2s; }
 
 #releases-grid {
-  transition: opacity 0.2s ease, transform 0.2s ease, filter 0.2s ease;
+  transition: opacity 0.28s ease, transform 0.28s ease, filter 0.28s ease;
 }
 
 #releases-grid.is-swapping {
-  opacity: 0;
-  transform: translateY(10px) scale(0.992);
-  filter: blur(2px);
+  opacity: 0.12;
+  transform: translateY(14px) scale(0.985);
+  filter: blur(4px);
 }
 
 body[data-channel="pre"] .card-title,
