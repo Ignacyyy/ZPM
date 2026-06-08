@@ -1,4 +1,7 @@
 (function () {
+  if (window.__ZPM_SITE_JS_LOADED) return;
+  window.__ZPM_SITE_JS_LOADED = true;
+
   function ready(fn) {
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", fn);
