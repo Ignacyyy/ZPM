@@ -1,292 +1,237 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta property="og:title" content="ZPM">
-  <meta property="og:description" content="Modern package manager.">
-  <meta property="og:image" content="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true">
-  <meta name="theme-color" content="#4ade80">
-  <link rel="icon" type="image/png" href="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true">
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ZPM – License</title>
+  <meta property="og:title" content="ZPM License" />
+  <meta property="og:description" content="MIT license for Zielina Package Manager." />
+  <meta property="og:image" content="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true" />
+  <meta name="theme-color" content="#33f28b" />
+  <link rel="icon" type="image/png" href="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true" />
+  <title>ZPM - License</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
-  <style>
-    :root {
-      --bg: #0a0f0a;
-      --surface: #111811;
-      --surface2: #162016;
-      --green: #4ade80;
-      --green-dim: #22c55e;
-      --green-dark: #16a34a;
-      --green-glow: rgba(74,222,128,0.15);
-      --green-glow-strong: rgba(74,222,128,0.3);
-      --blue: #60a5fa;
-      --blue-dim: #3b82f6;
-      --blue-dark: #1d4ed8;
-      --blue-glow: rgba(96,165,250,0.15);
-      --blue-glow-strong: rgba(96,165,250,0.3);
-      --text: #e2f5e2;
-      --text-dim: #6b8f6b;
-      --text-muted: #3a5c3a;
-      --border: rgba(74,222,128,0.12);
-      --border-bright: rgba(74,222,128,0.35);
-      --mono: 'JetBrains Mono', monospace;
-      --sans: 'Syne', sans-serif;
-      --accent: var(--green);
-      --accent-dim: var(--green-dim);
-      --accent-dark: var(--green-dark);
-      --accent-glow: var(--green-glow);
-      --accent-glow-strong: var(--green-glow-strong);
-      --accent-border: rgba(74,222,128,0.35);
-    }
-    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-    html{scroll-behavior:smooth;}
-    body{background:var(--bg);color:var(--text);font-family:var(--mono);overflow-x:hidden;min-height:100vh;}
-    body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(74,222,128,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(74,222,128,0.03) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0;}
-    body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.05) 2px,rgba(0,0,0,0.05) 4px);pointer-events:none;z-index:0;}
-
-    /* NAV */
-    nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:20px 40px;background:rgba(10,15,10,0.8);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);}
-    .nav-logo{font-family:var(--sans);font-weight:800;font-size:1.4rem;color:var(--accent);letter-spacing:-0.02em;text-decoration:none;}
-    .nav-logo span{color:var(--text-dim);font-weight:400;font-size:0.85rem;margin-left:8px;vertical-align:middle;}
-    .nav-links{display:flex;gap:32px;list-style:none;}
-    .nav-links a{color:var(--text-dim);text-decoration:none;font-size:0.78rem;letter-spacing:0.08em;text-transform:uppercase;transition:color 0.2s;}
-    .nav-links a:hover,.nav-links a.active{color:var(--accent);}
-    .nav-github{display:flex;align-items:center;gap:8px;color:var(--accent);text-decoration:none;font-size:0.78rem;letter-spacing:0.08em;text-transform:uppercase;border:1px solid var(--accent-border);padding:8px 16px;transition:all 0.3s;}
-    .nav-github:hover{background:var(--accent-glow);box-shadow:0 0 20px var(--accent-glow-strong);}
-
-
-    .nav-actions{display:flex;align-items:center;gap:12px;}
-    .lang-switch{display:flex;align-items:center;border:1px solid var(--accent-border, var(--border-bright));background:rgba(10,15,10,0.55);}
-    .lang-btn{background:transparent;border:0;color:var(--text-dim);font-family:var(--mono);font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;padding:9px 10px;cursor:pointer;transition:all 0.2s;}
-    .lang-btn:hover,.lang-btn.active{color:var(--accent, var(--green));background:var(--accent-glow, var(--green-glow));}
-
-    /* PAGE */
-    .page{position:relative;z-index:1;padding:140px 40px 100px;max-width:900px;margin:0 auto;}
-    .page-label{font-size:0.68rem;letter-spacing:0.2em;text-transform:uppercase;color:var(--accent-dark);margin-bottom:16px;display:flex;align-items:center;gap:12px;}
-    .page-label::after{content:'';flex:1;height:1px;background:var(--border);max-width:200px;}
-    .page-title{font-family:var(--sans);font-size:clamp(2rem,5vw,3.5rem);font-weight:800;letter-spacing:-0.04em;line-height:0.95;color:var(--text);margin-bottom:12px;}
-    .page-title .accent{color:var(--accent);}
-    .page-desc{color:var(--text-dim);font-size:0.9rem;line-height:1.7;max-width:480px;margin-bottom:56px;}
-
-    /* LICENSE BLOCK */
-    .license-wrap{border:1px solid var(--border);background:var(--surface);position:relative;overflow:hidden;animation:fadeInUp 0.5s ease both;}
-    .license-wrap::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:var(--accent);opacity:0.6;}
-    .license-header{display:flex;align-items:center;justify-content:space-between;padding:20px 28px 20px 32px;border-bottom:1px solid var(--border);gap:12px;flex-wrap:wrap;}
-    .license-type{font-family:var(--sans);font-size:1.1rem;font-weight:700;color:var(--accent);display:flex;align-items:center;gap:10px;}
-    .license-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;font-size:0.6rem;letter-spacing:0.14em;text-transform:uppercase;border:1px solid rgba(74,222,128,0.4);color:var(--green);background:rgba(74,222,128,0.06);font-family:var(--mono);}
-    .badge-dot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);}
-    .license-source{display:flex;align-items:center;gap:8px;}
-    .license-source a{color:var(--text-muted);text-decoration:none;font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;transition:color 0.2s;display:flex;align-items:center;gap:6px;}
-    .license-source a:hover{color:var(--accent);}
-    .license-body{padding:36px 32px 36px 32px;position:relative;}
-    .license-text{font-family:var(--mono);font-size:0.8rem;line-height:1.85;color:var(--text-dim);white-space:pre-wrap;word-break:break-word;}
-    .license-text .lic-title{font-family:var(--sans);font-size:1.4rem;font-weight:800;color:var(--accent);letter-spacing:-0.02em;display:block;margin-bottom:12px;}
-    .license-text .lic-copy{color:var(--text);font-weight:500;display:block;margin-bottom:20px;}
-    .license-text .lic-section{color:var(--text-dim);}
-    .license-text .lic-warranty{color:var(--text-muted);font-size:0.75rem;margin-top:20px;display:block;border-top:1px solid var(--border);padding-top:20px;}
-
-    /* loading */
-    .lic-loading{display:flex;flex-direction:column;align-items:center;gap:20px;padding:60px 40px;}
-    .loading-bar{width:200px;height:2px;background:var(--border);position:relative;overflow:hidden;}
-    .loading-bar::after{content:'';position:absolute;top:0;left:-50%;width:50%;height:100%;background:var(--accent);animation:shimmer 1.2s infinite ease-in-out;box-shadow:0 0 12px var(--accent-glow-strong);}
-    .loading-text{font-size:0.72rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-muted);}
-
-    /* meta strip */
-    .license-meta{display:flex;gap:32px;padding:16px 28px 16px 32px;border-top:1px solid var(--border);flex-wrap:wrap;}
-    .meta-item{display:flex;flex-direction:column;gap:4px;}
-    .meta-label{font-size:0.6rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-muted);}
-    .meta-value{font-size:0.78rem;color:var(--text-dim);}
-    .meta-value.accent{color:var(--accent);}
-
-    /* callout */
-    .callout{display:flex;align-items:flex-start;gap:14px;padding:20px 24px;border:1px solid var(--border);background:var(--surface2);margin-top:32px;animation:fadeInUp 0.5s ease 0.15s both;}
-    .callout-icon{font-size:1.1rem;flex-shrink:0;margin-top:2px;}
-    .callout-text{font-size:0.78rem;color:var(--text-dim);line-height:1.7;}
-    .callout-text strong{color:var(--text);font-weight:500;}
-    .callout-text a{color:var(--accent);text-decoration:none;}
-    .callout-text a:hover{text-decoration:underline;}
-
-    /* footer */
-    footer{position:relative;z-index:1;border-top:1px solid var(--border);padding:48px 40px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;}
-    .footer-left .logo{font-family:var(--sans);font-weight:800;font-size:1.2rem;color:var(--accent);margin-bottom:8px;}
-    .footer-left p{font-size:0.72rem;color:var(--text-muted);letter-spacing:0.06em;}
-    .footer-right{display:flex;gap:32px;}
-    .footer-right a{color:var(--text-dim);text-decoration:none;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;transition:color 0.2s;}
-    .footer-right a:hover{color:var(--accent);}
-
-    @keyframes fadeInUp{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
-    @keyframes shimmer{0%{left:-50%;}100%{left:100%;}}
-
-    @media(max-width:640px){
-      nav{padding:16px 20px;}
-      .nav-links{display:none;}
-      .page{padding:120px 20px 80px;}
-      .license-body{padding:24px 20px;}
-      .license-header{padding:16px 20px;}
-      .license-meta{padding:14px 20px;}
-      footer{padding:32px 20px;}
-    }
-  </style>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/site.css" />
 </head>
 <body>
-
-<nav>
-  <a class="nav-logo" href="index.html">ZPM <span id="nav-version">...</span></a>
-  <ul class="nav-links">
-    <li><a href="https://zielina.pl/">Home</a></li>
-    <li><a href="https://zielina.pl/releases">Releases</a></li>
-    <li><a href="https://zielina.pl/license" class="active">License</a></li>
-  </ul>
-  <div class="nav-actions">
-  <a class="nav-github" href="https://github.com/Zielina-Konrad-productions/ZPM" target="_blank">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
-    GitHub
-  </a>
-  <div class="lang-switch" aria-label="Language switcher"><button class="lang-btn" data-lang="en" onclick="setLanguage('en')">EN</button><button class="lang-btn" data-lang="pl" onclick="setLanguage('pl')">PL</button></div>
-  </div>
-</nav>
-
-<div class="page">
-  <p class="page-label">Legal</p>
-  <h1 class="page-title">License.<br/><span class="accent">Open Source.</span></h1>
-  <p class="page-desc">ZPM is released under the MIT License. You're free to use, modify, and distribute this software.</p>
-
-  <div class="license-wrap" id="license-wrap">
-    <div class="lic-loading" id="lic-loading">
-      <div class="loading-bar"></div>
-      <p class="loading-text">Fetching license...</p>
+  <nav class="site-nav" aria-label="Primary navigation">
+    <a class="brand" href="../" aria-label="ZPM home">
+      <img class="brand-mark" src="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true" alt="ZPM logo" />
+      <span class="brand-name">
+        <span class="brand-title">ZPM</span>
+        <span class="brand-version" data-version>loading...</span>
+      </span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="../" data-i18n="nav_home">Home</a></li>
+      <li><a href="../releases/" data-i18n="nav_releases">Releases</a></li>
+      <li><a href="../distros/" data-i18n="nav_distros">Distros</a></li>
+      <li><a class="active" href="../license/" data-i18n="nav_license">License</a></li>
+    </ul>
+    <div class="nav-actions">
+      <a class="ghost-link nav-github" href="https://github.com/Zielina-Konrad-productions/ZPM" target="_blank" rel="noreferrer">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <div class="lang-switch" aria-label="Language switcher">
+        <button class="lang-btn" type="button" data-lang="en">EN</button>
+        <button class="lang-btn" type="button" data-lang="pl">PL</button>
+      </div>
     </div>
-  </div>
+  </nav>
 
-  <div class="callout">
-    <span class="callout-icon">&#9432;</span>
-    <p class="callout-text">
-      <strong>Co to oznacza:</strong> Możesz swobodnie używać, kopiować, modyfikować, łączyć, publikować, rozpowszechniać, sublicencjonować i/lub sprzedawać kopie ZPM — pod warunkiem dołączenia oryginalnej informacji o prawach autorskich.
-      The full license is also available on
-      <a href="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/LICENSE" target="_blank">GitHub &#8599;</a>.
-    </p>
-  </div>
-</div>
+  <main class="page">
+    <header class="page-hero">
+      <div>
+        <p class="kicker" data-i18n="kicker">Legal</p>
+        <h1 class="page-title" data-i18n-html="title">MIT <span>License.</span></h1>
+      </div>
+      <p class="page-desc" data-i18n="desc">ZPM is open source. You can use, modify and distribute it under the MIT license terms.</p>
+    </header>
 
-<footer>
-  <div class="footer-left">
-    <p class="logo">ZPM</p>
-    <p>Zielina Package Manager &middot; MIT License &middot; <span class="dyn-version">...</span></p>
-  </div>
-  <div class="footer-right">
-  </div>
-</footer>
+    <section class="section">
+      <div class="grid cols-2">
+        <article class="license-card">
+          <div class="card-top">
+            <div>
+              <h2 class="card-title">MIT License</h2>
+              <p class="small" data-i18n="license_hint">Short, permissive, developer-friendly.</p>
+            </div>
+            <span class="badge green">OSI</span>
+          </div>
+          <div class="status-list">
+            <div class="status-row"><span data-i18n="can_use">Use</span><span class="badge green" data-i18n="allowed">Allowed</span></div>
+            <div class="status-row"><span data-i18n="can_modify">Modify</span><span class="badge green" data-i18n="allowed">Allowed</span></div>
+            <div class="status-row"><span data-i18n="can_distribute">Distribute</span><span class="badge green" data-i18n="allowed">Allowed</span></div>
+            <div class="status-row"><span data-i18n="needs_notice">Keep copyright notice</span><span class="badge amber" data-i18n="required">Required</span></div>
+          </div>
+        </article>
 
-<script>
-  const I18N = {
-    en:{nav_home:'Home',nav_releases:'Releases',nav_license:'License',label:'Legal',title:'License.<br/><span class="accent">Open Source.</span>',desc:"ZPM is released under the MIT License. You're free to use, modify, and distribute this software.",loading:'Fetching license...',means:'<strong>Co to oznacza:</strong> Możesz swobodnie używać, kopiować, modyfikować, łączyć, publikować, rozpowszechniać, sublicencjonować i/lub sprzedawać kopie ZPM — pod warunkiem dołączenia oryginalnej informacji o prawach autorskich.',view_gh:'GitHub ↗',view_raw:'View raw ↗',osi:'OSI Approved',type:'Type',year:'Year',authors:'Authors',source:'Source',mit:'MIT License',failed_title:'Failed to load license',failed_desc:'Could not fetch from GitHub.',view_direct:'View directly on GitHub ↗',footer:'Zielina Package Manager &middot; MIT License &middot; '},
-    pl:{nav_home:'Strona główna',nav_releases:'Wydania',nav_license:'Licencja',label:'Informacje prawne',title:'Licencja.<br/><span class="accent">Open Source.</span>',desc:'ZPM jest wydany na licencji MIT. Możesz swobodnie używać, modyfikować i rozpowszechniać to oprogramowanie.',loading:'Pobieranie licencji...',means:'<strong>Co to oznacza:</strong> Możesz swobodnie używać, kopiować, modyfikować, łączyć, publikować, rozpowszechniać, sublicencjonować i/lub sprzedawać kopie ZPM — pod warunkiem dołączenia oryginalnej informacji o prawach autorskich.',view_gh:'GitHub ↗',view_raw:'Zobacz surowy plik ↗',osi:'Zatwierdzona przez OSI',type:'Typ',year:'Rok',authors:'Autorzy',source:'Źródło',mit:'Licencja MIT',failed_title:'Nie udało się załadować licencji',failed_desc:'Nie można pobrać pliku z GitHuba.',view_direct:'Zobacz bezpośrednio na GitHubie ↗',footer:'Zielina Package Manager &middot; Licencja MIT &middot; '}
-  };
-  let currentLang = localStorage.getItem('zpm_lang') || 'en';
-  function tr(k){return (I18N[currentLang]&&I18N[currentLang][k])||I18N.en[k]||k;}
-  function setLanguage(lang){currentLang=lang==='pl'?'pl':'en';localStorage.setItem('zpm_lang',currentLang);applyLanguage();loadLicense();}
-  function applyLanguage(){
-    document.documentElement.lang=currentLang;
-    document.querySelectorAll('.lang-btn').forEach(b=>b.classList.toggle('active', b.dataset.lang===currentLang));
-    const nav=document.querySelectorAll('.nav-links a'); if(nav[0])nav[0].textContent=tr('nav_home'); if(nav[1])nav[1].textContent=tr('nav_releases'); if(nav[2])nav[2].textContent=tr('nav_license');
-    const label=document.querySelector('.page-label'); if(label)label.textContent=tr('label'); const title=document.querySelector('.page-title'); if(title)title.innerHTML=tr('title'); const desc=document.querySelector('.page-desc'); if(desc)desc.textContent=tr('desc');
-    const loading=document.querySelector('.loading-text'); if(loading)loading.textContent=tr('loading'); const note=document.querySelector('.license-note'); if(note)note.innerHTML=tr('means')+' <a href="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/LICENSE" target="_blank">'+tr('view_gh')+'</a>.';
-    const foot=document.querySelector('footer .footer-left p:not(.logo)'); if(foot) foot.innerHTML=tr('footer')+'<span class="dyn-version">'+(document.querySelector('footer .dyn-version')?.textContent || '...')+'</span>';
-  }
+        <article class="license-card">
+          <div class="card-top">
+            <div>
+              <h2 class="card-title" data-i18n="source_title">Source file</h2>
+              <p class="small" data-i18n="source_desc">The page loads the live LICENSE file when GitHub is reachable.</p>
+            </div>
+          </div>
+          <a class="primary-link" href="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/LICENSE" target="_blank" rel="noreferrer" data-i18n="open_github">Open on GitHub</a>
+        </article>
+      </div>
+    </section>
 
-  const REPO = 'Zielina-Konrad-productions/ZPM';
+    <section class="section">
+      <div class="section-head">
+        <h2 class="section-title" data-i18n="full_text">Full license text</h2>
+      </div>
+      <article class="license-card" id="license-card">
+        <div class="state">
+          <div class="loader"></div>
+          <span data-i18n="loading">Fetching license...</span>
+        </div>
+      </article>
+    </section>
+  </main>
 
-  async function loadVersion() {
-    try {
-      const res = await fetch('https://raw.githubusercontent.com/' + REPO + '/main/VERSION.txt');
-      if (!res.ok) throw new Error();
-      const ver = (await res.text()).trim();
-      const label = 'v' + ver;
-      document.getElementById('nav-version').textContent = label;
-      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = label);
-    } catch {
-      document.getElementById('nav-version').textContent = 'v1.6';
-      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = 'v1.6');
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <img src="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true" alt="ZPM logo" />
+      <span>ZPM - Zielina Package Manager - <span data-version>loading...</span></span>
+    </div>
+  </footer>
+
+  <script>
+    const REPO = "Zielina-Konrad-productions/ZPM";
+    const FALLBACK_LICENSE = `MIT License
+
+Copyright (c) 2026 Zielina-Konrad-productions
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.`;
+
+    const translations = {
+      en: {
+        nav_home: "Home",
+        nav_distros: "Distros",
+        nav_releases: "Releases",
+        nav_license: "License",
+        kicker: "Legal",
+        title: "MIT <span>License.</span>",
+        desc: "ZPM is open source. You can use, modify and distribute it under the MIT license terms.",
+        license_hint: "Short, permissive, developer-friendly.",
+        can_use: "Use",
+        can_modify: "Modify",
+        can_distribute: "Distribute",
+        needs_notice: "Keep copyright notice",
+        allowed: "Allowed",
+        required: "Required",
+        source_title: "Source file",
+        source_desc: "The page loads the live LICENSE file when GitHub is reachable.",
+        open_github: "Open on GitHub",
+        full_text: "Full license text",
+        loading: "Fetching license..."
+      },
+      pl: {
+        nav_home: "Start",
+        nav_distros: "Dystrybucje",
+        nav_releases: "Wydania",
+        nav_license: "Licencja",
+        kicker: "Legal",
+        title: "Licencja <span>MIT.</span>",
+        desc: "ZPM jest open source. Mozesz go uzywac, modyfikowac i rozpowszechniac zgodnie z licencja MIT.",
+        license_hint: "Krotka, liberalna i przyjazna dla developerow.",
+        can_use: "Uzycie",
+        can_modify: "Modyfikacja",
+        can_distribute: "Dystrybucja",
+        needs_notice: "Zachowanie informacji copyright",
+        allowed: "Dozwolone",
+        required: "Wymagane",
+        source_title: "Plik zrodlowy",
+        source_desc: "Strona laduje aktualny plik LICENSE, gdy GitHub jest dostepny.",
+        open_github: "Otworz na GitHubie",
+        full_text: "Pelny tekst licencji",
+        loading: "Pobieranie licencji..."
+      }
+    };
+
+    const state = {
+      lang: localStorage.getItem("zpm_lang") || "en",
+      license: ""
+    };
+
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+    const t = (key) => translations[state.lang][key] || translations.en[key] || key;
+
+    function applyLanguage() {
+      document.documentElement.lang = state.lang;
+      $$("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+      $$("[data-i18n-html]").forEach((el) => { el.innerHTML = t(el.dataset.i18nHtml); });
+      $$(".lang-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.lang === state.lang));
     }
-  }
 
-  async function loadLicense() {
-    const wrap = document.getElementById('license-wrap');
-    try {
-      const res = await fetch('https://raw.githubusercontent.com/' + REPO + '/main/LICENSE');
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const text = (await res.text()).trim();
-
-      // Parse sections
-      const lines = text.split('\n');
-      const titleLine = lines[0] || 'MIT License';
-      const copyLine = lines[2] || '';
-      // Find warranty block (all caps)
-      const warrantyStart = lines.findIndex(l => l.startsWith('THE SOFTWARE IS PROVIDED'));
-      const bodyLines = lines.slice(4, warrantyStart >= 0 ? warrantyStart : undefined).join('\n').trim();
-      const warrantyLines = warrantyStart >= 0 ? lines.slice(warrantyStart).join('\n').trim() : '';
-
-      // Detect year from copyright line
-      const yearMatch = copyLine.match(/\d{4}/);
-      const year = yearMatch ? yearMatch[0] : '2026';
-      const authorsMatch = copyLine.replace('Copyright (c) ' + year, '').trim();
-
-      wrap.innerHTML = `
-        <div class="license-header">
-          <div class="license-type">
-            <span>${escHtml(titleLine)}</span>
-            <span class="license-badge"><span class="badge-dot"></span>${tr('osi')}</span>
-          </div>
-          <div class="license-source">
-            <a href="https://github.com/${REPO}/blob/main/LICENSE" target="_blank" rel="noopener">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
-              ${tr('view_raw')}
-            </a>
-          </div>
-        </div>
-        <div class="license-body">
-          <pre class="license-text">${copyLine ? '<span class="lic-copy">' + escHtml(copyLine) + '</span>' : ''}<span class="lic-section">${escHtml(bodyLines)}</span>${warrantyLines ? '<span class="lic-warranty">' + escHtml(warrantyLines) + '</span>' : ''}</pre>
-        </div>
-        <div class="license-meta">
-          <div class="meta-item">
-            <span class="meta-label">${tr('type')}</span>
-            <span class="meta-value accent">${tr('mit')}</span>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">${tr('year')}</span>
-            <span class="meta-value">${escHtml(year)}</span>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">${tr('authors')}</span>
-            <span class="meta-value">${escHtml(authorsMatch)}</span>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">${tr('source')}</span>
-            <span class="meta-value"><a href="https://github.com/${REPO}/blob/main/LICENSE" target="_blank" style="color:var(--accent);text-decoration:none;">${tr('view_gh')}</a></span>
-          </div>
-        </div>
-      `;
-    } catch(e) {
-      wrap.innerHTML = `
-        <div style="padding:60px 40px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px;">
-          <span style="font-size:2rem;opacity:0.3;">&#9888;</span>
-          <p style="font-family:var(--sans);font-size:1rem;font-weight:700;color:var(--text-dim);">${tr('failed_title')}</p>
-          <p style="font-size:0.78rem;color:var(--text-muted);max-width:320px;line-height:1.7;">${tr('failed_desc')} <a href="https://github.com/${REPO}/blob/main/LICENSE" target="_blank" style="color:var(--accent)">${tr('view_direct')}</a></p>
-        </div>
-      `;
+    async function loadVersion() {
+      let version = "v2.0.2";
+      $$("[data-version]").forEach((el) => { el.textContent = version; });
+      try {
+        const res = await fetch(`https://raw.githubusercontent.com/${REPO}/main/VERSION.txt`, { cache: "no-store" });
+        if (!res.ok) throw new Error("version");
+        const text = (await res.text()).trim();
+        if (text) version = text.startsWith("v") ? text : `v${text}`;
+      } catch (error) {}
+      $$("[data-version]").forEach((el) => { el.textContent = version; });
     }
-  }
 
-  function escHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
+    async function loadLicense() {
+      try {
+        const res = await fetch(`https://raw.githubusercontent.com/${REPO}/main/LICENSE`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        state.license = (await res.text()).trim();
+      } catch (error) {
+        state.license = FALLBACK_LICENSE;
+      }
+      renderLicense();
+    }
 
-  applyLanguage();
-  loadVersion();
-  loadLicense();
-</script>
+    function renderLicense() {
+      $("#license-card").innerHTML = `<pre class="license-text">${esc(state.license)}</pre>`;
+    }
+
+    function esc(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    document.addEventListener("click", (event) => {
+      const lang = event.target.closest(".lang-btn");
+      if (!lang) return;
+      state.lang = lang.dataset.lang;
+      localStorage.setItem("zpm_lang", state.lang);
+      applyLanguage();
+    });
+
+    applyLanguage();
+    loadVersion();
+    loadLicense();
+  </script>
 </body>
 </html>
