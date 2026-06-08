@@ -122,26 +122,43 @@ if [ "$dep" = "y" ]; then
             apt-get update -y > "$LOG" 2>&1 \
                 || die "apt-get update failed. Check your internet connection."
             info "Installing dependencies..."
-            apt-get install -y "${DEPS[@]}" >> "$LOG" 2>&1 \
-                || die "Failed to install dependencies."
+            
+            # W razie wtopy próbuje odkręcić sytuację przez dpkg --configure -a
+            apt-get install -y "${DEPS[@]}" >> "$LOG" 2>&1 || {
+                warn "APT installation interrupted. Trying to recover..."
+                dpkg --configure -a >> "$LOG" 2>&1
+                apt-get install -f -y >> "$LOG" 2>&1
+                die "Failed to install dependencies even after recovery attempt."
+            }
             ;;
+            
         zypper)
             info "Refreshing repositories..."
             zypper refresh >> "$LOG" 2>&1 \
                 || die "zypper refresh failed."
             info "Installing dependencies..."
-            zypper install -y "${DEPS[@]}" >> "$LOG" 2>&1 \
-                || die "Failed to install dependencies."
+            
+            zypper install -y "${DEPS[@]}" >> "$LOG" 2>&1 || {
+                warn "Zypper transaction failed. Running verification/repair..."
+                zypper verify -y >> "$LOG" 2>&1
+                die "Failed to install dependencies on Zypper."
+            }
             ;;
+            
         dnf)
             info "Installing dependencies..."
-            dnf install -y "${DEPS[@]}" >> "$LOG" 2>&1 \
-                || die "Failed to install dependencies."
+            
+            dnf install -y "${DEPS[@]}" >> "$LOG" 2>&1 || {
+                warn "DNF transaction broken. Attempting sync and cleanup..."
+                dnf clean all >> "$LOG" 2>&1
+                dnf distro-sync -y >> "$LOG" 2>&1
+                die "Failed to install dependencies on DNF."
+            }
             ;;
     esac
     ok "Dependencies installed successfully."
 else
-    warn "Skipping dependency installation. The ZPM instalation and usage will fail if packages are missing."
+    warn "Skipping dependency installation. The ZPM installation and usage will fail if packages are missing."
 fi
 
 # ── FETCH LATEST VERSION ──────────────────────────────────────────────────────
