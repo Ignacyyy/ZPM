@@ -148,9 +148,10 @@ fi
 echo ""
 info "Fetching latest version from GitHub..."
 
+# Bezpieczne wyciąganie tylko pierwszej, właściwej wartości klucza tag_name
 LATEST=$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
-    | grep '"tag_name"' \
-    | cut -d '"' -f4) || die "Failed to reach GitHub API. Check your internet connection."
+    | grep -m1 '"tag_name":' \
+    | sed -E 's/.*"tag_name":\s*"(.*)".*/\1/') || die "Failed to reach GitHub API. Check your internet connection."
 
 [ -z "${LATEST:-}" ] && die "Could not determine latest version. GitHub API response was empty."
 
