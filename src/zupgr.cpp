@@ -155,7 +155,7 @@ bool run_update(const string& tag_name, const string& zip_name, bool is_pre = fa
                      + tag_name + ".zip";
 
     // 0/5 — init: backup configa, wyczyść stare pliki
-    progressbar_update(0.0f, "0/5 | Starting update...");
+    progressbar_start(0.0f, "0/5 | Starting update...");
     system(("{ echo '---starting update---';"
             "  rm -rf /tmp/ZPM* /tmp/zielina.conf;"
             "  mv /opt/ZPM/zielina.conf /tmp/zielina.conf;"
