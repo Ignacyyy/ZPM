@@ -37,6 +37,7 @@ body {
   color: var(--text);
   font-family: var(--mono);
   letter-spacing: 0;
+  animation: pageGlow 14s ease-in-out infinite alternate;
 }
 
 body::before {
@@ -91,6 +92,7 @@ button {
   border-bottom: 1px solid var(--line);
   background: rgba(6, 9, 10, 0.72);
   backdrop-filter: blur(18px);
+  box-shadow: 0 1px 0 rgba(51, 242, 139, 0.08), 0 18px 50px rgba(0, 0, 0, 0.2);
 }
 
 .brand {
@@ -110,6 +112,13 @@ button {
   background: #07100b;
   object-fit: contain;
   box-shadow: 0 0 22px rgba(51, 242, 139, 0.16);
+  transition: border-color 0.24s ease, box-shadow 0.24s ease, transform 0.24s ease;
+}
+
+.brand:hover .brand-mark {
+  border-color: rgba(87, 216, 255, 0.7);
+  box-shadow: 0 0 28px rgba(87, 216, 255, 0.18), 0 0 18px rgba(51, 242, 139, 0.22);
+  transform: translateY(-1px) rotate(-2deg);
 }
 
 .brand-name {
@@ -171,6 +180,7 @@ button {
 .nav-links a.active {
   color: var(--text);
   background: rgba(51, 242, 139, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(51, 242, 139, 0.08), 0 0 18px rgba(51, 242, 139, 0.08);
 }
 
 .nav-actions {
@@ -199,6 +209,62 @@ button {
   background: var(--green);
 }
 
+.menu-toggle {
+  display: none;
+  position: relative;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.035);
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.menu-toggle span,
+.menu-toggle::before,
+.menu-toggle::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  transition: transform 0.2s ease, opacity 0.2s ease, background 0.2s ease;
+}
+
+.menu-toggle::before {
+  transform: translateY(-6px);
+}
+
+.menu-toggle::after {
+  transform: translateY(6px);
+}
+
+.menu-toggle.open {
+  color: var(--ink);
+  border-color: var(--green);
+  background: var(--green);
+}
+
+.menu-toggle.open span {
+  opacity: 0;
+}
+
+.menu-toggle.open::before {
+  transform: rotate(45deg);
+}
+
+.menu-toggle.open::after {
+  transform: rotate(-45deg);
+}
+
+.mobile-menu {
+  display: none;
+}
+
 .ghost-link,
 .primary-link {
   display: inline-flex;
@@ -219,7 +285,7 @@ button {
 .primary-link {
   border: 1px solid rgba(51, 242, 139, 0.65);
   color: var(--ink);
-  background: var(--green);
+  background: linear-gradient(135deg, var(--green), #6fffb2);
   box-shadow: 0 0 28px rgba(51, 242, 139, 0.22);
 }
 
@@ -232,6 +298,10 @@ button {
 .primary-link:hover,
 .ghost-link:hover {
   transform: translateY(-2px);
+}
+
+.primary-link:hover {
+  box-shadow: 0 0 36px rgba(51, 242, 139, 0.3), 0 12px 34px rgba(51, 242, 139, 0.12);
 }
 
 .ghost-link:hover {
@@ -250,6 +320,14 @@ button {
   width: min(1180px, calc(100% - 64px));
   margin: 0 auto;
   padding: 132px 0 86px;
+  animation: pageIn 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+body.is-leaving .page,
+body.is-leaving .site-footer {
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
 .page-hero {
@@ -292,6 +370,12 @@ button {
 
 .page-title span {
   color: var(--green);
+  background: linear-gradient(90deg, var(--green), var(--cyan), var(--green));
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: titleSweep 6s ease-in-out infinite;
+  -webkit-text-fill-color: transparent;
 }
 
 .page-desc {
@@ -309,6 +393,17 @@ button {
   border-radius: var(--radius);
   background: var(--panel);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: transform 0.24s ease, border-color 0.24s ease, background 0.24s ease, box-shadow 0.24s ease;
+}
+
+.panel:hover,
+.release-card:hover,
+.license-card:hover,
+.distro-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(219, 247, 232, 0.22);
+  background: rgba(16, 25, 27, 0.94);
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.055);
 }
 
 .panel {
@@ -347,6 +442,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  position: relative;
 }
 
 .toggle-btn {
@@ -354,13 +450,22 @@ button {
   padding: 0 14px;
   border: 1px solid var(--line);
   font-size: 0.72rem;
+  position: relative;
+  overflow: hidden;
 }
 
 .toggle-btn:hover,
 .toggle-btn.active {
   color: var(--ink);
   border-color: var(--green);
-  background: var(--green);
+  background: linear-gradient(135deg, var(--green), #7dffba);
+  box-shadow: 0 0 24px rgba(51, 242, 139, 0.18);
+}
+
+body[data-channel="pre"] .toggle-btn.active {
+  border-color: var(--cyan);
+  background: linear-gradient(135deg, var(--cyan), #a7ecff);
+  box-shadow: 0 0 24px rgba(87, 216, 255, 0.18);
 }
 
 .grid {
@@ -385,6 +490,42 @@ button {
 .release-card {
   display: grid;
   gap: 16px;
+  animation: cardIn 0.46s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.release-card:nth-child(2) { animation-delay: 0.04s; }
+.release-card:nth-child(3) { animation-delay: 0.08s; }
+.release-card:nth-child(4) { animation-delay: 0.12s; }
+.release-card:nth-child(5) { animation-delay: 0.16s; }
+.release-card:nth-child(6) { animation-delay: 0.2s; }
+
+#releases-grid {
+  transition: opacity 0.2s ease, transform 0.2s ease, filter 0.2s ease;
+}
+
+#releases-grid.is-swapping {
+  opacity: 0;
+  transform: translateY(10px) scale(0.992);
+  filter: blur(2px);
+}
+
+body[data-channel="pre"] .card-title,
+body[data-channel="pre"] .kicker,
+body[data-channel="pre"] .brand-version {
+  color: var(--cyan);
+}
+
+body[data-channel="pre"] .page-title span {
+  background-image: linear-gradient(90deg, var(--cyan), #c6b8ff, var(--amber), var(--cyan));
+}
+
+body[data-channel="pre"] .release-card {
+  border-color: rgba(87, 216, 255, 0.16);
+}
+
+body[data-channel="pre"] .asset-link:hover {
+  color: var(--cyan);
+  border-color: rgba(87, 216, 255, 0.4);
 }
 
 .card-top {
@@ -401,6 +542,7 @@ button {
   font-weight: 800;
   letter-spacing: 0;
   overflow-wrap: anywhere;
+  transition: color 0.24s ease, text-shadow 0.24s ease;
 }
 
 .badge {
@@ -447,11 +589,14 @@ button {
   text-decoration: none;
   font-size: 0.76rem;
   overflow-wrap: anywhere;
+  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
 }
 
 .asset-link:hover {
   color: var(--green);
   border-color: var(--line-strong);
+  background: rgba(51, 242, 139, 0.055);
+  transform: translateX(4px);
 }
 
 .distros-grid {
@@ -463,6 +608,7 @@ button {
 .distro-card {
   position: relative;
   overflow: hidden;
+  animation: cardIn 0.48s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .distro-card::before {
@@ -473,6 +619,12 @@ button {
   right: 0;
   height: 3px;
   background: var(--accent, var(--green));
+  box-shadow: 0 0 22px color-mix(in srgb, var(--accent, var(--green)) 38%, transparent);
+  transition: height 0.22s ease;
+}
+
+.distro-card:hover::before {
+  height: 5px;
 }
 
 .distro-name {
@@ -492,6 +644,12 @@ button {
   color: var(--cyan);
   background: rgba(87, 216, 255, 0.07);
   font-size: 0.78rem;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.distro-card:hover .manager {
+  transform: translateY(-1px);
+  background: rgba(87, 216, 255, 0.12);
 }
 
 .status-list {
@@ -576,6 +734,26 @@ button {
   100% { transform: translateX(220%); }
 }
 
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes titleSweep {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes pageGlow {
+  from { filter: saturate(1); }
+  to { filter: saturate(1.08); }
+}
+
 @media (max-width: 980px) {
   .page-hero,
   .grid.cols-2,
@@ -604,6 +782,56 @@ button {
 
   .nav-github {
     display: none;
+  }
+
+  .menu-toggle {
+    display: inline-flex;
+  }
+
+  .mobile-menu {
+    position: fixed;
+    top: 78px;
+    left: 16px;
+    right: 16px;
+    z-index: 45;
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: rgba(6, 9, 10, 0.94);
+    backdrop-filter: blur(18px);
+    box-shadow: var(--shadow);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-10px) scale(0.98);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+
+  .mobile-menu.open {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+  }
+
+  .mobile-menu a {
+    display: flex;
+    align-items: center;
+    min-height: 46px;
+    padding: 0 14px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.03);
+    text-decoration: none;
+    text-transform: uppercase;
+    font-size: 0.78rem;
+  }
+
+  .mobile-menu a.active {
+    color: var(--ink);
+    border-color: var(--green);
+    background: var(--green);
   }
 
   .page {
