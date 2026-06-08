@@ -285,6 +285,7 @@ int main(int argc, char* argv[]) {
         // 1. Jeśli jesteś na prerelease, tylko informujemy i wychodzimy (lub lecimy dalej)
         if (localIsPrerelease && !force) {
             cout << YELLOW << "Currently on prerelease (" << local_pre << "), stable " << repo_v << " available.\n" << RESET;
+            cout << RED << << "To update ZPM to normal release use -f or --force" << RESET << endl;
             return 0; // Albo break/return w zależności od reszty funkcji, żeby nie pytał o update
         }
 
