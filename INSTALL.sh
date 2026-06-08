@@ -94,7 +94,6 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo ""
 echo "====== ZPM Dependencies ======="
 
-# Wybierz listę zależności per PM
 case "$PM" in
     apt)    DEPS=("${REQUIRED_DEPS_APT[@]}") ;;
     zypper) DEPS=("${REQUIRED_DEPS_ZYPPER[@]}") ;;
@@ -113,7 +112,6 @@ if [ "$dep" = "y" ]; then
     case "$PM" in
         apt)
             export DEBIAN_FRONTEND=noninteractive
-            # Czekaj na zwolnienie blokady dpkg
             apt_wait=0
             while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
                 info "Waiting for dpkg lock... (${apt_wait}s)"
@@ -122,29 +120,48 @@ if [ "$dep" = "y" ]; then
                 [ "$apt_wait" -ge 60 ] && die "dpkg lock held for over 60s."
             done
             info "Updating package lists..."
-            apt-get update -y >> "$LOG" 2>&1 \
+            apt-get update -y > "$LOG" 2>&1 \
                 || die "apt-get update failed. Check your internet connection."
             info "Installing dependencies..."
-            apt-get install -y "${DEPS[@]}" >> "$LOG" 2>&1 \
-                || die "Failed to install dependencies."
+            
+            # W razie wtopy próbuje odkręcić sytuację przez dpkg --configure -a
+            apt-get install -y "${DEPS[@]}" >> "$LOG" 2>&1 || {
+                warn "APT installation interrupted. Trying to recover..."
+                dpkg --configure -a >> "$LOG" 2>&1
+                apt-get install -f -y >> "$LOG" 2>&1
+                die "Failed to install dependencies even after recovery attempt."
+            }
             ;;
+            
         zypper)
             info "Refreshing repositories..."
             zypper refresh >> "$LOG" 2>&1 \
                 || die "zypper refresh failed."
             info "Installing dependencies..."
-            zypper install -y "${DEPS[@]}" >> "$LOG" 2>&1 \
-                || die "Failed to install dependencies."
+            
+            # W razie błędu odpala automatyczną weryfikację i naprawę systemu
+            zypper install -y "${DEPS[@]}" >> "$LOG" 2>&1 || {
+                warn "Zypper transaction failed. Running verification/repair..."
+                zypper verify -y >> "$LOG" 2>&1
+                die "Failed to install dependencies on Zypper."
+            }
             ;;
+            
         dnf)
             info "Installing dependencies..."
-            dnf install -y "${DEPS[@]}" >> "$LOG" 2>&1 \
-                || die "Failed to install dependencies."
+            
+            # W razie problemów czyści cache i synchronizuje uszkodzone transakcje
+            dnf install -y "${DEPS[@]}" >> "$LOG" 2>&1 || {
+                warn "DNF transaction broken. Attempting sync and cleanup..."
+                dnf clean all >> "$LOG" 2>&1
+                dnf distro-sync -y >> "$LOG" 2>&1
+                die "Failed to install dependencies on DNF."
+            }
             ;;
     esac
     ok "Dependencies installed successfully."
 else
-    warn "Skipping dependency installation. The ZPM instalation and usage will fail if packages are missing."
+    warn "Skipping dependency installation. The ZPM installation and usage will fail if packages are missing."
 fi
 
 # ── INSTALL TO TARGET ─────────────────────────────────────────────────────────
