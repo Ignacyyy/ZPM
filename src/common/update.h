@@ -114,27 +114,18 @@ static inline std::string get_installed_version() {
 
 static inline std::vector<int> parse_version(const std::string& ver) {
     std::string v = ver;
-
-    size_t pos = v.find("-pre");
-    if (pos != std::string::npos) {
-        std::string suffix = v.substr(pos + 4);
-        v.replace(pos, 4 + suffix.length(), suffix.empty() ? ".0" : "." + suffix);
-    }
+    size_t dash = v.find('-');
+    if (dash != std::string::npos)
+        v = v.substr(0, dash);  // "1.2.0-pre1" → "1.2.0"
 
     std::vector<int> out;
     std::stringstream ss(v);
     std::string seg;
     while (std::getline(ss, seg, '.')) {
-        try {
-            out.push_back(std::stoi(seg));
-        } catch (...) {
-            out.push_back(0);
-        }
+        try { out.push_back(std::stoi(seg)); }
+        catch (...) { out.push_back(0); }
     }
-
-    while (out.size() < 3)
-        out.push_back(0);
-
+    while (out.size() < 3) out.push_back(0);
     return out;
 }
 
