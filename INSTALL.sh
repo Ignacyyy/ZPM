@@ -230,8 +230,13 @@ fi
 
 # ── CLEAN PREVERSION STATE ────────────────────────────────────────────────────
 rm -f "$TARGET/PREVERSION.txt" 2>/dev/null || true
-rm -rf "$SRC_DIR"
-cd ~
+
+# ── DONE ──────────────────────────────────────────────────────────────────────
+echo ""
+echo "Installation complete!"
+echo "type zhome to gain more info about ZPM"
+printf "Path    : %-34s\n" "$TARGET"
+printf "Log     : %-34s\n" "$LOG"
 
 # ── DONE ──────────────────────────────────────────────────────────────────────
 echo ""
