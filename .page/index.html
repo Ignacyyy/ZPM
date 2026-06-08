@@ -1049,8 +1049,8 @@
       <div class="cmd-name">zclean <span class="cmd-src-hint">{ }</span></div>
       <div class="cmd-desc">Clear the package cache</div>
     </div>
-    <div class="cmd-card" onclick="openCmdCode(this,'zhelp.cpp')">
-      <div class="cmd-name">zhelp <span class="cmd-src-hint">{ }</span></div>
+    <div class="cmd-card" onclick="openCmdCode(this,'zhome.cpp')">
+      <div class="cmd-name">zhome <span class="cmd-src-hint">{ }</span></div>
       <div class="cmd-desc">Display the full help guide</div>
     </div>
     <div class="cmd-card" onclick="openCmdCode(this,'zuninstall.cpp')">
@@ -1178,7 +1178,7 @@
       f6:'Written in C++', f6d:'C++ core provides minimal overhead and fast startup. A shell wrapper completes the integration.',
       f7:'Run packages', f7d:'The <code style="color:var(--green)">zrun</code> command lets you launch an installed program directly through ZPM — no path hunting.',
       commands:'Commands', everything:'Everything you need.', commands_desc:'Click a command to view its source code from GitHub.',
-      c_zinst:'Install a package from a chosen source (APT / Flatpak / Snap)', c_zrm:'Remove an installed package', c_zsearch:'Search for a package by name or keyword', c_zinfo:'Show detailed info about a package', c_zlist:'List all installed packages', c_zupd:'Update system packages', c_zupgr:'Upgrade ZPM itself to the latest version', c_zclean:'Clear the package cache', c_zhelp:'Display the full help guide', c_zuninstall:'Uninstall ZPM from the system', c_zrun:'Run an installed package or program via ZPM',
+      c_zinst:'Install a package from a chosen source (APT / Flatpak / Snap)', c_zrm:'Remove an installed package', c_zsearch:'Search for a package by name or keyword', c_zinfo:'Show detailed info about a package', c_zlist:'List all installed packages', c_zupd:'Update system packages', c_zupgr:'Upgrade ZPM itself to the latest version', c_zclean:'Clear the package cache', c_zhome:'Display the full help guide', c_zuninstall:'Uninstall ZPM from the system', c_zrun:'Run an installed package or program via ZPM',
       view_gh:'View on GitHub ↗', loading:'Loading...', fetching:'Fetching ', help:'You can also use: <code style="color:var(--text-dim)">zpm --help</code> or <code style="color:var(--text-dim)">ZPM --help</code> for the unified interface.',
       management:'ZPM Management', update_uninstall:'Update.<br/>Uninstall.', update_zpm:'Update ZPM', uninstall_zpm:'Uninstall ZPM', install_path:'Install path', license:'License', installed:'Installed with ZPM', footer:'Zielina Package Manager · MIT License · '
     },
@@ -1195,7 +1195,7 @@
       f6:'Napisany w C++', f6d:'Rdzeń w C++ zapewnia mały narzut i szybki start. Wrapper shell dopełnia integrację.',
       f7:'Uruchamianie pakietów', f7d:'Komenda <code style="color:var(--green)">zrun</code> pozwala uruchomić zainstalowany program bezpośrednio przez ZPM — bez szukania ścieżek.',
       commands:'Komendy', everything:'Wszystko, czego potrzebujesz.', commands_desc:'Kliknij komendę, aby zobaczyć jej kod źródłowy z GitHuba.',
-      c_zinst:'Instaluje pakiet z wybranego źródła (APT / Flatpak / Snap)', c_zrm:'Usuwa zainstalowany pakiet', c_zsearch:'Wyszukuje pakiet po nazwie lub słowie kluczowym', c_zinfo:'Pokazuje szczegółowe informacje o pakiecie', c_zlist:'Wyświetla wszystkie zainstalowane pakiety', c_zupd:'Aktualizuje pakiety systemowe', c_zupgr:'Aktualizuje samego ZPM do najnowszej wersji', c_zclean:'Czyści cache pakietów', c_zhelp:'Wyświetla pełną pomoc', c_zuninstall:'Odinstalowuje ZPM z systemu', c_zrun:'Uruchamia zainstalowany pakiet lub program przez ZPM',
+      c_zinst:'Instaluje pakiet z wybranego źródła (APT / Flatpak / Snap)', c_zrm:'Usuwa zainstalowany pakiet', c_zsearch:'Wyszukuje pakiet po nazwie lub słowie kluczowym', c_zinfo:'Pokazuje szczegółowe informacje o pakiecie', c_zlist:'Wyświetla wszystkie zainstalowane pakiety', c_zupd:'Aktualizuje pakiety systemowe', c_zupgr:'Aktualizuje samego ZPM do najnowszej wersji', c_zclean:'Czyści cache pakietów', c_zhome:'Wyświetla pełną pomoc', c_zuninstall:'Odinstalowuje ZPM z systemu', c_zrun:'Uruchamia zainstalowany pakiet lub program przez ZPM',
       view_gh:'Zobacz na GitHubie ↗', loading:'Ładowanie...', fetching:'Pobieranie ', help:'Możesz też użyć: <code style="color:var(--text-dim)">zpm --help</code> albo <code style="color:var(--text-dim)">ZPM --help</code>, aby otworzyć wspólny interfejs.',
       management:'Zarządzanie ZPM', update_uninstall:'Aktualizacja.<br/>Odinstalowanie.', update_zpm:'Aktualizuj ZPM', uninstall_zpm:'Odinstaluj ZPM', install_path:'Ścieżka instalacji', license:'Licencja', installed:'Zainstalowane przez ZPM', footer:'Zielina Package Manager · Licencja MIT · '
     }
@@ -1214,7 +1214,7 @@
     setTxt('section:nth-of-type(1) .section-label','why'); setHtml('section:nth-of-type(1) .section-title','one_manager'); setTxt('section:nth-of-type(1) .section-desc','why_desc');
     const ft=document.querySelectorAll('.feature-title'), fd=document.querySelectorAll('.feature-desc'); ['f1','f2','f3','f4','f5','f6','f7'].forEach((k,i)=>{if(ft[i])ft[i].textContent=tr(k); if(fd[i])fd[i].innerHTML=tr(k+'d');});
     setTxt('#commands .section-label','commands'); setTxt('#commands .section-title','everything'); setTxt('#commands .section-desc','commands_desc');
-    const cds=document.querySelectorAll('.cmd-desc'); ['c_zinst','c_zrm','c_zsearch','c_zinfo','c_zlist','c_zupd','c_zupgr','c_zclean','c_zhelp','c_zuninstall','c_zrun'].forEach((k,i)=>{if(cds[i])cds[i].textContent=tr(k);});
+    const cds=document.querySelectorAll('.cmd-desc'); ['c_zinst','c_zrm','c_zsearch','c_zinfo','c_zlist','c_zupd','c_zupgr','c_zclean','c_zhome','c_zuninstall','c_zrun'].forEach((k,i)=>{if(cds[i])cds[i].textContent=tr(k);});
     setTxt('#cmd-drawer-gh','view_gh'); setTxt('.src-loading','loading'); setHtml('#commands > p:last-child','help');
     const secs=document.querySelectorAll('section'); const mgmt=secs[2]; if(mgmt){mgmt.querySelector('.section-label').textContent=tr('management'); mgmt.querySelector('.section-title').innerHTML=tr('update_uninstall'); const labs=mgmt.querySelectorAll('.cmd-block-label'); if(labs[0])labs[0].textContent=tr('update_zpm'); if(labs[1])labs[1].textContent=tr('uninstall_zpm');}
     const il=document.querySelectorAll('.info-label'); if(il[0])il[0].textContent=tr('install_path'); if(il[1])il[1].textContent=tr('license'); const iv=document.querySelectorAll('.info-value'); if(iv[2])iv[2].textContent=tr('installed');
