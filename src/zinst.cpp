@@ -1,4 +1,3 @@
-
 #include "main.h"
 
 using namespace std;
@@ -7,7 +6,7 @@ const string LOG_PATH = "/tmp/zinst.log";
 
 volatile sig_atomic_t g_interrupted = 0;
 string g_flatpakFlag = "";
-string g_pm          = "apt"; // wykrywany w main()
+string g_pm          = "apt";
 
 struct PackageResult {
     string name;
@@ -21,21 +20,45 @@ struct InstallTarget {
     bool   useSnap    = false;
 };
 
+// ─── helper: popen → string ──────────────────────────────────────────────────
+static string runCmd(const string& cmd) {
+    string out;
+    FILE* p = popen(cmd.c_str(), "r");
+    if (!p) return out;
+    char buf[256];
+    while (fgets(buf, sizeof(buf), p)) out += buf;
+    pclose(p);
+    // trim trailing whitespace
+    size_t end = out.find_last_not_of(" \n\r\t");
+    if (end != string::npos) out = out.substr(0, end + 1);
+    else out.clear();
+    return out;
+}
+
+// ─── helper: binarki przez access() zamiast system("command -v") ─────────────
+static bool hasBinary(const string& name) {
+    // Sprawdź najczęstsze ścieżki bez forkowania
+    for (const string& dir : {"/usr/bin/", "/usr/local/bin/", "/bin/"}) {
+        if (access((dir + name).c_str(), X_OK) == 0) return true;
+    }
+    return false;
+}
+
 // ─── wiadomość pomocy ─────────────────────────────────────────────────────────
 void helpmessage(const char* progName) {
     cout << RED << "Usage: " << RESET << progName << " [options] [packages...]"
-         << " or zpm inst/install [options] [packages...]\n";
-    cout << RED << "Options:\n" << RESET;
-    cout << "  (auto)         Picks native PM / Flatpak / Snap per package\n";
-    cout << "  --version, -v  Show version information\n";
-    cout << "  --help,    -h  Show this help message\n";
+         << " or zpm inst/install [options] [packages...]\n"
+         << RED << "Options:\n" << RESET
+         << "  (auto)         Picks native PM / Flatpak / Snap per package\n"
+         << "  --version, -v  Show version information\n"
+         << "  --help,    -h  Show this help message\n";
 }
 
 // ─── wiadomość wersji ─────────────────────────────────────────────────────────
 void versionmessage() {
-    cout << RED << "zinst component version: v" << zpm_version::version() << " of ZPM\n" << RESET;
-    cout << "https://github.com/Zielina-Konrad-productions/ZPM\n";
-    cout << "Copyright (c) 2026 Ignacyyy & Ry3ball\nLicense: MIT\n";
+    cout << RED << "zinst component version: v" << zpm_version::version() << " of ZPM\n" << RESET
+         << "https://github.com/Zielina-Konrad-productions/ZPM\n"
+         << "Copyright (c) 2026 Ignacyyy & Ry3ball\nLicense: MIT\n";
 }
 
 // ─── signal ───────────────────────────────────────────────────────────────────
@@ -43,8 +66,12 @@ void handleSigint(int) { g_interrupted = 1; }
 
 // ─── flatpak remote detection ─────────────────────────────────────────────────
 string getFlatpakRemoteFlag() {
-    if (system("flatpak remotes --system 2>/dev/null | grep -q flathub") == 0) return "--system";
-    if (system("flatpak remotes --user   2>/dev/null | grep -q flathub") == 0) return "--user";
+    // Oba sprawdzenia w jednym subshell
+    string out = runCmd(
+        "{ flatpak remotes --system 2>/dev/null | grep -q flathub && echo SYSTEM; } ;"
+        "{ flatpak remotes --user   2>/dev/null | grep -q flathub && echo USER;   } ;");
+    if (out.find("SYSTEM") != string::npos) return "--system";
+    if (out.find("USER")   != string::npos) return "--user";
     return "";
 }
 
@@ -52,86 +79,65 @@ string getFlatpakRemoteFlag() {
 
 bool isInstalledNative(const string& pkg) {
     if (g_pm == "apt") {
-        string cmd = "dpkg-query -W -f='${Status}' " + pkg + " 2>/dev/null";
-        FILE* p = popen(cmd.c_str(), "r");
-        if (!p) return false;
-        char buf[128]; string status;
-        if (fgets(buf, sizeof(buf), p)) status = buf;
-        pclose(p);
+        string status = runCmd("dpkg-query -W -f='${Status}' " + pkg + " 2>/dev/null");
         return status.find("install ok installed") != string::npos;
     }
-    // zypper i dnf — oba używają rpm
     return system(("rpm -q " + pkg + " >/dev/null 2>&1").c_str()) == 0;
 }
 
 bool isInstalledFlatpak(const string& pkg) {
     string cmd = "flatpak list " + g_flatpakFlag
-                 + " --columns=application | grep -Fx \"" + pkg + "\" >/dev/null 2>&1";
-    return system(cmd.c_str()) == 0;
+                 + " --columns=application 2>/dev/null | grep -Fx \"" + pkg + "\"";
+    return !runCmd(cmd).empty();
 }
 
 bool isInstalledSnap(const string& pkg) {
+    // snap list <pkg> jest znacznie szybszy niż snap info <pkg>
     return system(("snap list " + pkg + " >/dev/null 2>&1").c_str()) == 0;
 }
 
-// ─── resolveNativeName — aliasy i virtual packages per PM ─────────────────────
-//
-//  APT:    "firefox" → "firefox-esr" przez apt-cache search
-//  Zypper: "firefox" → "MozillaFirefox" przez zypper search -x
-//  DNF:    "firefox" → "firefox" (dnf radzi sobie z aliasami sam, zwracamy pkg)
-//
-string resolveNativeName(const string& pkg) {
+// ─── resolveNativeName ────────────────────────────────────────────────────────
+// Zwraca {resolvedName, exists} — jedno wywołanie zamiast dwóch osobnych funkcji
+struct ResolveResult { string name; bool exists; };
+
+ResolveResult resolveNative(const string& pkg) {
     if (g_pm == "apt") {
-        // 1. Dosłowna nazwa
-        if (system(("apt-cache show " + pkg + " >/dev/null 2>&1").c_str()) == 0) return pkg;
-        // 2. Fuzzy: pierwsza nazwa zaczynająca się od pkg
-        string cmd = "apt-cache search --names-only '^" + pkg
-                     + "' 2>/dev/null | awk '{print $1}' | head -1";
-        FILE* p = popen(cmd.c_str(), "r");
-        if (!p) return pkg;
-        char buf[256] = {};
-        fgets(buf, sizeof(buf), p);
-        pclose(p);
-        string found = buf;
-        found.erase(found.find_last_not_of(" \n\r\t") + 1);
-        return found.empty() ? pkg : found;
+        // Sprawdź dosłowną nazwę
+        if (system(("apt-cache show " + pkg + " >/dev/null 2>&1").c_str()) == 0)
+            return {pkg, true};
+        // Fuzzy match
+        string found = runCmd("apt-cache search --names-only '^" + pkg
+                              + "' 2>/dev/null | awk '{print $1}' | head -1");
+        if (!found.empty())
+            return {found, true};
+        return {pkg, false};
     }
 
     if (g_pm == "zypper") {
-        // 1. Dosłowna nazwa
-        if (system(("zypper info " + pkg + " >/dev/null 2>&1").c_str()) == 0) return pkg;
-        // 2. Szukaj przez zypper search -x (exact match w nazwie)
-        string cmd = "zypper --no-refresh search -x " + pkg
-                     + " 2>/dev/null | awk -F'|' 'NR>4 {print $2}' | head -1";
-        FILE* p = popen(cmd.c_str(), "r");
-        if (!p) return pkg;
-        char buf[256] = {};
-        fgets(buf, sizeof(buf), p);
-        pclose(p);
-        string found = buf;
-        found.erase(found.find_last_not_of(" \n\r\t") + 1);
-        // Usuń leading spaces z zypper output
+        if (system(("zypper info " + pkg + " >/dev/null 2>&1").c_str()) == 0)
+            return {pkg, true};
+        string found = runCmd("zypper --no-refresh search -x " + pkg
+                              + " 2>/dev/null | awk -F'|' 'NR>4 {print $2}' | head -1");
+        // trim leading spaces z zypper output
         size_t start = found.find_first_not_of(' ');
         if (start != string::npos) found = found.substr(start);
-        return found.empty() ? pkg : found;
+        if (!found.empty())
+            return {found, true};
+        return {pkg, false};
     }
 
-    // DNF: obsługuje provides i aliasy natywnie, zwróć bez zmian
-    return pkg;
+    // DNF: obsługuje provides i aliasy natywnie
+    bool exists = (system(("dnf info " + pkg + " >/dev/null 2>&1").c_str()) == 0);
+    return {pkg, exists};
 }
 
-bool nativePackageExists(const string& pkg) {
-    string resolved = resolveNativeName(pkg);
-    if (g_pm == "apt")
-        return system(("apt-cache show " + resolved + " >/dev/null 2>&1").c_str()) == 0;
-    if (g_pm == "zypper")
-        return system(("zypper --no-refresh info " + resolved + " >/dev/null 2>&1").c_str()) == 0;
-    if (g_pm == "dnf")
-        return system(("dnf info " + resolved + " >/dev/null 2>&1").c_str()) == 0;
-    return false;
-}
+// Backward-compat wrappers używane w menu i installerze
+static string resolveNativeName(const string& pkg) { return resolveNative(pkg).name; }
+static bool   nativePackageExists(const string& pkg) { return resolveNative(pkg).exists; }
 
 bool snapPackageExists(const string& pkg) {
+    // snap search jest wolny; snap info szybszy niż search ale wciąż wolny.
+    // Najszybszy pewny sposób: snap info z timeoutem.
     return system(("snap info " + pkg + " >/dev/null 2>&1").c_str()) == 0;
 }
 
@@ -146,17 +152,21 @@ vector<string> searchFlatpak(const string& query) {
     bool firstLine = true;
     while (fgets(buf, sizeof(buf), p)) {
         string line = buf;
-        line.erase(line.find_last_not_of(" \n\r\t") + 1);
+        size_t end = line.find_last_not_of(" \n\r\t");
+        if (end == string::npos) continue;
+        line = line.substr(0, end + 1);
         if (firstLine && line == "Application") { firstLine = false; continue; }
         firstLine = false;
         if (!line.empty()) results.push_back(line);
     }
     pclose(p);
+
     string qLow = query;
     transform(qLow.begin(), qLow.end(), qLow.begin(), ::tolower);
     vector<string> filtered;
     for (const auto& r : results) {
-        string l = r; transform(l.begin(), l.end(), l.begin(), ::tolower);
+        string l = r;
+        transform(l.begin(), l.end(), l.begin(), ::tolower);
         if (l.find(qLow) != string::npos) filtered.push_back(r);
     }
     sort(filtered.begin(), filtered.end());
@@ -173,6 +183,7 @@ string nativeLabel() {
 // ─── source-selection menu ────────────────────────────────────────────────────
 string chooseSourceMenu(const string& pkg,
                         bool nativeAvail,
+                        const string& resolvedNativeName,
                         bool snapAvail,
                         const vector<string>& flatpakResults,
                         bool snapSystemAvail,
@@ -190,7 +201,7 @@ string chooseSourceMenu(const string& pkg,
     // 1. Natywny PM
     cout << "  " << BOLD << idx << ". " << nativeLabel() << RESET;
     if (nativeAvail) {
-        cout << GREEN << "exist (" << resolveNativeName(pkg) << ")" << RESET << "\n";
+        cout << GREEN << "exist (" << resolvedNativeName << ")" << RESET << "\n";
         options.push_back({idx, "native"});
     } else {
         cout << RED << "none" << RESET << "\n";
@@ -337,7 +348,7 @@ void runInstallLoop(const vector<InstallTarget>& targets) {
                 cout << "\n" << YELLOW << "Cancelled.\n" << RESET;
                 return false;
             }
-            if (st == -1) { // already installed
+            if (st == -1) {
                 progressbar_update(endPct, alreadyLabel);
                 res.message = YELLOW + "Package " + p + " is already installed." + RESET;
                 res.success = true;
@@ -398,20 +409,24 @@ void runInstallLoop(const vector<InstallTarget>& targets) {
 }
 
 // ─── resolve packages to targets ──────────────────────────────────────────────
+// Główna optymalizacja: resolveNative() wywołujemy RAZ per pakiet i przekazujemy
+// wynik do menu — zamiast dwóch osobnych wywołań (nativePackageExists + resolveNativeName)
 vector<InstallTarget> resolveTargets(const vector<string>& packages,
                                      bool hasSnap, bool hasFlatpak) {
     vector<InstallTarget> targets;
 
     for (const string& pkg : packages) {
-        bool           nativeAvail  = nativePackageExists(pkg);
+        // Jedno wywołanie zamiast dwóch
+        auto [resolvedName, nativeAvail] = resolveNative(pkg);
+
         bool           snapAvail    = hasSnap    && snapPackageExists(pkg);
         vector<string> flatpakFound = hasFlatpak ? searchFlatpak(pkg) : vector<string>{};
 
-        string source = chooseSourceMenu(pkg, nativeAvail, snapAvail,
-                                         flatpakFound, hasSnap, hasFlatpak);
+        string source = chooseSourceMenu(pkg, nativeAvail, resolvedName,
+                                         snapAvail, flatpakFound, hasSnap, hasFlatpak);
 
         if (source == "native") {
-            targets.push_back({resolveNativeName(pkg), false, false});
+            targets.push_back({resolvedName, false, false});
         } else if (source == "snap") {
             targets.push_back({pkg, false, true});
         } else if (source == "flatpak") {
@@ -445,8 +460,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    bool hasFlatpak = (system("command -v flatpak >/dev/null 2>&1") == 0);
-    bool hasSnap    = (system("command -v snap    >/dev/null 2>&1") == 0);
+    // access() zamiast system("command -v ...")
+    bool hasFlatpak = hasBinary("flatpak");
+    bool hasSnap    = hasBinary("snap");
 
     if (hasFlatpak) {
         g_flatpakFlag = getFlatpakRemoteFlag();
@@ -478,7 +494,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // --dry-run: użyj "sl" jako pakietu testowego
     if (useTestPackage) packages.push_back("sl");
 
     if (packages.empty()) {
