@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta property="og:title" content="ZPM Distros" />
+  <meta property="og:description" content="Supported Linux distros and package backends for ZPM." />
+  <meta property="og:image" content="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true" />
+  <meta name="theme-color" content="#33f28b" />
+  <link rel="icon" type="image/png" href="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true" />
+  <title>ZPM - Distros</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/site.css" />
+</head>
+<body>
+  <nav class="site-nav" aria-label="Primary navigation">
+    <a class="brand" href="../" aria-label="ZPM home">
+      <img class="brand-mark" src="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true" alt="ZPM logo" />
+      <span class="brand-name">
+        <span class="brand-title">ZPM</span>
+        <span class="brand-version" data-version>loading...</span>
+      </span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="../" data-i18n="nav_home">Home</a></li>
+      <li><a href="../releases/" data-i18n="nav_releases">Releases</a></li>
+      <li><a class="active" href="../distros/" data-i18n="nav_distros">Distros</a></li>
+      <li><a href="../license/" data-i18n="nav_license">License</a></li>
+    </ul>
+    <div class="nav-actions">
+      <a class="ghost-link nav-github" href="https://github.com/Zielina-Konrad-productions/ZPM" target="_blank" rel="noreferrer">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <div class="lang-switch" aria-label="Language switcher">
+        <button class="lang-btn" type="button" data-lang="en">EN</button>
+        <button class="lang-btn" type="button" data-lang="pl">PL</button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="page">
+    <header class="page-hero">
+      <div>
+        <p class="kicker" data-i18n="kicker">Growing support</p>
+        <h1 class="page-title" data-i18n-html="title">Distros <span>ZPM supports.</span></h1>
+      </div>
+      <p class="page-desc" data-i18n="desc">ZPM is evolving beyond one distro family. This page keeps the support matrix in one clear place.</p>
+    </header>
+
+    <section class="section">
+      <div class="distros-grid">
+        <article class="distro-card" style="--accent: var(--green)">
+          <div class="card-top">
+            <div>
+              <h2 class="distro-name">Debian</h2>
+              <p class="small" data-i18n="debian_desc">Debian-family systems and derivatives.</p>
+            </div>
+            <span class="badge green" data-i18n="supported">Supported</span>
+          </div>
+          <span class="manager">apt</span>
+          <div class="status-list">
+            <div class="status-row"><span data-i18n="install">Install</span><span class="badge green">zinst</span></div>
+            <div class="status-row"><span data-i18n="remove">Remove</span><span class="badge green">zrm</span></div>
+            <div class="status-row"><span data-i18n="update">Update</span><span class="badge green">zupd</span></div>
+          </div>
+        </article>
+
+        <article class="distro-card" style="--accent: var(--cyan)">
+          <div class="card-top">
+            <div>
+              <h2 class="distro-name">Fedora</h2>
+              <p class="small" data-i18n="fedora_desc">RPM-based Fedora-family systems.</p>
+            </div>
+            <span class="badge" data-i18n="supported">Supported</span>
+          </div>
+          <span class="manager">dnf</span>
+          <div class="status-list">
+            <div class="status-row"><span data-i18n="install">Install</span><span class="badge">zinst</span></div>
+            <div class="status-row"><span data-i18n="remove">Remove</span><span class="badge">zrm</span></div>
+            <div class="status-row"><span data-i18n="update">Update</span><span class="badge">zupd</span></div>
+          </div>
+        </article>
+
+        <article class="distro-card" style="--accent: var(--amber)">
+          <div class="card-top">
+            <div>
+              <h2 class="distro-name">openSUSE</h2>
+              <p class="small" data-i18n="suse_desc">openSUSE-family systems powered by zypper.</p>
+            </div>
+            <span class="badge amber" data-i18n="supported">Supported</span>
+          </div>
+          <span class="manager">zypper</span>
+          <div class="status-list">
+            <div class="status-row"><span data-i18n="install">Install</span><span class="badge amber">zinst</span></div>
+            <div class="status-row"><span data-i18n="remove">Remove</span><span class="badge amber">zrm</span></div>
+            <div class="status-row"><span data-i18n="update">Update</span><span class="badge amber">zupd</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="grid cols-2">
+        <article class="panel">
+          <h2 class="section-title" data-i18n="backend_title">Backend strategy</h2>
+          <p class="page-desc" data-i18n="backend_desc">The command surface stays stable while the backend chooses the right package manager for the distro family: apt, dnf or zypper.</p>
+        </article>
+        <article class="panel">
+          <h2 class="section-title" data-i18n="next_title">More later</h2>
+          <p class="page-desc" data-i18n="next_desc">As ZPM grows, this page can absorb more distros without rewriting the home page every time support expands.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <img src="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true" alt="ZPM logo" />
+      <span>ZPM - Zielina Package Manager - <span data-version>loading...</span></span>
+    </div>
+  </footer>
+
+  <script>
+    const REPO = "Zielina-Konrad-productions/ZPM";
+    const translations = {
+      en: {
+        nav_home: "Home",
+        nav_distros: "Distros",
+        nav_releases: "Releases",
+        nav_license: "License",
+        kicker: "Growing support",
+        title: "Distros <span>ZPM supports.</span>",
+        desc: "ZPM is evolving beyond one distro family. This page keeps the support matrix in one clear place.",
+        supported: "Supported",
+        debian_desc: "Debian-family systems and derivatives.",
+        fedora_desc: "RPM-based Fedora-family systems.",
+        suse_desc: "openSUSE-family systems powered by zypper.",
+        install: "Install",
+        remove: "Remove",
+        update: "Update",
+        backend_title: "Backend strategy",
+        backend_desc: "The command surface stays stable while the backend chooses the right package manager for the distro family: apt, dnf or zypper.",
+        next_title: "More later",
+        next_desc: "As ZPM grows, this page can absorb more distros without rewriting the home page every time support expands."
+      },
+      pl: {
+        nav_home: "Start",
+        nav_distros: "Dystrybucje",
+        nav_releases: "Wydania",
+        nav_license: "Licencja",
+        kicker: "Rosnace wsparcie",
+        title: "Dystrybucje <span>dla ZPM.</span>",
+        desc: "ZPM rozwija sie poza jedna rodzine dystrybucji. Ta strona trzyma macierz wsparcia w jednym czytelnym miejscu.",
+        supported: "Wspierane",
+        debian_desc: "Systemy z rodziny Debiana i pochodne.",
+        fedora_desc: "Systemy z rodziny Fedory oparte o RPM.",
+        suse_desc: "Systemy z rodziny openSUSE napedzane przez zypper.",
+        install: "Instalacja",
+        remove: "Usuwanie",
+        update: "Aktualizacja",
+        backend_title: "Strategia backendow",
+        backend_desc: "Powierzchnia komend zostaje stabilna, a backend wybiera wlasciwy manager pakietow dla rodziny dystrybucji: apt, dnf albo zypper.",
+        next_title: "Pozniej wiecej",
+        next_desc: "Gdy ZPM bedzie rosl, ta strona moze przyjmowac kolejne dystrybucje bez przepisywania strony glownej za kazdym razem."
+      }
+    };
+
+    const state = {
+      lang: localStorage.getItem("zpm_lang") || "en"
+    };
+
+    const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+    const t = (key) => translations[state.lang][key] || translations.en[key] || key;
+
+    function applyLanguage() {
+      document.documentElement.lang = state.lang;
+      $$("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+      $$("[data-i18n-html]").forEach((el) => { el.innerHTML = t(el.dataset.i18nHtml); });
+      $$(".lang-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.lang === state.lang));
+    }
+
+    async function loadVersion() {
+      let version = "v2.0.2";
+      $$("[data-version]").forEach((el) => { el.textContent = version; });
+      try {
+        const res = await fetch(`https://raw.githubusercontent.com/${REPO}/main/VERSION.txt`, { cache: "no-store" });
+        if (!res.ok) throw new Error("version");
+        const text = (await res.text()).trim();
+        if (text) version = text.startsWith("v") ? text : `v${text}`;
+      } catch (error) {}
+      $$("[data-version]").forEach((el) => { el.textContent = version; });
+    }
+
+    document.addEventListener("click", (event) => {
+      const lang = event.target.closest(".lang-btn");
+      if (!lang) return;
+      state.lang = lang.dataset.lang;
+      localStorage.setItem("zpm_lang", state.lang);
+      applyLanguage();
+    });
+
+    applyLanguage();
+    loadVersion();
+  </script>
+</body>
+</html>
