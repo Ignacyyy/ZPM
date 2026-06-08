@@ -38,6 +38,13 @@
         <button class="lang-btn" type="button" data-lang="en">EN</button>
         <button class="lang-btn" type="button" data-lang="pl">PL</button>
       </div>
+      <button class="menu-toggle" type="button" aria-label="Open navigation" aria-expanded="false"><span></span></button>
+    </div>
+    <div class="mobile-menu" aria-label="Mobile navigation">
+      <a href="../" data-i18n="nav_home">Home</a>
+      <a href="../releases/" data-i18n="nav_releases">Releases</a>
+      <a href="../distros/" data-i18n="nav_distros">Distros</a>
+      <a class="active" href="../license/" data-i18n="nav_license">License</a>
     </div>
   </nav>
 
@@ -100,6 +107,7 @@
     </div>
   </footer>
 
+  <script src="../assets/site.js"></script>
   <script>
     const REPO = "Zielina-Konrad-productions/ZPM";
     const FALLBACK_LICENSE = `MIT License
