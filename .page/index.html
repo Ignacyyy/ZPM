@@ -1,1382 +1,2153 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta property="og:title" content="ZPM">
-  <meta property="og:description" content="Modern package manager.">
-  <meta property="og:image" content="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true">
-  <meta name="theme-color" content="#4ade80">
-  <link rel="icon" type="image/png" href="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true">
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ZPM – Zielina Package Manager</title>
+  <meta property="og:title" content="ZPM" />
+  <meta property="og:description" content="Modern Linux package manager for apt, dnf and zypper." />
+  <meta property="og:image" content="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true" />
+  <meta name="theme-color" content="#33f28b" />
+  <link rel="icon" type="image/png" href="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true" />
+  <title>ZPM - Zielina Package Manager</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@500;600;700;800&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --accent: var(--green);
-      --bg: #0a0f0a;
-      --surface: #111811;
-      --surface2: #162016;
-      --green: #4ade80;
-      --green-dim: #22c55e;
-      --green-dark: #16a34a;
-      --green-glow: rgba(74, 222, 128, 0.15);
-      --green-glow-strong: rgba(74, 222, 128, 0.3);
-      --text: #e2f5e2;
-      --text-dim: #6b8f6b;
-      --text-muted: #3a5c3a;
-      --border: rgba(74, 222, 128, 0.12);
-      --border-bright: rgba(74, 222, 128, 0.35);
-      --mono: 'JetBrains Mono', monospace;
-      --sans: 'Syne', sans-serif;
+      --bg: #06090a;
+      --bg-soft: #0b1112;
+      --panel: rgba(12, 18, 20, 0.86);
+      --panel-solid: #101719;
+      --panel-2: #141f21;
+      --line: rgba(219, 247, 232, 0.11);
+      --line-strong: rgba(92, 255, 168, 0.36);
+      --text: #edf8f1;
+      --muted: #a6b8ad;
+      --dim: #697a70;
+      --green: #33f28b;
+      --green-2: #1fbf6c;
+      --cyan: #57d8ff;
+      --amber: #ffc857;
+      --rose: #ff6b8b;
+      --ink: #03100a;
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+      --radius: 8px;
+      --mono: "JetBrains Mono", Consolas, monospace;
+      --sans: "Syne", Inter, system-ui, sans-serif;
     }
 
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
 
-    html { scroll-behavior: smooth; }
+    html {
+      scroll-behavior: smooth;
+    }
 
     body {
-      background: var(--bg);
+      min-height: 100vh;
+      overflow-x: hidden;
+      background:
+        linear-gradient(180deg, rgba(6, 9, 10, 0.78), rgba(6, 9, 10, 0.96) 52%, #050708 100%),
+        linear-gradient(135deg, rgba(51, 242, 139, 0.12), transparent 34%, rgba(87, 216, 255, 0.07) 62%, rgba(255, 200, 87, 0.05));
       color: var(--text);
       font-family: var(--mono);
-      overflow-x: hidden;
-      min-height: 100vh;
+      letter-spacing: 0;
     }
 
-    /* GRID BACKGROUND */
     body::before {
-      content: '';
+      content: "";
       position: fixed;
       inset: 0;
+      z-index: -2;
+      pointer-events: none;
       background-image:
-        linear-gradient(rgba(74,222,128,0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(74,222,128,0.03) 1px, transparent 1px);
-      background-size: 40px 40px;
-      pointer-events: none;
-      z-index: 0;
+        linear-gradient(rgba(219, 247, 232, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(219, 247, 232, 0.035) 1px, transparent 1px),
+        linear-gradient(120deg, rgba(51, 242, 139, 0.05), transparent 32%, rgba(87, 216, 255, 0.035) 68%, transparent);
+      background-size: 54px 54px, 54px 54px, auto;
+      mask-image: linear-gradient(180deg, #000 0%, #000 74%, transparent 100%);
     }
 
-    /* SCANLINES */
     body::after {
-      content: '';
+      content: "";
       position: fixed;
       inset: 0;
-      background: repeating-linear-gradient(
-        0deg,
-        transparent,
-        transparent 2px,
-        rgba(0,0,0,0.05) 2px,
-        rgba(0,0,0,0.05) 4px
-      );
+      z-index: -1;
       pointer-events: none;
-      z-index: 0;
+      background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(255, 255, 255, 0.018) 2px 3px);
+      opacity: 0.55;
     }
 
-    /* NAV */
-    nav {
+    a {
+      color: inherit;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    ::selection {
+      background: rgba(51, 242, 139, 0.25);
+      color: var(--text);
+    }
+
+    .site-nav {
       position: fixed;
-      top: 0; left: 0; right: 0;
-      z-index: 100;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 50;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 20px 40px;
-      background: rgba(10,15,10,0.8);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--border);
+      gap: 24px;
+      min-height: 74px;
+      padding: 14px 32px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(6, 9, 10, 0.72);
+      backdrop-filter: blur(18px);
     }
 
-    .nav-logo {
-      font-family: var(--sans);
-      font-weight: 800;
-      font-size: 1.4rem;
-      color: var(--green);
-      letter-spacing: -0.02em;
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 11px;
+      color: var(--text);
       text-decoration: none;
+      min-width: 0;
     }
 
-    .nav-logo span { color: var(--text-dim); font-weight: 400; font-size: 0.85rem; margin-left: 8px; vertical-align: middle; }
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      border: 1px solid rgba(51, 242, 139, 0.4);
+      border-radius: var(--radius);
+      background: #07100b;
+      object-fit: contain;
+      box-shadow: 0 0 22px rgba(51, 242, 139, 0.16);
+    }
+
+    .brand-name {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .brand-title {
+      font-family: var(--sans);
+      font-size: 1.08rem;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .brand-version {
+      color: var(--green);
+      font-size: 0.72rem;
+      line-height: 1;
+    }
 
     .nav-links {
       display: flex;
-      gap: 32px;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.025);
       list-style: none;
     }
-    .nav-links a:hover,.nav-links a.active{color:var(--accent);}
+
+    .nav-links a,
+    .lang-btn,
+    .source-tab,
+    .filter-btn {
+      min-height: 34px;
+      border: 0;
+      border-radius: 6px;
+      color: var(--muted);
+      background: transparent;
+      text-decoration: none;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+    }
+
     .nav-links a {
-      color: var(--text-dim);
-      text-decoration: none;
-      font-size: 0.78rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      transition: color 0.2s;
-    }
-
-    .nav-links a:hover { color: var(--green); }
-
-    .nav-github {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--green);
-      text-decoration: none;
-      font-size: 0.78rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      border: 1px solid var(--border-bright);
-      padding: 8px 16px;
-      transition: all 0.2s;
-    }
-
-    .nav-github:hover {
-      background: var(--green-glow);
-      box-shadow: 0 0 20px var(--green-glow-strong);
-    }
-
-
-    .nav-actions{display:flex;align-items:center;gap:12px;}
-    .lang-switch{display:flex;align-items:center;border:1px solid var(--border-bright);background:rgba(10,15,10,0.55);}
-    .lang-btn{background:transparent;border:0;color:var(--text-dim);font-family:var(--mono);font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;padding:9px 10px;cursor:pointer;transition:all 0.2s;}
-    .lang-btn:hover,.lang-btn.active{color:var(--green);background:var(--green-glow);}
-
-    /* HERO */
-    .hero {
-      position: relative;
-      z-index: 1;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 120px 40px 80px;
-      text-align: center;
-    }
-
-    .hero-badge {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      background: var(--surface);
-      border: 1px solid var(--border-bright);
-      padding: 6px 16px;
-      font-size: 0.72rem;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--green-dim);
-      margin-bottom: 40px;
-      animation: fadeInDown 0.6s ease both;
+      padding: 0 14px;
+      font-size: 0.74rem;
     }
 
-    .badge-dot {
-      width: 6px; height: 6px;
-      border-radius: 50%;
-      background: var(--green);
-      box-shadow: 0 0 8px var(--green);
-      animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
-
-    .hero-ascii {
-      font-family: var(--mono);
-      font-size: 0.38rem;
-      line-height: 1.1;
-      color: var(--green-dark);
-      margin-bottom: 48px;
-      white-space: pre;
-      animation: fadeIn 1s ease 0.2s both;
-      letter-spacing: 0.05em;
-      text-shadow: 0 0 8px rgba(74,222,128,0.3);
-    }
-
-    .hero-title {
-      font-family: var(--sans);
-      font-size: clamp(3rem, 8vw, 6rem);
-      font-weight: 800;
-      letter-spacing: -0.04em;
-      line-height: 0.95;
+    .nav-links a:hover,
+    .nav-links a.active {
       color: var(--text);
-      margin-bottom: 8px;
-      animation: fadeInUp 0.7s ease 0.3s both;
+      background: rgba(51, 242, 139, 0.12);
     }
 
-    .hero-title .accent { color: var(--green); }
-
-    .hero-subtitle-line {
-      font-family: var(--mono);
-      font-size: clamp(0.75rem, 2vw, 1rem);
-      color: var(--text-dim);
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-      margin-bottom: 32px;
-      animation: fadeInUp 0.7s ease 0.4s both;
-    }
-
-    .hero-desc {
-      max-width: 560px;
-      font-size: 0.95rem;
-      color: var(--text-dim);
-      line-height: 1.7;
-      margin-bottom: 56px;
-      animation: fadeInUp 0.7s ease 0.5s both;
-    }
-
-    /* INSTALL BOX */
-    .install-box {
-      position: relative;
-      background: var(--surface);
-      border: 1px solid var(--border-bright);
-      padding: 0;
-      max-width: 700px;
-      width: 100%;
-      animation: fadeInUp 0.7s ease 0.6s both;
-      box-shadow: 0 0 60px rgba(74,222,128,0.08), inset 0 1px 0 rgba(74,222,128,0.1);
-    }
-
-    .install-box::before {
-      content: '';
-      position: absolute;
-      top: -1px; left: 10%; right: 10%;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, var(--green), transparent);
-    }
-
-    .install-bar {
+    .nav-actions {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 12px 20px;
-      background: var(--surface2);
-      border-bottom: 1px solid var(--border);
+      gap: 10px;
     }
 
-    .install-bar-dot {
-      width: 10px; height: 10px;
-      border-radius: 50%;
+    .lang-switch {
+      display: flex;
+      gap: 3px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.025);
     }
 
-    .dot-red { background: #ff5f57; }
-    .dot-yellow { background: #febc2e; }
-    .dot-green-os { background: #28c840; }
-
-    .install-bar-title {
+    .lang-btn {
+      padding: 0 10px;
       font-size: 0.7rem;
-      color: var(--text-muted);
-      letter-spacing: 0.1em;
-      margin-left: 8px;
     }
 
-    .install-code {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 24px 24px;
-      gap: 16px;
-    }
-
-    .install-prompt {
-      color: var(--green-dim);
-      font-size: 0.85rem;
-      white-space: nowrap;
-    }
-
-    .install-cmd {
-      flex: 1;
-      font-size: 0.78rem;
-      color: var(--text);
-      word-break: break-all;
-      line-height: 1.5;
-    }
-
-    .copy-btn {
-      background: var(--green-dark);
-      color: #000;
-      border: none;
-      padding: 10px 20px;
-      font-family: var(--mono);
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: all 0.2s;
-      flex-shrink: 0;
-    }
-
-    .copy-btn:hover {
+    .lang-btn:hover,
+    .lang-btn.active {
+      color: var(--ink);
       background: var(--green);
-      box-shadow: 0 0 20px var(--green-glow-strong);
     }
 
-    .copy-btn.copied {
-      background: #16a34a;
-      color: #fff;
-    }
-
-    .install-note {
-      padding: 12px 24px;
-      border-top: 1px solid var(--border);
-      font-size: 0.68rem;
-      color: var(--text-muted);
-      display: flex;
-      gap: 16px;
-    }
-
-    .install-note span { color: var(--green-dark); }
-
-    /* TAGS */
-    .hero-tags {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
+    .ghost-link,
+    .primary-link {
+      display: inline-flex;
+      align-items: center;
       justify-content: center;
-      margin-top: 32px;
-      animation: fadeInUp 0.7s ease 0.7s both;
-    }
-
-    .tag {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      padding: 5px 14px;
-      font-size: 0.68rem;
-      letter-spacing: 0.1em;
+      gap: 10px;
+      min-height: 42px;
+      padding: 0 16px;
+      border-radius: var(--radius);
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-decoration: none;
       text-transform: uppercase;
-      color: var(--text-dim);
+      letter-spacing: 0;
+      transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
     }
 
-    /* SECTION */
-    section {
+    .primary-link {
+      border: 1px solid rgba(51, 242, 139, 0.65);
+      color: var(--ink);
+      background: var(--green);
+      box-shadow: 0 0 28px rgba(51, 242, 139, 0.22);
+    }
+
+    .ghost-link {
+      border: 1px solid var(--line);
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .primary-link:hover,
+    .ghost-link:hover {
+      transform: translateY(-2px);
+    }
+
+    .ghost-link:hover {
+      border-color: var(--line-strong);
+      color: var(--green);
+      background: rgba(51, 242, 139, 0.08);
+    }
+
+    .icon {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 auto;
+    }
+
+    .icon-btn {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 38px;
+      height: 38px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.03);
+      transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+    }
+
+    .icon-btn:hover,
+    .icon-btn.copied {
+      color: var(--ink);
+      border-color: rgba(51, 242, 139, 0.7);
+      background: var(--green);
+      transform: translateY(-1px);
+    }
+
+    [data-tip]::after {
+      content: attr(data-tip);
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 9px);
+      z-index: 3;
+      width: max-content;
+      max-width: 180px;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #0b1112;
+      color: var(--text);
+      font-size: 0.68rem;
+      line-height: 1.35;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(-50%) translateY(4px);
+      transition: opacity 0.16s ease, transform 0.16s ease;
+      box-shadow: var(--shadow);
+      text-transform: none;
+    }
+
+    [data-tip]:hover::after {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .hero {
+      position: relative;
+      min-height: auto;
+      overflow: hidden;
+      padding: 118px 32px 54px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .hero-logo-watermark {
+      position: absolute;
+      top: 108px;
+      right: max(28px, calc((100vw - 1180px) / 2));
+      width: 300px;
+      height: 300px;
+      object-fit: contain;
+      opacity: 0.13;
+      filter: saturate(1.15);
+      pointer-events: none;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 74px 0 auto 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(51, 242, 139, 0.44), rgba(87, 216, 255, 0.28), transparent);
+    }
+
+    .hero-inner {
       position: relative;
       z-index: 1;
-      padding: 100px 40px;
-      max-width: 1100px;
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(430px, 0.72fr);
+      gap: 44px;
+      align-items: center;
+      width: min(1180px, 100%);
       margin: 0 auto;
     }
 
-    .section-label {
-      font-size: 0.68rem;
-      letter-spacing: 0.2em;
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+      color: var(--green);
+      font-size: 0.78rem;
       text-transform: uppercase;
-      color: var(--green-dark);
-      margin-bottom: 16px;
+      letter-spacing: 0;
+    }
+
+    .kicker::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 16px rgba(51, 242, 139, 0.8);
+    }
+
+    .hero h1 {
+      max-width: 720px;
+      font-family: var(--sans);
+      font-size: 5.85rem;
+      line-height: 0.91;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .hero h1 span {
+      color: var(--green);
+    }
+
+    .hero-lede {
+      max-width: 650px;
+      margin-top: 24px;
+      color: var(--muted);
+      font-size: 1.02rem;
+      line-height: 1.8;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 30px;
+    }
+
+    .hero-meta {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      width: min(660px, 100%);
+      margin-top: 34px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--line);
+    }
+
+    .meta-item {
+      padding: 16px;
+      background: rgba(8, 13, 14, 0.72);
+    }
+
+    .meta-value {
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 1.08rem;
+      font-weight: 800;
+    }
+
+    .meta-label {
+      margin-top: 5px;
+      color: var(--dim);
+      font-size: 0.72rem;
+    }
+
+    .terminal {
+      position: relative;
+      border: 1px solid rgba(219, 247, 232, 0.15);
+      border-radius: var(--radius);
+      background: rgba(8, 13, 14, 0.84);
+      box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      overflow: hidden;
+    }
+
+    .terminal::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      border-radius: inherit;
+      background:
+        linear-gradient(90deg, rgba(51, 242, 139, 0.12), transparent 27%, rgba(87, 216, 255, 0.08) 76%, transparent),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent 22%);
+      opacity: 0.8;
+    }
+
+    .terminal-bar {
+      position: relative;
       display: flex;
       align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 46px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.035);
+    }
+
+    .window-dots {
+      display: flex;
+      gap: 7px;
+    }
+
+    .window-dots span {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .window-dots span:nth-child(1) { background: var(--rose); }
+    .window-dots span:nth-child(2) { background: var(--amber); }
+    .window-dots span:nth-child(3) { background: var(--green); }
+
+    .terminal-title {
+      color: var(--dim);
+      font-size: 0.72rem;
+    }
+
+    .terminal-body {
+      position: relative;
+      padding: 24px;
+    }
+
+    .install-line {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
       gap: 12px;
+      min-height: 58px;
+      padding: 12px 12px 12px 16px;
+      border: 1px solid rgba(51, 242, 139, 0.25);
+      border-radius: var(--radius);
+      background: rgba(51, 242, 139, 0.075);
+    }
+
+    .prompt {
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    .install-command {
+      min-width: 0;
+      color: var(--text);
+      font-size: 0.78rem;
+      line-height: 1.6;
+      overflow-wrap: anywhere;
+    }
+
+    .shell-feed {
+      margin-top: 22px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .feed-line {
+      display: flex;
+      gap: 10px;
+      min-height: 21px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      line-height: 1.6;
+    }
+
+    .feed-line .ok {
+      color: var(--green);
+    }
+
+    .feed-line .warn {
+      color: var(--amber);
+    }
+
+    .feed-line .path {
+      color: var(--cyan);
+    }
+
+    .package-map {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 12px;
+      align-items: center;
+      margin-top: 24px;
+      padding-top: 22px;
+      border-top: 1px solid var(--line);
+    }
+
+    .source-stack,
+    .command-stack {
+      display: grid;
+      gap: 8px;
+    }
+
+    .source-pill,
+    .command-pill {
+      min-height: 36px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.028);
+      font-size: 0.75rem;
+    }
+
+    .source-pill:nth-child(1) { border-color: rgba(51, 242, 139, 0.32); color: var(--green); }
+    .source-pill:nth-child(2) { border-color: rgba(87, 216, 255, 0.28); color: var(--cyan); }
+    .source-pill:nth-child(3) { border-color: rgba(255, 200, 87, 0.26); color: var(--amber); }
+
+    .map-core {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 82px;
+      height: 82px;
+      border: 1px solid rgba(51, 242, 139, 0.36);
+      border-radius: var(--radius);
+      background: rgba(51, 242, 139, 0.08);
+      color: var(--green);
+      font-family: var(--sans);
+      font-size: 1.25rem;
+      font-weight: 800;
+    }
+
+    main {
+      position: relative;
+      z-index: 1;
+    }
+
+    section {
+      width: min(1180px, calc(100% - 64px));
+      margin: 0 auto;
+      padding: 92px 0;
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 0.82fr) minmax(260px, 0.44fr);
+      gap: 32px;
+      align-items: end;
+      margin-bottom: 34px;
+    }
+
+    .section-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 13px;
+      color: var(--green);
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0;
     }
 
     .section-label::after {
-      content: '';
-      flex: 1;
+      content: "";
+      width: 72px;
       height: 1px;
-      background: var(--border);
-      max-width: 200px;
+      background: linear-gradient(90deg, var(--green), transparent);
     }
 
     .section-title {
       font-family: var(--sans);
-      font-size: clamp(1.8rem, 4vw, 2.8rem);
-      font-weight: 700;
-      letter-spacing: -0.03em;
-      color: var(--text);
-      margin-bottom: 16px;
+      font-size: 3.05rem;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0;
     }
 
     .section-desc {
-      color: var(--text-dim);
-      font-size: 0.9rem;
-      line-height: 1.7;
-      max-width: 500px;
-      margin-bottom: 60px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.75;
     }
 
-    /* COMMANDS GRID */
-    .commands-grid {
+    .feature-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: 1px;
-      background: var(--border);
-      border: 1px solid var(--border);
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
     }
 
-    .cmd-card {
-      background: var(--bg);
-      padding: 28px 28px;
-      position: relative;
-      overflow: hidden;
-      transition: background 0.2s;
-    }
-
-    .cmd-card::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0;
-      width: 3px; height: 0;
-      background: var(--green);
-      transition: height 0.3s ease;
-    }
-
-    .cmd-card:hover { background: var(--surface); }
-    .cmd-card:hover::before { height: 100%; }
-
-    .cmd-name {
-      font-size: 1rem;
-      font-weight: 700;
-      color: var(--green);
-      margin-bottom: 8px;
-      letter-spacing: 0.02em;
-    }
-
-    .cmd-desc {
-      font-size: 0.78rem;
-      color: var(--text-dim);
-      line-height: 1.6;
-    }
-
-    /* FEATURES */
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-      gap: 24px;
-      margin-top: 60px;
+    .feature-card,
+    .stat-card,
+    .info-card,
+    .command-card,
+    .workflow-panel,
+    .drawer,
+    .quick-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
     }
 
     .feature-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      padding: 32px;
       position: relative;
+      min-height: 232px;
+      padding: 22px;
       overflow: hidden;
-      transition: border-color 0.3s, transform 0.2s;
+      transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    }
+
+    .feature-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--feature-color, var(--green));
+      opacity: 0.85;
     }
 
     .feature-card:hover {
-      border-color: var(--border-bright);
-      transform: translateY(-3px);
-      box-shadow: 0 12px 40px rgba(74,222,128,0.06);
+      transform: translateY(-4px);
+      border-color: rgba(219, 247, 232, 0.23);
+      background: rgba(16, 25, 27, 0.96);
     }
 
     .feature-icon {
-      font-size: 1.5rem;
-      margin-bottom: 20px;
-      display: block;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 42px;
+      height: 42px;
+      margin-bottom: 22px;
+      border: 1px solid color-mix(in srgb, var(--feature-color, var(--green)) 55%, transparent);
+      border-radius: var(--radius);
+      color: var(--feature-color, var(--green));
+      background: color-mix(in srgb, var(--feature-color, var(--green)) 10%, transparent);
     }
 
     .feature-title {
       font-family: var(--sans);
-      font-size: 1.1rem;
-      font-weight: 600;
-      color: var(--text);
-      margin-bottom: 12px;
+      font-size: 1.14rem;
+      font-weight: 800;
+      letter-spacing: 0;
     }
 
     .feature-desc {
+      margin-top: 12px;
+      color: var(--muted);
       font-size: 0.8rem;
-      color: var(--text-dim);
+      line-height: 1.72;
+    }
+
+    .feature-desc code,
+    .info-card code,
+    .drawer code,
+    .workflow-output code {
+      color: var(--green);
+      font-family: var(--mono);
+    }
+
+    .quick-grid {
+      display: grid;
+      grid-template-columns: 0.78fr 1.22fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .quick-card {
+      padding: 24px;
+    }
+
+    .quick-card h3 {
+      font-family: var(--sans);
+      font-size: 1.3rem;
+      letter-spacing: 0;
+    }
+
+    .quick-card p {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 0.84rem;
       line-height: 1.7;
     }
 
-    /* INFO BOX */
-    .info-grid {
+    .stats-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1px;
-      background: var(--border);
-      border: 1px solid var(--border);
-      margin-top: 60px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
     }
 
-    .info-item {
-      background: var(--bg);
-      padding: 28px 32px;
+    .stat-card {
+      min-height: 118px;
+      padding: 20px;
     }
 
-    .info-label {
-      font-size: 0.65rem;
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      margin-bottom: 8px;
+    .stat-card strong {
+      display: block;
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 1.72rem;
+      line-height: 1;
+      letter-spacing: 0;
     }
 
-    .info-value {
-      font-size: 0.9rem;
-      color: var(--green);
-      font-weight: 500;
+    .stat-card span {
+      display: block;
+      margin-top: 10px;
+      color: var(--dim);
+      font-size: 0.74rem;
+      line-height: 1.55;
     }
 
-    /* QUICK COMMANDS */
-    .quick-cmd {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      margin-top: 60px;
-    }
-
-    .qcmd-row {
+    .command-toolbar {
       display: grid;
-      grid-template-columns: 180px 1fr;
-      border: 1px solid var(--border);
-      border-top: none;
-      background: var(--bg);
-      transition: background 0.15s;
-    }
-
-    .qcmd-row:first-child { border-top: 1px solid var(--border); }
-    .qcmd-row:hover { background: var(--surface); }
-
-    .qcmd-name {
-      padding: 16px 24px;
-      color: var(--green);
-      font-weight: 700;
-      font-size: 0.85rem;
-      border-right: 1px solid var(--border);
-      display: flex;
+      grid-template-columns: minmax(220px, 1fr) auto;
+      gap: 12px;
       align-items: center;
-    }
-
-    .qcmd-desc {
-      padding: 16px 24px;
-      color: var(--text-dim);
-      font-size: 0.8rem;
-      display: flex;
-      align-items: center;
-    }
-
-    /* UPDATE / UNINSTALL */
-    .two-col {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 24px;
-      margin-top: 60px;
-    }
-
-    .cmd-block {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      padding: 28px;
-    }
-
-    .cmd-block-label {
-      font-size: 0.65rem;
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-      color: var(--text-muted);
       margin-bottom: 16px;
     }
 
-    .cmd-block-cmd {
-      font-family: var(--mono);
-      font-size: 0.9rem;
+    .search-wrap {
+      position: relative;
+    }
+
+    .search-wrap svg {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      width: 17px;
+      height: 17px;
+      color: var(--dim);
+      transform: translateY(-50%);
+      pointer-events: none;
+    }
+
+    .search-input,
+    .package-input {
+      width: 100%;
+      min-height: 46px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      outline: none;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.035);
+      transition: border-color 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .search-input {
+      padding: 0 14px 0 44px;
+    }
+
+    .package-input {
+      padding: 0 14px;
+    }
+
+    .search-input:focus,
+    .package-input:focus {
+      border-color: var(--line-strong);
+      box-shadow: 0 0 0 3px rgba(51, 242, 139, 0.09);
+    }
+
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .filter-btn {
+      min-height: 38px;
+      padding: 0 13px;
+      border: 1px solid var(--line);
+      font-size: 0.72rem;
+    }
+
+    .filter-btn:hover,
+    .filter-btn.active {
+      color: var(--ink);
+      border-color: var(--green);
+      background: var(--green);
+    }
+
+    .commands-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .command-card {
+      position: relative;
+      min-height: 172px;
+      padding: 19px;
+      overflow: hidden;
+      text-align: left;
+      color: inherit;
+      transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    }
+
+    .command-card::after {
+      content: "";
+      position: absolute;
+      inset: auto 18px 0 18px;
+      height: 2px;
+      background: linear-gradient(90deg, var(--green), var(--cyan), transparent);
+      opacity: 0;
+      transition: opacity 0.18s ease;
+    }
+
+    .command-card:hover,
+    .command-card.active {
+      transform: translateY(-3px);
+      border-color: rgba(51, 242, 139, 0.38);
+      background: rgba(17, 28, 29, 0.96);
+    }
+
+    .command-card:hover::after,
+    .command-card.active::after {
+      opacity: 1;
+    }
+
+    .command-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .command-name {
       color: var(--green);
-      background: var(--bg);
-      border: 1px solid var(--border);
-      padding: 14px 20px;
+      font-family: var(--sans);
+      font-size: 1.22rem;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .command-group {
+      flex: 0 0 auto;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--dim);
+      font-size: 0.64rem;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .command-desc {
+      margin-top: 13px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      line-height: 1.7;
+    }
+
+    .command-example {
+      display: block;
+      margin-top: 18px;
+      padding: 10px 11px;
+      border: 1px solid rgba(219, 247, 232, 0.09);
+      border-radius: 6px;
+      color: var(--cyan);
+      background: rgba(0, 0, 0, 0.18);
+      font-size: 0.72rem;
+      line-height: 1.7;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      overflow: visible;
+    }
+
+    .drawer {
+      display: none;
+      margin-top: 14px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    .drawer.open {
+      display: block;
+      animation: liftIn 0.22s ease both;
+    }
+
+    .drawer-head {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      min-height: 54px;
+      padding: 10px 14px 10px 18px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.035);
     }
 
-    .cmd-block-copy {
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 0.85rem;
-      padding: 4px;
-      transition: color 0.2s;
-    }
-
-    .cmd-block-copy:hover { color: var(--green); }
-
-    /* FOOTER */
-    footer {
-      position: relative;
-      z-index: 1;
-      border-top: 1px solid var(--border);
-      padding: 48px 40px;
+    .drawer-title {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: gap;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
     }
 
-    .footer-left .logo {
+    .drawer-title strong {
+      color: var(--green);
       font-family: var(--sans);
-      font-weight: 800;
-      font-size: 1.2rem;
-      color: var(--green);
+      font-size: 1rem;
+      letter-spacing: 0;
     }
 
-    .footer-left p {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      margin-top: 8px;
-    }
-
-    .footer-right {
-      display: flex;
-      gap: 24px;
-    }
-
-    .footer-right a {
-      font-size: 0.72rem;
-      color: var(--text-muted);
-      text-decoration: none;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      transition: color 0.2s;
-    }
-
-    .footer-right a:hover { color: var(--green); }
-
-    /* DIVIDER LINE */
-    .divider {
-      position: relative;
-      z-index: 1;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, var(--border-bright), transparent);
-      max-width: 1100px;
-      margin: 0 auto;
-    }
-
-    /* GLOWING ORB */
-    .glow-orb {
-      position: fixed;
-      width: 500px; height: 500px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(74,222,128,0.04) 0%, transparent 70%);
-      pointer-events: none;
-      z-index: 0;
-      top: 20%; left: 50%;
-      transform: translateX(-50%);
-    }
-
-    /* ANIMATIONS */
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-    @keyframes fadeInUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
-    @keyframes fadeInDown { from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: translateY(0); } }
-
-    /* CMD DRAWER — inline code under grid */
-    .cmd-src-hint {
-      font-size: 0.6rem;
-      color: var(--green-dark);
-      font-weight: 400;
-      margin-left: 6px;
-      opacity: 0.7;
-      transition: opacity 0.2s;
-    }
-    .cmd-card:hover .cmd-src-hint { opacity: 1; color: var(--green); }
-    .cmd-card { cursor: pointer; }
-    .cmd-card.active {
-      background: var(--surface2);
-      border-left: 3px solid var(--green);
-    }
-    .cmd-card.active::before { height: 100%; }
-
-    .cmd-drawer {
-      display: none;
-      margin-top: 2px;
-      border: 1px solid var(--border-bright);
-      background: var(--surface);
-      box-shadow: 0 0 40px rgba(74,222,128,0.07);
-      animation: fadeInUp 0.25s ease both;
-    }
-    .cmd-drawer.open { display: block; }
-
-    .cmd-drawer-bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 20px;
-      background: var(--surface2);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .cmd-drawer-title {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 0.8rem;
-      color: var(--green);
-      font-weight: 700;
-    }
-
-    .cmd-drawer-dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: var(--green);
-      box-shadow: 0 0 8px var(--green);
-      animation: pulse 2s infinite;
-    }
-
-    .cmd-drawer-actions {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-    }
-
-    .cmd-drawer-link {
-      font-size: 0.68rem;
-      color: var(--green-dark);
-      text-decoration: none;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      transition: color 0.2s;
-    }
-    .cmd-drawer-link:hover { color: var(--green); }
-
-    .cmd-drawer-close {
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 0.85rem;
-      padding: 4px 8px;
-      font-family: var(--mono);
-      transition: color 0.2s;
-    }
-    .cmd-drawer-close:hover { color: var(--green); }
-
-    /* SOURCE CODE BROWSER — kept for styles reuse */
-    .src-browser {
-      margin-top: 60px;
-    }
-
-    .src-tabs {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 2px;
-      margin-bottom: 0;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .src-tab {
-      background: none;
-      border: 1px solid transparent;
-      border-bottom: none;
-      padding: 10px 18px;
-      font-family: var(--mono);
-      font-size: 0.72rem;
-      color: var(--text-muted);
-      cursor: pointer;
-      letter-spacing: 0.06em;
-      transition: all 0.2s;
-      position: relative;
-      bottom: -1px;
-    }
-
-    .src-tab:hover { color: var(--text-dim); }
-
-    .src-tab.active {
-      color: var(--green);
-      background: var(--surface);
-      border-color: var(--border);
-      border-bottom-color: var(--surface);
-    }
-
-    .src-panel {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-top: none;
-      position: relative;
-    }
-
-    .src-panel-bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 20px;
-      background: var(--surface2);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .src-panel-filename {
+    .drawer-title span {
+      color: var(--dim);
       font-size: 0.7rem;
-      color: var(--text-dim);
+    }
+
+    .drawer-actions {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
     }
 
-    .src-panel-filename::before {
-      content: '//';
-      color: var(--green-dark);
+    .code-pane {
+      max-height: 520px;
+      overflow: auto;
+      padding: 22px;
     }
 
-    .src-panel-link {
-      font-size: 0.68rem;
-      color: var(--green-dark);
-      text-decoration: none;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      transition: color 0.2s;
-    }
-
-    .src-panel-link:hover { color: var(--green); }
-
-    .src-code {
-      padding: 28px 24px;
-      overflow-x: auto;
-      max-height: 560px;
-      overflow-y: auto;
-    }
-
-    .src-code pre {
+    .code-pane pre {
       margin: 0;
-      font-family: var(--mono);
-      font-size: 0.75rem;
-      line-height: 1.8;
       color: var(--text);
+      font-family: var(--mono);
+      font-size: 0.76rem;
+      line-height: 1.8;
       white-space: pre;
     }
 
-    .src-loading {
-      padding: 60px 24px;
+    .code-loading,
+    .code-error,
+    .empty-state {
+      padding: 42px 20px;
+      color: var(--muted);
       text-align: center;
-      color: var(--text-muted);
-      font-size: 0.78rem;
-      letter-spacing: 0.1em;
+      font-size: 0.82rem;
+      line-height: 1.7;
     }
 
-    .src-loading::before {
-      content: '▋';
+    .kw { color: #7dd3fc; }
+    .fn { color: #33f28b; }
+    .str { color: #ffc857; }
+    .cmt { color: #6f8477; font-style: italic; }
+    .num { color: #ff8fb0; }
+    .pp { color: #c7b8ff; }
+
+    .workflow-grid {
+      display: grid;
+      grid-template-columns: minmax(320px, 0.72fr) minmax(0, 1fr);
+      gap: 16px;
+    }
+
+    .workflow-panel {
+      padding: 24px;
+    }
+
+    .workflow-panel h3 {
+      font-family: var(--sans);
+      font-size: 1.42rem;
+      letter-spacing: 0;
+    }
+
+    .field {
+      display: grid;
+      gap: 9px;
+      margin-top: 20px;
+    }
+
+    .field label {
+      color: var(--dim);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .source-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .source-tab {
+      min-height: 42px;
+      border: 1px solid var(--line);
+      font-size: 0.72rem;
+    }
+
+    .source-tab:hover,
+    .source-tab.active {
+      color: var(--ink);
+      border-color: var(--cyan);
+      background: var(--cyan);
+    }
+
+    .workflow-output {
+      margin-top: 20px;
+      padding: 16px;
+      border: 1px solid rgba(51, 242, 139, 0.22);
+      border-radius: var(--radius);
+      background: rgba(51, 242, 139, 0.06);
+      color: var(--text);
+      line-height: 1.85;
+      overflow-wrap: anywhere;
+    }
+
+    .workflow-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .source-note {
+      color: var(--dim);
+      font-size: 0.74rem;
+      line-height: 1.65;
+    }
+
+    .flow-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .flow-step {
+      display: grid;
+      grid-template-columns: 36px 1fr;
+      gap: 14px;
+      min-height: 82px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.028);
+    }
+
+    .step-no {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius);
+      color: var(--ink);
+      background: var(--green);
+      font-weight: 700;
+    }
+
+    .flow-step strong {
+      display: block;
+      color: var(--text);
+      font-family: var(--sans);
+      letter-spacing: 0;
+    }
+
+    .flow-step span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      line-height: 1.65;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .info-card {
+      min-height: 126px;
+      padding: 20px;
+    }
+
+    .info-label {
+      color: var(--dim);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .info-value {
+      margin-top: 12px;
+      color: var(--text);
+      font-size: 0.9rem;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+
+    .info-value a {
       color: var(--green);
-      animation: blink 1s infinite;
-      margin-right: 8px;
-    }
-
-    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
-
-    .src-error {
-      padding: 40px 24px;
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 0.78rem;
-    }
-
-    .src-error a {
-      color: var(--green-dim);
       text-decoration: none;
     }
 
-    /* syntax colors */
-    .kw { color: #7dd3fc; }
-    .fn { color: #4ade80; }
-    .str { color: #fcd34d; }
-    .cmt { color: #3a5c3a; font-style: italic; }
-    .num { color: #f9a8d4; }
-    .pp { color: #c4b5fd; }
-    .type { color: #86efac; }
+    .info-value a:hover {
+      text-decoration: underline;
+    }
 
-    /* SCROLLBAR */
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: var(--bg); }
-    ::-webkit-scrollbar-thumb { background: var(--border-bright); }
-    ::-webkit-scrollbar-thumb:hover { background: var(--green-dark); }
+    .site-footer {
+      border-top: 1px solid var(--line);
+      padding: 34px 32px;
+      color: var(--dim);
+      background: rgba(0, 0, 0, 0.16);
+    }
 
-    /* RESPONSIVE */
-    @media (max-width: 768px) {
-      nav { padding: 16px 20px; }
-      .nav-links { display: none; }
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 24px;
+      width: min(1180px, 100%);
+      margin: 0 auto;
+    }
 
-      .nav-actions{gap:8px;}
-      .lang-btn{padding:8px 9px;font-size:0.68rem;}
+    .footer-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
 
-      section { padding: 60px 20px; }
-      .hero { padding: 100px 20px 60px; }
-      .hero-ascii { font-size: 0.28rem; }
-      .install-cmd { font-size: 0.65rem; }
-      .info-grid, .two-col { grid-template-columns: 1fr; }
-      .qcmd-row { grid-template-columns: 1fr; }
-      .qcmd-name { border-right: none; border-bottom: 1px solid var(--border); }
-      footer { flex-direction: column; gap: 24px; }
+    .footer-brand img {
+      width: 32px;
+      height: 32px;
+      border-radius: 7px;
+      object-fit: contain;
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity 0.5s ease, transform 0.5s ease;
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @keyframes liftIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 1080px) {
+      .hero-inner,
+      .section-head,
+      .workflow-grid,
+      .quick-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero h1 {
+        font-size: 4.4rem;
+      }
+
+      .feature-grid,
+      .commands-grid,
+      .info-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .terminal {
+        max-width: 720px;
+      }
+    }
+
+    @media (max-width: 820px) {
+      .site-nav {
+        padding: 12px 16px;
+      }
+
+      .brand-title {
+        font-size: 0.96rem;
+      }
+
+      .nav-links {
+        display: none;
+      }
+
+      .ghost-link.nav-github {
+        display: none;
+      }
+
+      .hero {
+        padding: 98px 16px 8px;
+      }
+
+      .hero-logo-watermark {
+        top: 92px;
+        right: 16px;
+        width: 150px;
+        height: 150px;
+      }
+
+      .hero h1 {
+        font-size: 3.15rem;
+      }
+
+      .hero-lede {
+        font-size: 0.94rem;
+      }
+
+      .hero-meta,
+      .command-toolbar {
+        grid-template-columns: 1fr;
+      }
+
+      section {
+        width: calc(100% - 32px);
+        padding: 44px 0;
+      }
+
+      #why {
+        padding-top: 24px;
+      }
+
+      .section-title {
+        font-size: 2.24rem;
+      }
+
+      .terminal-body,
+      .workflow-panel,
+      .quick-card {
+        padding: 18px;
+      }
+
+      .hero-inner {
+        gap: 30px;
+      }
+
+      .install-line {
+        grid-template-columns: auto 1fr auto;
+      }
+
+      .install-line .icon-btn {
+        grid-column: auto;
+        width: 38px;
+      }
+
+      .package-map {
+        display: none;
+      }
+    }
+
+    @media (max-width: 620px) {
+      .brand-version {
+        display: none;
+      }
+
+      .hero h1 {
+        font-size: 2.28rem;
+      }
+
+      .feature-grid,
+      .commands-grid,
+      .stats-grid,
+      .info-grid,
+      .source-tabs {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-meta {
+        display: none;
+      }
+
+      .hero-actions {
+        flex-direction: column;
+      }
+
+      .primary-link,
+      .ghost-link {
+        width: 100%;
+      }
+
+      .drawer-head,
+      .footer-inner {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .drawer-actions {
+        width: 100%;
+        justify-content: flex-start;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.001ms !important;
+        animation-duration: 0.001ms !important;
+      }
     }
   </style>
 </head>
 <body>
+  <nav class="site-nav" aria-label="Primary navigation">
+    <a class="brand" href="./" aria-label="ZPM home">
+      <img class="brand-mark" src="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true" alt="ZPM logo" />
+      <span class="brand-name">
+        <span class="brand-title">ZPM</span>
+        <span class="brand-version" data-version>loading...</span>
+      </span>
+    </a>
 
-<div class="glow-orb"></div>
+    <ul class="nav-links">
+      <li><a class="active" href="./" data-i18n="nav_home">Home</a></li>
+      <li><a href="./releases/" data-i18n="nav_releases">Releases</a></li>
+      <li><a href="./distros/" data-i18n="nav_distros">Distros</a></li>
+      <li><a href="./license/" data-i18n="nav_license">License</a></li>
+    </ul>
 
-<!-- NAV -->
-<nav>
-  <a class="nav-logo" href="index.html">ZPM <span id="nav-version">...</span></a>
-  <ul class="nav-links">
-    <li><a href="https://zielina.pl/" class="active">Home</a></li>
-    <li><a href="https://zielina.pl/releases">Releases</a></li>
-    <li><a href="https://zielina.pl/license">License</a></li>
-  </ul>
-  <div class="nav-actions">
-  <a class="nav-github" href="https://github.com/Zielina-Konrad-productions/ZPM" target="_blank">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
-    GitHub
-  </a>
-  <div class="lang-switch" aria-label="Language switcher"><button class="lang-btn" data-lang="en" onclick="setLanguage('en')">EN</button><button class="lang-btn" data-lang="pl" onclick="setLanguage('pl')">PL</button></div>
-  </div>
-</nav>
-
-<!-- HERO -->
-<div class="hero">
-  <div class="hero-badge">
-    <span class="badge-dot"></span>
-     <span class="dyn-version">...</span> — <span class="release-month">May 2026</span>
-  </div>
-
-  <h1 class="hero-title">Zielina<br/><span class="accent">Package</span><br/>Manager</h1>
-  <p class="hero-subtitle-line">APT · Flatpak · Snap — One Interface</p>
-  <p class="hero-desc">
-    ZPM unifies your Linux package management into a single, fast, user-friendly CLI.
-    No more switching between APT, Flatpak, and Snap — just <code style="color:var(--green)">z*</code> commands.
-  </p>
-
-  <!-- INSTALL BOX -->
-  <div class="install-box" id="install">
-    <div class="install-bar">
-      <span class="install-bar-dot dot-red"></span>
-      <span class="install-bar-dot dot-yellow"></span>
-      <span class="install-bar-dot dot-green-os"></span>
-      <span class="install-bar-title">bash — install zpm</span>
-    </div>
-    <div class="install-code">
-      <span class="install-prompt">$</span>
-      <span class="install-cmd" id="install-cmd-text">sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Ignacyyy/ZPM/main/INETINSTALL.sh)"</span>
-      <button class="copy-btn" id="copy-btn" onclick="copyInstall()">Copy</button>
-    </div>
-    <div class="install-note">
-      <span>Requirements:</span> Installed with ZPM &nbsp;|&nbsp; <span>Platform:</span> Debian / Ubuntu (APT)
-    </div>
-  </div>
-
-  <div class="hero-tags">
-    <span class="tag">Open Source</span>
-    <span class="tag">MIT License</span>
-    <span class="tag">Debian / Ubuntu</span>
-    <span class="tag">C++</span>
-    <span class="tag dyn-version-tag">...</span>
-  </div>
-</div>
-
-<div class="divider"></div>
-
-<!-- FEATURES -->
-<section>
-  <p class="section-label">Why ZPM</p>
-  <h2 class="section-title">One manager.<br/>All packages.</h2>
-  <p class="section-desc">Instead of remembering the syntax of three different tools — use one unified interface.</p>
-
-  <div class="features-grid">
-    <div class="feature-card">
-      <span class="feature-icon">⚡</span>
-      <h3 class="feature-title">One interface</h3>
-      <p class="feature-desc">APT, Flatpak and Snap managed from a single unified CLI. Simple commands with the <code style="color:var(--green)">z</code> prefix.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🔎</span>
-      <h3 class="feature-title">Fast search</h3>
-      <p class="feature-desc">The <code style="color:var(--green)">zsearch</code> command instantly finds a package without needing to know its exact source.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🛡️</span>
-      <h3 class="feature-title">MIT License</h3>
-      <p class="feature-desc">Fully open-source. Use, modify and distribute ZPM without restrictions.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">📦</span>
-      <h3 class="feature-title">Cache management</h3>
-      <p class="feature-desc">Built-in <code style="color:var(--green)">zclean</code> command for clearing package cache — fast and painless.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🔄</span>
-      <h3 class="feature-title">Auto-update</h3>
-      <p class="feature-desc">Update ZPM and system packages with a single command. Always up to date.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">💻</span>
-      <h3 class="feature-title">Written in C++</h3>
-      <p class="feature-desc">C++ core provides minimal overhead and fast startup. A shell wrapper completes the integration.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">▶️</span>
-      <h3 class="feature-title">Run packages</h3>
-      <p class="feature-desc">The <code style="color:var(--green)">zrun</code> command lets you launch an installed program directly through ZPM — no path hunting.</p>
-    </div>
-  </div>
-</section>
-
-<div class="divider"></div>
-
-<!-- COMMANDS -->
-<section id="commands">
-  <p class="section-label">Commands</p>
-  <h2 class="section-title">Everything you need.</h2>
-  <p class="section-desc">Click a command to view its source code from GitHub.</p>
-
-  <div class="commands-grid" id="commands-grid">
-    <div class="cmd-card" onclick="openCmdCode(this,'zinst.cpp')">
-      <div class="cmd-name">zinst <span class="cmd-src-hint">{ }</span></div>
-      <div class="cmd-desc">Install a package from a chosen source (APT / Flatpak / Snap)</div>
-    </div>
-    <div class="cmd-card" onclick="openCmdCode(this,'zrm.cpp')">
-      <div class="cmd-name">zrm <span class="cmd-src-hint">{ }</span></div>
-      <div class="cmd-desc">Remove an installed package</div>
-    </div>
-    <div class="cmd-card" onclick="openCmdCode(this,'zsearch.cpp')">
-      <div class="cmd-name">zsearch <span class="cmd-src-hint">{ }</span></div>
-      <div class="cmd-desc">Search for a package by name or keyword</div>
-    </div>
-    <div class="cmd-card" onclick="openCmdCode(this,'zinfo.cpp')">
-      <div class="cmd-name">zinfo <span class="cmd-src-hint">{ }</span></div>
-      <div class="cmd-desc">Show detailed info about a package</div>
-    </div>
-    <div class="cmd-card" onclick="openCmdCode(this,'zlist.cpp')">
-      <div class="cmd-name">zlist <span class="cmd-src-hint">{ }</span></div>
-      <div class="cmd-desc">List all installed packages</div>
-    </div>
-    <div class="cmd-card" onclick="openCmdCode(this,'zupd.cpp')">
-      <div class="cmd-name">zupd <span class="cmd-src-hint">{ }</span></div>
-      <div class="cmd-desc">Update system packages</div>
-    </div>
-    <div class="cmd-card" onclick="openCmdCode(this,'zupgr.cpp')">
-      <div class="cmd-name">zupgr <span class="cmd-src-hint">{ }</span></div>
-      <div class="cmd-desc">Upgrade ZPM itself to the latest version</div>
-    </div>
-    <div class="cmd-card" onclick="openCmdCode(this,'zclean.cpp')">
-      <div class="cmd-name">zclean <span class="cmd-src-hint">{ }</span></div>
-      <div class="cmd-desc">Clear the package cache</div>
-    </div>
-    <div class="cmd-card" onclick="openCmdCode(this,'zhome.cpp')">
-      <div class="cmd-name">zhome <span class="cmd-src-hint">{ }</span></div>
-      <div class="cmd-desc">Display the full help guide</div>
-    </div>
-    <div class="cmd-card" onclick="openCmdCode(this,'zuninstall.cpp')">
-      <div class="cmd-name">zuninstall <span class="cmd-src-hint">{ }</span></div>
-      <div class="cmd-desc">Uninstall ZPM from the system</div>
-    </div>
-    <div class="cmd-card" onclick="openCmdCode(this,'zrun.cpp')">
-      <div class="cmd-name">zrun <span class="cmd-src-hint">{ }</span></div>
-      <div class="cmd-desc">Run an installed package or program via ZPM</div>
-    </div>
-  </div>
-
-  <!-- inline code drawer -->
-  <div class="cmd-drawer" id="cmd-drawer">
-    <div class="cmd-drawer-bar">
-      <div class="cmd-drawer-title">
-        <span class="cmd-drawer-dot"></span>
-        <span id="cmd-drawer-name">—</span>
-      </div>
-      <div class="cmd-drawer-actions">
-        <a id="cmd-drawer-gh" href="#" target="_blank" class="cmd-drawer-link">View on GitHub ↗</a>
-        <button class="cmd-drawer-close" onclick="closeCmdCode()">✕</button>
+    <div class="nav-actions">
+      <a class="ghost-link nav-github" href="https://github.com/Zielina-Konrad-productions/ZPM" target="_blank" rel="noreferrer">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <div class="lang-switch" aria-label="Language switcher">
+        <button class="lang-btn" type="button" data-lang="en">EN</button>
+        <button class="lang-btn" type="button" data-lang="pl">PL</button>
       </div>
     </div>
-    <div class="src-code" id="cmd-drawer-code">
-      <div class="src-loading">Loading...</div>
+  </nav>
+
+  <header class="hero" id="home">
+    <img class="hero-logo-watermark" src="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true" alt="" aria-hidden="true" />
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <p class="kicker"><span data-i18n="hero_kicker">Linux package control</span> <span data-version>loading...</span></p>
+        <h1 data-i18n-html="hero_title">Zielina <span>Package</span> Manager</h1>
+        <p class="hero-lede" data-i18n="hero_lede">One fast CLI across apt, dnf and zypper. Search, install, run, update and clean packages without memorising each distro tool.</p>
+        <div class="hero-actions">
+          <button class="primary-link" type="button" data-copy="#install-command" data-i18n="cta_install">Install ZPM</button>
+          <a class="ghost-link" href="#commands" data-i18n="cta_commands">Explore commands</a>
+        </div>
+        <div class="hero-meta" aria-label="ZPM highlights">
+          <div class="meta-item">
+            <div class="meta-value">APT</div>
+            <div class="meta-label" data-i18n="meta_apt">Debian family</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-value">DNF</div>
+            <div class="meta-label" data-i18n="meta_dnf">Fedora family</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-value">Zypper</div>
+            <div class="meta-label" data-i18n="meta_zypper">openSUSE family</div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="terminal" id="install" aria-label="Install terminal">
+        <div class="terminal-bar">
+          <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="terminal-title">zpm@linux:~/install</div>
+        </div>
+        <div class="terminal-body">
+          <div class="install-line">
+            <span class="prompt">$</span>
+            <code class="install-command" id="install-command">sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Ignacyyy/ZPM/main/INETINSTALL.sh)"</code>
+            <button class="icon-btn" type="button" data-copy="#install-command" data-tip="Copy install command" aria-label="Copy install command">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M8 8h10v12H8zM6 16H4V4h12v2"/></svg>
+            </button>
+          </div>
+          <div class="shell-feed" aria-hidden="true">
+            <div class="feed-line"><span class="ok">ok</span><span>backends detected: apt, dnf, zypper</span></div>
+            <div class="feed-line"><span class="warn">pkg</span><span>zsearch firefox - checks distro packages</span></div>
+            <div class="feed-line"><span class="path">run</span><span>zrun firefox - launch from one place</span></div>
+          </div>
+          <div class="package-map" aria-label="Package sources">
+            <div class="source-stack">
+              <div class="source-pill">apt</div>
+              <div class="source-pill">dnf</div>
+              <div class="source-pill">zypper</div>
+            </div>
+            <div class="map-core">ZPM</div>
+            <div class="command-stack">
+              <div class="command-pill">zsearch</div>
+              <div class="command-pill">zinst</div>
+              <div class="command-pill">zrun</div>
+            </div>
+          </div>
+        </div>
+      </aside>
     </div>
-  </div>
+  </header>
 
-  <p style="margin-top:20px;font-size:0.75rem;color:var(--text-muted);">
-    You can also use: <code style="color:var(--text-dim)">zpm --help</code> or <code style="color:var(--text-dim)">ZPM --help</code> for the unified interface.
-  </p>
-</section>
+  <main>
+    <section id="why">
+      <div class="section-head reveal">
+        <div>
+          <p class="section-label" data-i18n="why_label">Why ZPM</p>
+          <h2 class="section-title" data-i18n="why_title">Less package chaos. More shipping.</h2>
+        </div>
+        <p class="section-desc" data-i18n="why_desc">ZPM keeps the Linux package toolbox powerful, but makes the everyday workflow feel consistent and fast.</p>
+      </div>
 
-<div class="divider"></div>
+      <div class="feature-grid">
+        <article class="feature-card reveal" style="--feature-color: var(--green)">
+          <div class="feature-icon">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
+          </div>
+          <h3 class="feature-title" data-i18n="feature_one_title">One interface</h3>
+          <p class="feature-desc" data-i18n-html="feature_one_desc">Use one <code>z*</code> command family instead of switching syntax between apt, dnf and zypper.</p>
+        </article>
+        <article class="feature-card reveal" style="--feature-color: var(--cyan)">
+          <div class="feature-icon">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15z"/></svg>
+          </div>
+          <h3 class="feature-title" data-i18n="feature_search_title">Fast search</h3>
+          <p class="feature-desc" data-i18n-html="feature_search_desc"><code>zsearch</code> checks package options without forcing you to know the provider first.</p>
+        </article>
+        <article class="feature-card reveal" style="--feature-color: var(--amber)">
+          <div class="feature-icon">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3 4 7v6c0 5 3.4 7.6 8 8 4.6-.4 8-3 8-8V7zM9 12l2 2 4-5"/></svg>
+          </div>
+          <h3 class="feature-title" data-i18n="feature_safe_title">Open source</h3>
+          <p class="feature-desc" data-i18n="feature_safe_desc">MIT licensed and transparent, with source access directly from the command cards below.</p>
+        </article>
+        <article class="feature-card reveal" style="--feature-color: var(--rose)">
+          <div class="feature-icon">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M8 6V4h8v2m-1 5v6M9 11v6M5 6l1 14h12l1-14"/></svg>
+          </div>
+          <h3 class="feature-title" data-i18n="feature_clean_title">Cache control</h3>
+          <p class="feature-desc" data-i18n-html="feature_clean_desc">Clean package leftovers with <code>zclean</code> and keep the system tidy.</p>
+        </article>
+      </div>
 
-<!-- UPDATE / UNINSTALL -->
-<section>
-  <p class="section-label">ZPM Management</p>
-  <h2 class="section-title">Update.<br/>Uninstall.</h2>
+      <div class="quick-grid">
+        <article class="quick-card reveal">
+          <h3 data-i18n="quick_title">Built for daily terminal work.</h3>
+          <p data-i18n="quick_desc">The UI stays close to what ZPM is: a focused command-line tool for people who want speed without mental overhead.</p>
+        </article>
+        <div class="stats-grid">
+          <div class="stat-card reveal">
+            <strong>11</strong>
+            <span data-i18n="stat_commands">core commands for install, remove, search, info, update, clean and run</span>
+          </div>
+          <div class="stat-card reveal">
+            <strong>C++</strong>
+            <span data-i18n="stat_cpp">native core with shell integration for Linux systems</span>
+          </div>
+          <div class="stat-card reveal">
+            <strong>MIT</strong>
+            <span data-i18n="stat_license">license for use, modification and redistribution</span>
+          </div>
+          <div class="stat-card reveal">
+            <strong data-version>loading...</strong>
+            <span data-i18n="stat_version">current version loaded from VERSION.txt when available</span>
+          </div>
+        </div>
+      </div>
+    </section>
 
-  <div class="two-col">
-    <div class="cmd-block">
-      <p class="cmd-block-label">Update ZPM</p>
-      <div class="cmd-block-cmd">
-        <span>sudo zupgr</span>
-        <button class="cmd-block-copy" onclick="copyText('sudo zupgr', this)" title="Copy">⎘</button>
+    <section id="commands">
+      <div class="section-head reveal">
+        <div>
+          <p class="section-label" data-i18n="commands_label">Command deck</p>
+          <h2 class="section-title" data-i18n="commands_title">Everything important, one click away.</h2>
+        </div>
+        <p class="section-desc" data-i18n="commands_desc">Search commands, filter by task and open the source drawer without leaving the page.</p>
+      </div>
+
+      <div class="command-toolbar reveal">
+        <label class="search-wrap" aria-label="Search commands">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15z"/></svg>
+          <input class="search-input" id="command-search" type="search" autocomplete="off" data-i18n-placeholder="search_placeholder" placeholder="Search commands..." />
+        </label>
+        <div class="filters" id="command-filters" aria-label="Command filters"></div>
+      </div>
+
+      <div class="commands-grid" id="commands-grid"></div>
+
+      <div class="drawer" id="code-drawer">
+        <div class="drawer-head">
+          <div class="drawer-title">
+            <strong id="drawer-command">zpm</strong>
+            <span id="drawer-file">src</span>
+          </div>
+          <div class="drawer-actions">
+            <a class="ghost-link" id="drawer-gh" href="#" target="_blank" rel="noreferrer" data-i18n="view_github">View GitHub</a>
+            <button class="icon-btn" type="button" id="drawer-copy" data-tip="Copy example" aria-label="Copy example">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M8 8h10v12H8zM6 16H4V4h12v2"/></svg>
+            </button>
+            <button class="icon-btn" type="button" id="drawer-close" data-tip="Close" aria-label="Close source drawer">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="code-pane" id="code-pane">
+          <div class="code-loading">Loading...</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="workflow">
+      <div class="section-head reveal">
+        <div>
+          <p class="section-label" data-i18n="workflow_label">Workflow builder</p>
+          <h2 class="section-title" data-i18n="workflow_title">Preview the flow before you paste.</h2>
+        </div>
+        <p class="section-desc" data-i18n="workflow_desc">Type a package name and ZPM builds a clean search, install and run sequence.</p>
+      </div>
+
+      <div class="workflow-grid">
+        <div class="workflow-panel reveal">
+          <h3 data-i18n="builder_title">Package workflow</h3>
+          <div class="field">
+            <label for="package-name" data-i18n="package_label">Package name</label>
+            <input class="package-input" id="package-name" value="firefox" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="field">
+            <label data-i18n="source_label">Preferred source</label>
+            <div class="source-tabs" id="source-tabs">
+              <button class="source-tab active" type="button" data-source="apt">APT</button>
+              <button class="source-tab" type="button" data-source="dnf">DNF</button>
+              <button class="source-tab" type="button" data-source="zypper">Zypper</button>
+            </div>
+          </div>
+          <div class="workflow-output" id="workflow-output"></div>
+          <div class="workflow-actions">
+            <button class="icon-btn" type="button" id="workflow-copy" data-tip="Copy workflow" aria-label="Copy workflow">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M8 8h10v12H8zM6 16H4V4h12v2"/></svg>
+            </button>
+          <p class="source-note" id="source-note">APT is the natural default for Debian-family systems.</p>
+          </div>
+        </div>
+
+        <div class="workflow-panel reveal">
+          <div class="flow-list">
+            <div class="flow-step">
+              <span class="step-no">1</span>
+              <div>
+                <strong data-i18n="flow_search_title">Search once</strong>
+            <span data-i18n="flow_search_desc">Find candidates before choosing the package source.</span>
+              </div>
+            </div>
+            <div class="flow-step">
+              <span class="step-no">2</span>
+              <div>
+                <strong data-i18n="flow_install_title">Install cleanly</strong>
+                <span data-i18n="flow_install_desc">Run the same installer entry point and let ZPM handle the provider flow.</span>
+              </div>
+            </div>
+            <div class="flow-step">
+              <span class="step-no">3</span>
+              <div>
+                <strong data-i18n="flow_run_title">Run from ZPM</strong>
+                <span data-i18n="flow_run_desc">Launch installed apps without hunting for paths or launchers.</span>
+              </div>
+            </div>
+            <div class="flow-step">
+              <span class="step-no">4</span>
+              <div>
+                <strong data-i18n="flow_clean_title">Maintain later</strong>
+                <span data-i18n-html="flow_clean_desc">Use <code>zupd</code>, <code>zupgr</code> and <code>zclean</code> for the usual upkeep.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="info">
+      <div class="section-head reveal">
+        <div>
+          <p class="section-label" data-i18n="info_label">Technical details</p>
+          <h2 class="section-title" data-i18n="info_title">Small surface. Useful guts.</h2>
+        </div>
+        <p class="section-desc" data-i18n="info_desc">Core facts in one place for installation, repository access and system expectations.</p>
+      </div>
+
+      <div class="info-grid">
+        <div class="info-card reveal">
+          <p class="info-label" data-i18n="info_systems">Supported systems</p>
+          <p class="info-value"><a href="./distros/" data-i18n="info_systems_value">Growing distro list</a></p>
+        </div>
+        <div class="info-card reveal">
+          <p class="info-label" data-i18n="info_version">Version</p>
+          <p class="info-value" data-version>loading...</p>
+        </div>
+        <div class="info-card reveal">
+          <p class="info-label" data-i18n="info_path">Install path</p>
+          <p class="info-value"><code>/opt/ZPM</code></p>
+        </div>
+        <div class="info-card reveal">
+          <p class="info-label" data-i18n="info_command_path">Command location</p>
+          <p class="info-value"><code>/usr/bin/z*</code></p>
+        </div>
+        <div class="info-card reveal">
+          <p class="info-label" data-i18n="info_license">License</p>
+          <p class="info-value">MIT</p>
+        </div>
+        <div class="info-card reveal">
+          <p class="info-label" data-i18n="info_language">Language</p>
+          <p class="info-value">C++ + Shell</p>
+        </div>
+        <div class="info-card reveal">
+          <p class="info-label" data-i18n="info_deps">Dependencies</p>
+          <p class="info-value" data-i18n="info_deps_value">Installed with ZPM</p>
+        </div>
+        <div class="info-card reveal">
+          <p class="info-label" data-i18n="info_repo">Repository</p>
+          <p class="info-value"><a href="https://github.com/Zielina-Konrad-productions/ZPM" target="_blank" rel="noreferrer">Zielina-Konrad-productions/ZPM</a></p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <img src="https://github.com/Zielina-Konrad-productions/ZPM/blob/main/logo.png?raw=true" alt="ZPM logo" />
+        <span>ZPM - Zielina Package Manager - <span data-version>loading...</span></span>
       </div>
     </div>
-    <div class="cmd-block">
-      <p class="cmd-block-label">Uninstall ZPM</p>
-      <div class="cmd-block-cmd">
-        <span>sudo zuninstall</span>
-        <button class="cmd-block-copy" onclick="copyText('sudo zuninstall', this)" title="Copy">⎘</button>
-      </div>
-    </div>
-  </div>
-</section>
+  </footer>
 
-<div class="divider"></div>
+  <script>
+    const RAW_BASE = "https://raw.githubusercontent.com/Ignacyyy/ZPM/main/src/";
+    const GH_BASE = "https://github.com/Ignacyyy/ZPM/blob/main/src/";
+    const VERSION_URL = "https://raw.githubusercontent.com/Ignacyyy/ZPM/main/VERSION.txt";
 
-<!-- INFO -->
-<section id="info">
-  <p class="section-label">Specifications</p>
-  <h2 class="section-title">Technical details.</h2>
+    const copyIcon = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M8 8h10v12H8zM6 16H4V4h12v2"/></svg>';
+    const checkIcon = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" d="m20 6-11 11-5-5"/></svg>';
 
-  <div class="info-grid">
-    <div class="info-item">
-      <p class="info-label">Supported systems</p>
-      <p class="info-value">Debian / Ubuntu (APT)</p>
-    </div>
-    <div class="info-item">
-      <p class="info-label">Version</p>
-      <p class="info-value dyn-version">...</p>
-    </div>
-    <div class="info-item">
-      <p class="info-label">Install path</p>
-      <p class="info-value">/opt/ZPM</p>
-    </div>
-    <div class="info-item">
-      <p class="info-label">Command location</p>
-      <p class="info-value">/usr/bin/z* (symlinks)</p>
-    </div>
-    <div class="info-item">
-      <p class="info-label">License</p>
-      <p class="info-value">MIT</p>
-    </div>
-    <div class="info-item">
-      <p class="info-label">Language</p>
-      <p class="info-value">C++  + Shell </p>
-    </div>
-    <div class="info-item">
-      <p class="info-label">Dependencies</p>
-      <p class="info-value">Installed with ZPM</p>
-    </div>
-    <div class="info-item">
-      <p class="info-label">Repository</p>
-      <p class="info-value"><a href="https://github.com/Zielina-Konrad-productions/ZPM" target="_blank" style="color:var(--green-dim);text-decoration:none;">github.com/Zielina-Konrad-productions/ZPM</a></p>
-    </div>
-  </div>
-</section>
-
-<!-- FOOTER -->
-<footer>
-  <div class="footer-left">
-    <p class="logo">ZPM</p>
-    <p>Zielina Package Manager · MIT License · <span class="dyn-version">...</span></p>
-  </div>
-  <div class="footer-right">
-  </div>
-</footer>
-
-<script>
-  const I18N = {
-    en: {
-      nav_home:'Home', nav_releases:'Releases', nav_license:'License', month:'May 2026', subtitle:'APT · Flatpak · Snap — One Interface',
-      hero_desc:'ZPM unifies your Linux package management into a single, fast, user-friendly CLI. No more switching between APT, Flatpak, and Snap — just <code style="color:var(--green)">z*</code> commands.',
-      copy:'Copy', copied:'Copied!', requirements:'<span>Requirements:</span> Installed with ZPM &nbsp;|&nbsp; <span>Platform:</span> Debian / Ubuntu (APT)',
-      tag_open:'Open Source', tag_mit:'MIT License', why:'Why ZPM', one_manager:'One manager.<br/>All packages.', why_desc:'Instead of remembering the syntax of three different tools — use one unified interface.',
-      f1:'One interface', f1d:'APT, Flatpak and Snap managed from a single unified CLI. Simple commands with the <code style="color:var(--green)">z</code> prefix.',
-      f2:'Fast search', f2d:'The <code style="color:var(--green)">zsearch</code> command instantly finds a package without needing to know its exact source.',
-      f3:'MIT License', f3d:'Fully open-source. Use, modify and distribute ZPM without restrictions.',
-      f4:'Cache management', f4d:'Built-in <code style="color:var(--green)">zclean</code> command for clearing package cache — fast and painless.',
-      f5:'Auto-update', f5d:'Update ZPM and system packages with a single command. Always up to date.',
-      f6:'Written in C++', f6d:'C++ core provides minimal overhead and fast startup. A shell wrapper completes the integration.',
-      f7:'Run packages', f7d:'The <code style="color:var(--green)">zrun</code> command lets you launch an installed program directly through ZPM — no path hunting.',
-      commands:'Commands', everything:'Everything you need.', commands_desc:'Click a command to view its source code from GitHub.',
-      c_zinst:'Install a package from a chosen source (APT / Flatpak / Snap)', c_zrm:'Remove an installed package', c_zsearch:'Search for a package by name or keyword', c_zinfo:'Show detailed info about a package', c_zlist:'List all installed packages', c_zupd:'Update system packages', c_zupgr:'Upgrade ZPM itself to the latest version', c_zclean:'Clear the package cache', c_zhome:'Display the full help guide', c_zuninstall:'Uninstall ZPM from the system', c_zrun:'Run an installed package or program via ZPM',
-      view_gh:'View on GitHub ↗', loading:'Loading...', fetching:'Fetching ', help:'You can also use: <code style="color:var(--text-dim)">zpm --help</code> or <code style="color:var(--text-dim)">ZPM --help</code> for the unified interface.',
-      management:'ZPM Management', update_uninstall:'Update.<br/>Uninstall.', update_zpm:'Update ZPM', uninstall_zpm:'Uninstall ZPM', install_path:'Install path', license:'License', installed:'Installed with ZPM', footer:'Zielina Package Manager · MIT License · '
-    },
-    pl: {
-      nav_home:'Strona główna', nav_releases:'Wydania', nav_license:'Licencja', month:'Maj 2026', subtitle:'APT · Flatpak · Snap — jeden interfejs',
-      hero_desc:'ZPM łączy zarządzanie pakietami Linux w jedno szybkie i wygodne CLI. Koniec z przełączaniem się między APT, Flatpak i Snap — wystarczą komendy <code style="color:var(--green)">z*</code>.',
-      copy:'Kopiuj', copied:'Skopiowano!', requirements:'<span>Wymagania:</span> zainstalowane przez ZPM &nbsp;|&nbsp; <span>Platforma:</span> Debian / Ubuntu (APT)',
-      tag_open:'Open Source', tag_mit:'Licencja MIT', why:'Dlaczego ZPM', one_manager:'Jeden manager.<br/>Wszystkie pakiety.', why_desc:'Zamiast pamiętać składnię trzech różnych narzędzi — używaj jednego, spójnego interfejsu.',
-      f1:'Jeden interfejs', f1d:'APT, Flatpak i Snap obsługiwane z jednego CLI. Proste komendy z prefiksem <code style="color:var(--green)">z</code>.',
-      f2:'Szybkie wyszukiwanie', f2d:'Komenda <code style="color:var(--green)">zsearch</code> natychmiast znajduje pakiet bez potrzeby znania jego dokładnego źródła.',
-      f3:'Licencja MIT', f3d:'W pełni open-source. Możesz używać, modyfikować i rozpowszechniać ZPM bez ograniczeń.',
-      f4:'Zarządzanie cache', f4d:'Wbudowana komenda <code style="color:var(--green)">zclean</code> do czyszczenia cache pakietów — szybko i bez bólu.',
-      f5:'Automatyczna aktualizacja', f5d:'Aktualizuj ZPM i pakiety systemowe jedną komendą. Zawsze aktualne.',
-      f6:'Napisany w C++', f6d:'Rdzeń w C++ zapewnia mały narzut i szybki start. Wrapper shell dopełnia integrację.',
-      f7:'Uruchamianie pakietów', f7d:'Komenda <code style="color:var(--green)">zrun</code> pozwala uruchomić zainstalowany program bezpośrednio przez ZPM — bez szukania ścieżek.',
-      commands:'Komendy', everything:'Wszystko, czego potrzebujesz.', commands_desc:'Kliknij komendę, aby zobaczyć jej kod źródłowy z GitHuba.',
-      c_zinst:'Instaluje pakiet z wybranego źródła (APT / Flatpak / Snap)', c_zrm:'Usuwa zainstalowany pakiet', c_zsearch:'Wyszukuje pakiet po nazwie lub słowie kluczowym', c_zinfo:'Pokazuje szczegółowe informacje o pakiecie', c_zlist:'Wyświetla wszystkie zainstalowane pakiety', c_zupd:'Aktualizuje pakiety systemowe', c_zupgr:'Aktualizuje samego ZPM do najnowszej wersji', c_zclean:'Czyści cache pakietów', c_zhome:'Wyświetla pełną pomoc', c_zuninstall:'Odinstalowuje ZPM z systemu', c_zrun:'Uruchamia zainstalowany pakiet lub program przez ZPM',
-      view_gh:'Zobacz na GitHubie ↗', loading:'Ładowanie...', fetching:'Pobieranie ', help:'Możesz też użyć: <code style="color:var(--text-dim)">zpm --help</code> albo <code style="color:var(--text-dim)">ZPM --help</code>, aby otworzyć wspólny interfejs.',
-      management:'Zarządzanie ZPM', update_uninstall:'Aktualizacja.<br/>Odinstalowanie.', update_zpm:'Aktualizuj ZPM', uninstall_zpm:'Odinstaluj ZPM', install_path:'Ścieżka instalacji', license:'Licencja', installed:'Zainstalowane przez ZPM', footer:'Zielina Package Manager · Licencja MIT · '
-    }
-  };
-  let currentLang = localStorage.getItem('zpm_lang') || 'en';
-  function tr(k){return (I18N[currentLang] && I18N[currentLang][k]) || I18N.en[k] || k;}
-  function setLanguage(lang){currentLang = lang === 'pl' ? 'pl' : 'en'; localStorage.setItem('zpm_lang', currentLang); applyLanguage();}
-  function setTxt(sel,key){const el=document.querySelector(sel); if(el) el.textContent=tr(key);}
-  function setHtml(sel,key){const el=document.querySelector(sel); if(el) el.innerHTML=tr(key);}
-  function applyLanguage(){
-    document.documentElement.lang=currentLang;
-    document.querySelectorAll('.lang-btn').forEach(b=>b.classList.toggle('active', b.dataset.lang===currentLang));
-    setTxt('.nav-links li:nth-child(1) a','nav_home'); setTxt('.nav-links li:nth-child(2) a','nav_releases'); setTxt('.nav-links li:nth-child(3) a','nav_license');
-    setTxt('.hero-badge .release-month','month'); setTxt('.hero-subtitle-line','subtitle'); setHtml('.hero-desc','hero_desc'); setTxt('#copy-btn','copy'); setHtml('.install-note','requirements');
-    const tags=document.querySelectorAll('.hero-tags .tag'); if(tags[0])tags[0].textContent=tr('tag_open'); if(tags[1])tags[1].textContent=tr('tag_mit');
-    setTxt('section:nth-of-type(1) .section-label','why'); setHtml('section:nth-of-type(1) .section-title','one_manager'); setTxt('section:nth-of-type(1) .section-desc','why_desc');
-    const ft=document.querySelectorAll('.feature-title'), fd=document.querySelectorAll('.feature-desc'); ['f1','f2','f3','f4','f5','f6','f7'].forEach((k,i)=>{if(ft[i])ft[i].textContent=tr(k); if(fd[i])fd[i].innerHTML=tr(k+'d');});
-    setTxt('#commands .section-label','commands'); setTxt('#commands .section-title','everything'); setTxt('#commands .section-desc','commands_desc');
-    const cds=document.querySelectorAll('.cmd-desc'); ['c_zinst','c_zrm','c_zsearch','c_zinfo','c_zlist','c_zupd','c_zupgr','c_zclean','c_zhome','c_zuninstall','c_zrun'].forEach((k,i)=>{if(cds[i])cds[i].textContent=tr(k);});
-    setTxt('#cmd-drawer-gh','view_gh'); setTxt('.src-loading','loading'); setHtml('#commands > p:last-child','help');
-    const secs=document.querySelectorAll('section'); const mgmt=secs[2]; if(mgmt){mgmt.querySelector('.section-label').textContent=tr('management'); mgmt.querySelector('.section-title').innerHTML=tr('update_uninstall'); const labs=mgmt.querySelectorAll('.cmd-block-label'); if(labs[0])labs[0].textContent=tr('update_zpm'); if(labs[1])labs[1].textContent=tr('uninstall_zpm');}
-    const il=document.querySelectorAll('.info-label'); if(il[0])il[0].textContent=tr('install_path'); if(il[1])il[1].textContent=tr('license'); const iv=document.querySelectorAll('.info-value'); if(iv[2])iv[2].textContent=tr('installed');
-    const foot=document.querySelector('footer .footer-left p:not(.logo)'); if(foot) foot.innerHTML=tr('footer')+'<span class="dyn-version">'+(document.querySelector('footer .dyn-version')?.textContent || '...')+'</span>';
-  }
-
-  function copyInstall() {
-    const cmd = 'sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Ignacyyy/ZPM/main/INETINSTALL.sh)"';
-    navigator.clipboard.writeText(cmd).then(() => {
-      const btn = document.getElementById('copy-btn');
-      btn.textContent = tr('copied');
-      btn.classList.add('copied');
-      setTimeout(() => {
-        btn.textContent = tr('copy');
-        btn.classList.remove('copied');
-      }, 2000);
-    });
-  }
-
-  // ── VERSION from VERSION.txt ─────────────────────────────────────
-  async function loadVersion() {
-    try {
-      const res = await fetch('https://raw.githubusercontent.com/Ignacyyy/ZPM/main/VERSION.txt');
-      if (!res.ok) throw new Error();
-      const ver = (await res.text()).trim();
-      const label = 'v' + ver;
-      document.getElementById('nav-version').textContent = label;
-      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = label );
-      document.querySelectorAll('.dyn-version-tag').forEach(el => el.textContent = label );
-    } catch {
-      // fallback — leave placeholders as-is or fill static
-      const fallback = 'v1.6';
-      document.getElementById('nav-version').textContent = fallback;
-      document.querySelectorAll('.dyn-version').forEach(el => el.textContent = fallback );
-      document.querySelectorAll('.dyn-version-tag').forEach(el => el.textContent = fallback );
-    }
-  }
-  applyLanguage();
-  loadVersion();
-
-  function copyText(text, btn) {
-    navigator.clipboard.writeText(text).then(() => {
-      const original = btn.textContent;
-      btn.textContent = '✓';
-      btn.style.color = 'var(--green)';
-      setTimeout(() => {
-        btn.textContent = original;
-        btn.style.color = '';
-      }, 1800);
-    });
-  }
-
-  // ── INLINE CODE DRAWER ───────────────────────────────────────────
-  const RAW_BASE = 'https://raw.githubusercontent.com/Ignacyyy/ZPM/main/src/';
-  const GH_BASE  = 'https://github.com/Ignacyyy/ZPM/blob/main/src/';
-
-  let activeCard = null;
-  let fileCache  = {};
-
-  async function openCmdCode(card, filename) {
-    const drawer   = document.getElementById('cmd-drawer');
-    const nameEl   = document.getElementById('cmd-drawer-name');
-    const ghEl     = document.getElementById('cmd-drawer-gh');
-    const codeEl   = document.getElementById('cmd-drawer-code');
-
-    // toggle off if same card clicked again
-    if (activeCard === card && drawer.classList.contains('open')) {
-      closeCmdCode();
-      return;
-    }
-
-    // deactivate previous
-    if (activeCard) activeCard.classList.remove('active');
-    activeCard = card;
-    card.classList.add('active');
-
-    nameEl.textContent = filename;
-    ghEl.href = GH_BASE + filename;
-
-    // move drawer after the card's row in the grid
-    const grid = document.getElementById('commands-grid');
-    grid.after(drawer);
-
-    drawer.classList.add('open');
-    codeEl.innerHTML = '<div class="src-loading">' + tr('fetching') + filename + '...</div>';
-
-    if (fileCache[filename]) {
-      renderCode(codeEl, fileCache[filename], filename);
-      drawer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      return;
-    }
-
-    try {
-      const res  = await fetch(RAW_BASE + filename);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const text = await res.text();
-      fileCache[filename] = text;
-      renderCode(codeEl, text, filename);
-    } catch(e) {
-      codeEl.innerHTML = `<div class="src-error">
-        File <b>${filename}</b> not found in the repo.<br>
-        <a href="${GH_BASE + filename}" target="_blank">${tr('view_gh')}</a>
-      </div>`;
-    }
-
-    drawer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }
-
-  function closeCmdCode() {
-    const drawer = document.getElementById('cmd-drawer');
-    drawer.classList.remove('open');
-    if (activeCard) { activeCard.classList.remove('active'); activeCard = null; }
-  }
-
-  function renderCode(el, raw, name) {
-    const ext  = name.split('.').pop();
-    const html = ext === 'cpp' || ext === 'h' ? highlightCpp(raw) : escHtml(raw);
-    el.innerHTML = `<pre>${html}</pre>`;
-  }
-
-  function escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
-  function highlightCpp(code) {
-    return code.split('\n').map(line => {
-      let l = escHtml(line);
-      const ciIdx = l.indexOf('//');
-      if (ciIdx !== -1) {
-        return applyInline(l.slice(0, ciIdx)) + `<span class="cmt">${l.slice(ciIdx)}</span>`;
+    const translations = {
+      en: {
+        nav_home: "Home",
+        nav_distros: "Distros",
+        nav_releases: "Releases",
+        nav_license: "License",
+        hero_kicker: "Linux package control",
+        hero_title: "Zielina <span>Package</span> Manager",
+        hero_lede: "One fast CLI across apt, dnf and zypper. Search, install, run, update and clean packages without memorising each distro tool.",
+        cta_install: "Install ZPM",
+        cta_commands: "Explore commands",
+        meta_apt: "Debian family",
+        meta_dnf: "Fedora family",
+        meta_zypper: "openSUSE family",
+        why_label: "Why ZPM",
+        why_title: "Less package chaos. More shipping.",
+        why_desc: "ZPM keeps the Linux package toolbox powerful, but makes the everyday workflow feel consistent and fast.",
+        feature_one_title: "One interface",
+        feature_one_desc: "Use one <code>z*</code> command family instead of switching syntax between apt, dnf and zypper.",
+        feature_search_title: "Fast search",
+        feature_search_desc: "<code>zsearch</code> checks package options without forcing you to know the provider first.",
+        feature_safe_title: "Open source",
+        feature_safe_desc: "MIT licensed and transparent, with source access directly from the command cards below.",
+        feature_clean_title: "Cache control",
+        feature_clean_desc: "Clean package leftovers with <code>zclean</code> and keep the system tidy.",
+        quick_title: "Built for daily terminal work.",
+        quick_desc: "The UI stays close to what ZPM is: a focused command-line tool for people who want speed without mental overhead.",
+        stat_commands: "core commands for install, remove, search, info, update, clean and run",
+        stat_cpp: "native core with shell integration for Linux systems",
+        stat_license: "license for use, modification and redistribution",
+        stat_version: "current version loaded from VERSION.txt when available",
+        commands_label: "Command deck",
+        commands_title: "Everything important, one click away.",
+        commands_desc: "Search commands, filter by task and open the source drawer without leaving the page.",
+        search_placeholder: "Search commands...",
+        view_github: "View GitHub",
+        workflow_label: "Workflow builder",
+        workflow_title: "Preview the flow before you paste.",
+        workflow_desc: "Type a package name and ZPM builds a clean search, install and run sequence.",
+        builder_title: "Package workflow",
+        package_label: "Package name",
+        source_label: "Preferred backend",
+        source_apt: "APT is the natural default for Debian-family systems.",
+        source_dnf: "DNF is the backend for Fedora-family systems.",
+        source_zypper: "Zypper is the backend for openSUSE-family systems.",
+        flow_search_title: "Search once",
+        flow_search_desc: "Find candidates before choosing the package source.",
+        flow_install_title: "Install cleanly",
+        flow_install_desc: "Run the same installer entry point and let ZPM handle the provider flow.",
+        flow_run_title: "Run from ZPM",
+        flow_run_desc: "Launch installed apps without hunting for paths or launchers.",
+        flow_clean_title: "Maintain later",
+        flow_clean_desc: "Use <code>zupd</code>, <code>zupgr</code> and <code>zclean</code> for the usual upkeep.",
+        info_label: "Technical details",
+        info_title: "Small surface. Useful guts.",
+        info_desc: "Core facts in one place for installation, repository access and system expectations.",
+        info_systems: "Supported systems",
+        info_systems_value: "Growing distro list",
+        info_version: "Version",
+        info_path: "Install path",
+        info_command_path: "Command location",
+        info_license: "License",
+        info_language: "Language",
+        info_deps: "Dependencies",
+        info_deps_value: "Installed with ZPM",
+        info_repo: "Repository",
+        copied: "Copied",
+        copy_install_tip: "Copy install command",
+        copy_example_tip: "Copy example",
+        copy_workflow_tip: "Copy workflow",
+        close_tip: "Close",
+        all_filter: "All"
+      },
+      pl: {
+        nav_home: "Start",
+        nav_distros: "Dystrybucje",
+        nav_releases: "Wydania",
+        nav_license: "Licencja",
+        hero_kicker: "Kontrola pakietow Linux",
+        hero_title: "Zielina <span>Package</span> Manager",
+        hero_lede: "Jedno szybkie CLI dla apt, dnf i zypper. Szukaj, instaluj, uruchamiaj, aktualizuj i czysc pakiety bez pamietania narzedzia kazdej dystrybucji.",
+        cta_install: "Zainstaluj ZPM",
+        cta_commands: "Zobacz komendy",
+        meta_apt: "Rodzina Debiana",
+        meta_dnf: "Rodzina Fedory",
+        meta_zypper: "Rodzina openSUSE",
+        why_label: "Dlaczego ZPM",
+        why_title: "Mniej chaosu. Wieksze tempo.",
+        why_desc: "ZPM zostawia moc linuksowych narzedzi, ale sprawia, ze codzienna praca jest spojna i szybka.",
+        feature_one_title: "Jeden interfejs",
+        feature_one_desc: "Uzywaj jednej rodziny komend <code>z*</code> zamiast przelaczac skladnie miedzy apt, dnf i zypper.",
+        feature_search_title: "Szybkie szukanie",
+        feature_search_desc: "<code>zsearch</code> sprawdza opcje pakietu bez wymagania, zebys najpierw znal jego zrodlo.",
+        feature_safe_title: "Open source",
+        feature_safe_desc: "Licencja MIT i pelna przejrzystosc, z dostepem do kodu bezposrednio z kart komend.",
+        feature_clean_title: "Kontrola cache",
+        feature_clean_desc: "Czysc pozostalosci po pakietach przez <code>zclean</code> i trzymaj system w porzadku.",
+        quick_title: "Do codziennej pracy w terminalu.",
+        quick_desc: "Interfejs trzyma sie tego, czym jest ZPM: konkretnym narzedziem CLI dla osob, ktore chca szybkosci bez zbednego wysilku.",
+        stat_commands: "glownych komend do instalacji, usuwania, szukania, info, aktualizacji, czyszczenia i uruchamiania",
+        stat_cpp: "natywny rdzen z integracja shell dla systemow Linux",
+        stat_license: "licencja pozwalajaca uzywac, modyfikowac i rozpowszechniac",
+        stat_version: "wersja pobierana z VERSION.txt, gdy jest dostepna",
+        commands_label: "Talia komend",
+        commands_title: "Wszystko wazne pod reka.",
+        commands_desc: "Szukaj komend, filtruj po zadaniu i otwieraj kod zrodlowy bez wychodzenia ze strony.",
+        search_placeholder: "Szukaj komend...",
+        view_github: "Zobacz GitHub",
+        workflow_label: "Generator workflow",
+        workflow_title: "Podejrzyj flow zanim wkleisz.",
+        workflow_desc: "Wpisz nazwe pakietu, a ZPM zbuduje czytelna sekwencje szukania, instalacji i uruchomienia.",
+        builder_title: "Workflow pakietu",
+        package_label: "Nazwa pakietu",
+        source_label: "Preferowany backend",
+        source_apt: "APT to naturalny wybor dla dystrybucji z rodziny Debiana.",
+        source_dnf: "DNF to backend dla dystrybucji z rodziny Fedory.",
+        source_zypper: "Zypper to backend dla dystrybucji z rodziny openSUSE.",
+        flow_search_title: "Najpierw szukaj",
+        flow_search_desc: "Znajdz kandydatow przed wyborem zrodla pakietu.",
+        flow_install_title: "Instaluj czysto",
+        flow_install_desc: "Uzyj tego samego punktu wejscia i pozwol ZPM poprowadzic wybor providera.",
+        flow_run_title: "Uruchamiaj z ZPM",
+        flow_run_desc: "Startuj zainstalowane aplikacje bez szukania sciezek i launcherow.",
+        flow_clean_title: "Utrzymuj pozniej",
+        flow_clean_desc: "Uzywaj <code>zupd</code>, <code>zupgr</code> i <code>zclean</code> do zwyklej konserwacji.",
+        info_label: "Dane techniczne",
+        info_title: "Prosty wierzch. Konkretne wnetrze.",
+        info_desc: "Najwazniejsze fakty o instalacji, repozytorium i wymaganiach systemowych.",
+        info_systems: "Wspierane systemy",
+        info_systems_value: "Rozwijana lista dystrybucji",
+        info_version: "Wersja",
+        info_path: "Sciezka instalacji",
+        info_command_path: "Lokalizacja komend",
+        info_license: "Licencja",
+        info_language: "Jezyk",
+        info_deps: "Zaleznosci",
+        info_deps_value: "Instalowane z ZPM",
+        info_repo: "Repozytorium",
+        copied: "Skopiowano",
+        copy_install_tip: "Kopiuj komende instalacji",
+        copy_example_tip: "Kopiuj przyklad",
+        copy_workflow_tip: "Kopiuj workflow",
+        close_tip: "Zamknij",
+        all_filter: "Wszystkie"
       }
-      return applyInline(l);
-    }).join('\n');
-  }
+    };
 
-  function applyInline(l) {
-    l = l.replace(/^(\s*)(#\w+)/g, '$1<span class="pp">$2</span>');
-    l = l.replace(/"([^"]*)"/g, '<span class="str">"$1"</span>');
-    const kws = /\b(int|void|bool|char|auto|const|return|if|else|while|for|do|switch|case|break|continue|struct|class|namespace|using|include|new|delete|nullptr|true|false|string|vector|map|cout|cin|endl|std|uint8_t|uint16_t|uint32_t|size_t)\b/g;
-    l = l.replace(kws, '<span class="kw">$1</span>');
-    l = l.replace(/\b([a-zA-Z_]\w*)\s*(?=\()/g, '<span class="fn">$1</span>');
-    l = l.replace(/\b(\d+)\b/g, '<span class="num">$1</span>');
-    return l;
-  }
+    const commands = [
+      { name: "zinst", file: "zinst.cpp", group: "install", example: "sudo zinst firefox", desc: { en: "Install a package through the distro backend.", pl: "Instaluje pakiet przez backend dystrybucji." } },
+      { name: "zrm", file: "zrm.cpp", group: "remove", example: "sudo zrm firefox", desc: { en: "Remove an installed package.", pl: "Usuwa zainstalowany pakiet." } },
+      { name: "zsearch", file: "zsearch.cpp", group: "search", example: "zsearch firefox", desc: { en: "Search package candidates by name or keyword.", pl: "Szuka pakietow po nazwie albo slowie kluczowym." } },
+      { name: "zinfo", file: "zinfo.cpp", group: "search", example: "zinfo firefox", desc: { en: "Show detailed package information.", pl: "Pokazuje szczegolowe informacje o pakiecie." } },
+      { name: "zlist", file: "zlist.cpp", group: "system", example: "zlist", desc: { en: "List installed packages.", pl: "Wyswietla zainstalowane pakiety." } },
+      { name: "zupd", file: "zupd.cpp", group: "update", example: "sudo zupd", desc: { en: "Update system package indexes.", pl: "Aktualizuje indeksy pakietow systemowych." } },
+      { name: "zupgr", file: "zupgr.cpp", group: "update", example: "sudo zupgr", desc: { en: "Upgrade ZPM to the latest available version.", pl: "Aktualizuje ZPM do najnowszej dostepnej wersji." } },
+      { name: "zclean", file: "zclean.cpp", group: "system", example: "sudo zclean", desc: { en: "Clean package cache and leftovers.", pl: "Czysci cache i pozostalosci po pakietach." } },
+      { name: "zhome", file: "zhome.cpp", group: "help", example: "zhome", desc: { en: "Open the full help guide.", pl: "Otwiera pelny przewodnik pomocy." } },
+      { name: "zuninstall", file: "zuninstall.cpp", group: "remove", example: "sudo zuninstall", desc: { en: "Uninstall ZPM from the system.", pl: "Odinstalowuje ZPM z systemu." } },
+      { name: "zrun", file: "zrun.cpp", group: "run", example: "zrun firefox", desc: { en: "Launch an installed program through ZPM.", pl: "Uruchamia zainstalowany program przez ZPM." } }
+    ];
 
+    const state = {
+      lang: localStorage.getItem("zpm_lang") || "en",
+      filter: "all",
+      search: "",
+      activeCommand: null,
+      source: "apt",
+      cache: new Map()
+    };
 
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach(e => {
-      if (e.isIntersecting) {
-        e.target.style.opacity = '1';
-        e.target.style.transform = 'translateY(0)';
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+    const t = (key) => translations[state.lang][key] || translations.en[key] || key;
+
+    function applyLanguage() {
+      document.documentElement.lang = state.lang;
+      $$("[data-i18n]").forEach((el) => {
+        el.textContent = t(el.dataset.i18n);
+      });
+      $$("[data-i18n-html]").forEach((el) => {
+        el.innerHTML = t(el.dataset.i18nHtml);
+      });
+      $$("[data-i18n-placeholder]").forEach((el) => {
+        el.placeholder = t(el.dataset.i18nPlaceholder);
+      });
+      $$(".lang-btn").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.lang === state.lang);
+      });
+      const installCopy = $('[data-copy="#install-command"]');
+      if (installCopy) installCopy.dataset.tip = t("copy_install_tip");
+      const drawerCopy = $("#drawer-copy");
+      if (drawerCopy) drawerCopy.dataset.tip = t("copy_example_tip");
+      const workflowCopy = $("#workflow-copy");
+      if (workflowCopy) workflowCopy.dataset.tip = t("copy_workflow_tip");
+      const close = $("#drawer-close");
+      if (close) close.dataset.tip = t("close_tip");
+      renderFilters();
+      renderCommands();
+      updateWorkflow();
+    }
+
+    function renderFilters() {
+      const filters = ["all", ...new Set(commands.map((cmd) => cmd.group))];
+      $("#command-filters").innerHTML = filters.map((filter) => {
+        const label = filter === "all" ? t("all_filter") : filter;
+        return `<button class="filter-btn ${state.filter === filter ? "active" : ""}" type="button" data-filter="${filter}">${esc(label)}</button>`;
+      }).join("");
+    }
+
+    function renderCommands() {
+      const grid = $("#commands-grid");
+      const query = state.search.trim().toLowerCase();
+      const filtered = commands.filter((cmd) => {
+        const haystack = `${cmd.name} ${cmd.group} ${cmd.example} ${cmd.desc[state.lang] || cmd.desc.en}`.toLowerCase();
+        const matchesSearch = !query || haystack.includes(query);
+        const matchesFilter = state.filter === "all" || cmd.group === state.filter;
+        return matchesSearch && matchesFilter;
+      });
+
+      if (!filtered.length) {
+        grid.innerHTML = `<div class="empty-state">${state.lang === "pl" ? "Brak pasujacych komend." : "No matching commands."}</div>`;
+        return;
+      }
+
+      grid.innerHTML = filtered.map((cmd) => `
+        <button class="command-card reveal visible ${state.activeCommand === cmd.name ? "active" : ""}" type="button" data-command="${cmd.name}">
+          <span class="command-top">
+            <span class="command-name">${esc(cmd.name)}</span>
+            <span class="command-group">${esc(cmd.group)}</span>
+          </span>
+          <span class="command-desc">${esc(cmd.desc[state.lang] || cmd.desc.en)}</span>
+          <code class="command-example">$ ${esc(cmd.example)}</code>
+        </button>
+      `).join("");
+    }
+
+    function selectCommand(name) {
+      const cmd = commands.find((item) => item.name === name);
+      if (!cmd) return;
+      state.activeCommand = cmd.name;
+      renderCommands();
+      openDrawer(cmd);
+    }
+
+    async function openDrawer(cmd) {
+      const drawer = $("#code-drawer");
+      const codePane = $("#code-pane");
+      $("#drawer-command").textContent = cmd.name;
+      $("#drawer-file").textContent = cmd.file;
+      $("#drawer-gh").href = GH_BASE + cmd.file;
+      $("#drawer-copy").dataset.example = cmd.example;
+      drawer.classList.add("open");
+      codePane.innerHTML = `<div class="code-loading">${state.lang === "pl" ? "Pobieranie" : "Fetching"} ${esc(cmd.file)}...</div>`;
+
+      if (state.cache.has(cmd.file)) {
+        renderCode(state.cache.get(cmd.file), cmd.file);
+        drawer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        return;
+      }
+
+      try {
+        const res = await fetch(RAW_BASE + cmd.file);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const raw = await res.text();
+        state.cache.set(cmd.file, raw);
+        renderCode(raw, cmd.file);
+      } catch (error) {
+        codePane.innerHTML = `<div class="code-error">${state.lang === "pl" ? "Nie udalo sie pobrac pliku" : "Could not load source file"} <strong>${esc(cmd.file)}</strong>.<br><a href="${GH_BASE + cmd.file}" target="_blank" rel="noreferrer">${esc(t("view_github"))}</a></div>`;
+      }
+
+      drawer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    function renderCode(raw, filename) {
+      const codePane = $("#code-pane");
+      const html = filename.endsWith(".cpp") || filename.endsWith(".h") ? highlightCpp(raw) : esc(raw);
+      codePane.innerHTML = `<pre>${html}</pre>`;
+    }
+
+    function closeDrawer() {
+      state.activeCommand = null;
+      $("#code-drawer").classList.remove("open");
+      renderCommands();
+    }
+
+    function updateWorkflow() {
+      const pkg = ($("#package-name").value || "firefox").trim().replace(/\s+/g, "-");
+      const note = {
+        apt: t("source_apt"),
+        dnf: t("source_dnf"),
+        zypper: t("source_zypper")
+      };
+      const lines = [
+        `zsearch ${pkg}`,
+        `sudo zinst ${pkg}`,
+        `zrun ${pkg}`
+      ];
+      $("#workflow-output").innerHTML = lines.map((line) => `<code>$ ${esc(line)}</code>`).join("<br>");
+      $("#source-note").textContent = note[state.source];
+      $$(".source-tab").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.source === state.source);
+      });
+    }
+
+    async function copyToClipboard(text, btn) {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const area = document.createElement("textarea");
+          area.value = text;
+          area.setAttribute("readonly", "");
+          area.style.position = "fixed";
+          area.style.left = "-9999px";
+          document.body.appendChild(area);
+          area.select();
+          document.execCommand("copy");
+          area.remove();
+        }
+        if (btn) markCopied(btn);
+      } catch (error) {
+        if (btn) {
+          btn.dataset.tip = state.lang === "pl" ? "Kopiowanie niedostepne" : "Copy unavailable";
+        }
+      }
+    }
+
+    function markCopied(btn) {
+      const original = btn.innerHTML;
+      const originalTip = btn.dataset.tip;
+      btn.innerHTML = checkIcon;
+      btn.classList.add("copied");
+      btn.dataset.tip = t("copied");
+      window.setTimeout(() => {
+        btn.innerHTML = original || copyIcon;
+        btn.classList.remove("copied");
+        if (originalTip === undefined) {
+          btn.removeAttribute("data-tip");
+        } else {
+          btn.dataset.tip = originalTip;
+        }
+      }, 1500);
+    }
+
+    async function loadVersion() {
+      let version = "v2.0.2";
+      $$("[data-version]").forEach((el) => {
+        el.textContent = version;
+      });
+      try {
+        const res = await fetch(VERSION_URL, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = (await res.text()).trim();
+        if (text) version = text.startsWith("v") ? text : `v${text}`;
+      } catch (error) {}
+      $$("[data-version]").forEach((el) => {
+        el.textContent = version;
+      });
+    }
+
+    function highlightCpp(code) {
+      return code.split("\n").map((line) => {
+        let safe = esc(line);
+        const commentIndex = safe.indexOf("//");
+        if (commentIndex !== -1) {
+          return highlightInline(safe.slice(0, commentIndex)) + `<span class="cmt">${safe.slice(commentIndex)}</span>`;
+        }
+        return highlightInline(safe);
+      }).join("\n");
+    }
+
+    function highlightInline(line) {
+      let out = line.replace(/^(\s*)(#\w+)/g, '$1<span class="pp">$2</span>');
+      out = out.replace(/"([^"]*)"/g, '<span class="str">"$1"</span>');
+      out = out.replace(/\b(int|void|bool|char|auto|const|return|if|else|while|for|do|switch|case|break|continue|struct|class|namespace|using|include|new|delete|nullptr|true|false|string|vector|map|cout|cin|endl|std|uint8_t|uint16_t|uint32_t|size_t)\b/g, '<span class="kw">$1</span>');
+      out = out.replace(/\b([a-zA-Z_]\w*)\s*(?=\()/g, '<span class="fn">$1</span>');
+      out = out.replace(/\b(\d+)\b/g, '<span class="num">$1</span>');
+      return out;
+    }
+
+    function esc(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    document.addEventListener("click", (event) => {
+      const langBtn = event.target.closest(".lang-btn");
+      if (langBtn) {
+        state.lang = langBtn.dataset.lang;
+        localStorage.setItem("zpm_lang", state.lang);
+        applyLanguage();
+        return;
+      }
+
+      const filterBtn = event.target.closest(".filter-btn");
+      if (filterBtn) {
+        state.filter = filterBtn.dataset.filter;
+        renderFilters();
+        renderCommands();
+        return;
+      }
+
+      const commandCard = event.target.closest(".command-card");
+      if (commandCard) {
+        selectCommand(commandCard.dataset.command);
+        return;
+      }
+
+      const copyTarget = event.target.closest("[data-copy]");
+      if (copyTarget) {
+        const target = $(copyTarget.dataset.copy);
+        if (target) copyToClipboard(target.textContent.trim(), copyTarget);
       }
     });
-  }, { threshold: 0.1 });
 
-  document.querySelectorAll('.cmd-card, .feature-card, .info-item, .cmd-block').forEach(el => {
-    el.style.opacity = '0';
-    el.style.transform = 'translateY(16px)';
-    el.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
-    observer.observe(el);
-  });
-</script>
+    $("#command-search").addEventListener("input", (event) => {
+      state.search = event.target.value;
+      renderCommands();
+    });
 
+    $("#drawer-close").addEventListener("click", closeDrawer);
+    $("#drawer-copy").addEventListener("click", () => {
+      const btn = $("#drawer-copy");
+      copyToClipboard(btn.dataset.example || "", btn);
+    });
+
+    $("#package-name").addEventListener("input", updateWorkflow);
+    $("#source-tabs").addEventListener("click", (event) => {
+      const btn = event.target.closest(".source-tab");
+      if (!btn) return;
+      state.source = btn.dataset.source;
+      updateWorkflow();
+    });
+    $("#workflow-copy").addEventListener("click", () => {
+      const pkg = ($("#package-name").value || "firefox").trim().replace(/\s+/g, "-");
+      const text = [`zsearch ${pkg}`, `sudo zinst ${pkg}`, `zrun ${pkg}`].join("\n");
+      copyToClipboard(text, $("#workflow-copy"));
+    });
+
+    const revealObserver = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("visible");
+          revealObserver.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.12 });
+
+    $$(".reveal").forEach((el) => revealObserver.observe(el));
+
+    applyLanguage();
+    loadVersion();
+  </script>
 </body>
 </html>
