@@ -263,7 +263,7 @@ void showFlatpakPackageInfo(const std::string& pkg) {
     pclose(pipe);
     if (!found || appId.empty()) return;
 
-    FILE* p = popen(("flatpak list --columns=application 2>/dev/null").c_str(), "r");
+   FILE* p = popen("flatpak list --columns=application 2>/dev/null", "r");
     bool installed = false;
     while (fgets(buffer, sizeof(buffer), p)) {
         std::string s = trim(std::string(buffer));
