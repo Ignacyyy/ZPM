@@ -124,7 +124,6 @@ if [ "$dep" = "y" ]; then
                 || die "apt-get update failed. Check your internet connection."
             info "Installing dependencies..."
             
-            # W razie wtopy próbuje odkręcić sytuację przez dpkg --configure -a
             apt-get install -y "${DEPS[@]}" >> "$LOG" 2>&1 || {
                 warn "APT installation interrupted. Trying to recover..."
                 dpkg --configure -a >> "$LOG" 2>&1
@@ -135,14 +134,13 @@ if [ "$dep" = "y" ]; then
             
         zypper)
             info "Refreshing repositories..."
-            zypper refresh >> "$LOG" 2>&1 \
+            zypper --non-interactive refresh >> "$LOG" 2>&1 \
                 || die "zypper refresh failed."
             info "Installing dependencies..."
             
-            # W razie błędu odpala automatyczną weryfikację i naprawę systemu
-            zypper install -y "${DEPS[@]}" >> "$LOG" 2>&1 || {
+            zypper --non-interactive install -y "${DEPS[@]}" >> "$LOG" 2>&1 || {
                 warn "Zypper transaction failed. Running verification/repair..."
-                zypper verify -y >> "$LOG" 2>&1
+                zypper --non-interactive verify -y >> "$LOG" 2>&1
                 die "Failed to install dependencies on Zypper."
             }
             ;;
@@ -150,7 +148,6 @@ if [ "$dep" = "y" ]; then
         dnf)
             info "Installing dependencies..."
             
-            # W razie problemów czyści cache i synchronizuje uszkodzone transakcje
             dnf install -y "${DEPS[@]}" >> "$LOG" 2>&1 || {
                 warn "DNF transaction broken. Attempting sync and cleanup..."
                 dnf clean all >> "$LOG" 2>&1
