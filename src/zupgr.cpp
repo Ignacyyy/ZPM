@@ -123,17 +123,17 @@ static pair<string,string> fetchGitHubVersions() {
 
 // ─── parsowanie wersji ────────────────────────────────────────────────────────
 static vector<int> parseVersion(string ver) {
-    size_t pos = ver.find("-pre");
-    if (pos != string::npos) {
-        string suffix = ver.substr(pos + 4);
-        ver.replace(pos, 4 + suffix.size(), suffix.empty() ? ".0" : "." + suffix);
-    }
+    size_t dash = ver.find('-');
+    if (dash != string::npos)
+        ver = ver.substr(0, dash);
+
     vector<int> seg;
     stringstream ss(ver);
     string s;
     while (getline(ss, s, '.')) {
         try { seg.push_back(stoi(s)); } catch (...) { seg.push_back(0); }
     }
+    while (seg.size() < 3) seg.push_back(0);
     return seg;
 }
 
@@ -285,7 +285,7 @@ int main(int argc, char* argv[]) {
         // 1. Jeśli jesteś na prerelease, tylko informujemy i wychodzimy (lub lecimy dalej)
         if (localIsPrerelease && !force) {
             cout << YELLOW << "Currently on prerelease (" << local_pre << "), stable " << repo_v << " available.\n" << RESET;
-            cout << RED << << "To update ZPM to normal release use -f or --force" << RESET << endl;
+            cout << RED << "To update ZPM to normal release use -f or --force" << RESET << endl;
             return 0; // Albo break/return w zależności od reszty funkcji, żeby nie pytał o update
         }
 
