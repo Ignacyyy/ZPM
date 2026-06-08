@@ -12,7 +12,14 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="../assets/site.css" />
+  <script>
+    (function () {
+      var path = location.pathname.replace(/\\/g, "/");
+      var prefix = /\/distros\/?$/.test(path) ? "./" : "../";
+      document.write('<link rel="stylesheet" href="' + prefix + 'assets/site.css">');
+      window.__ZPM_ASSET_PREFIX = prefix;
+    })();
+  </script>
 </head>
 <body>
   <nav class="site-nav" aria-label="Primary navigation">
@@ -130,7 +137,9 @@
     </div>
   </footer>
 
-  <script src="../assets/site.js"></script>
+  <script>
+    document.write('<script src="' + (window.__ZPM_ASSET_PREFIX || "../") + 'assets/site.js"></' + 'script>');
+  </script>
   <script>
     const REPO = "Zielina-Konrad-productions/ZPM";
     const translations = {
