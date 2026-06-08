@@ -61,7 +61,7 @@ sudo zuninstall
 
 | Property          | Value                                        |
 |-------------------|----------------------------------------------|
-| Version           | 2.1.0                                        |
+| Version           | 2.1.1                                        |
 | Supported distros | Debian, Fedora, openSUSE, (zypper, apt, dnf) |
 | Installation path | `/opt/ZPM`                                   |
 | Commands location | `/usr/bin/z*` (symbolic links)               |
