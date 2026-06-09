@@ -4,6 +4,7 @@
 #include <csignal>
 #include <cctype>
 #include <cstring>
+#include <limits>
 #include <set>
 #include <sys/file.h>
 #include <sys/wait.h>
@@ -38,6 +39,11 @@ struct Options {
 struct CommandResult {
     int exitCode = 127;
     std::string output;
+};
+
+struct ReportAccess {
+    bool valid = false;
+    gid_t gid = 0;
 };
 
 struct UpdateStatus {
@@ -110,6 +116,60 @@ private:
     int fd_ = -1;
 };
 
+bool isSafeOwnedRegularFile(int fd) {
+    struct stat st {};
+    if (fstat(fd, &st) != 0) {
+        return false;
+    }
+
+    return S_ISREG(st.st_mode) &&
+           st.st_nlink == 1 &&
+           st.st_uid == geteuid();
+}
+
+bool parseGid(const char* text, gid_t& gid) {
+    if (text == nullptr || *text == '\0') {
+        return false;
+    }
+
+    const std::string value(text);
+    if (!std::all_of(value.begin(), value.end(), [](unsigned char c) {
+            return std::isdigit(c);
+        })) {
+        return false;
+    }
+
+    char* end = nullptr;
+    errno = 0;
+    const unsigned long parsed = std::strtoul(value.c_str(), &end, 10);
+    if (errno != 0 || end == value.c_str() || *end != '\0') {
+        return false;
+    }
+
+    if (parsed > static_cast<unsigned long>(std::numeric_limits<gid_t>::max())) {
+        return false;
+    }
+
+    gid = static_cast<gid_t>(parsed);
+    return true;
+}
+
+ReportAccess reportAccess() {
+    ReportAccess access;
+
+    if (geteuid() != 0) {
+        return access;
+    }
+
+    gid_t sudoGid = 0;
+    if (parseGid(getenv("SUDO_GID"), sudoGid)) {
+        access.valid = true;
+        access.gid = sudoGid;
+    }
+
+    return access;
+}
+
 class FileLock {
 public:
     bool acquire() {
@@ -124,8 +184,7 @@ public:
                 continue;
             }
 
-            struct stat st {};
-            if (fstat(fd.get(), &st) != 0 || !S_ISREG(st.st_mode)) {
+            if (!isSafeOwnedRegularFile(fd.get())) {
                 openFailed = true;
                 continue;
             }
@@ -260,19 +319,31 @@ bool writeAll(int fd, const std::string& text) {
 
 FileDescriptor openLogFile(const char* path, LogMode mode) {
     const int flags = O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW |
-                      (mode == LogMode::Truncate ? O_TRUNC : O_APPEND);
+                      (mode == LogMode::Append ? O_APPEND : 0);
 
     FileDescriptor fd(open(path, flags, 0600));
     if (!fd.valid()) {
         return {};
     }
 
-    struct stat st {};
-    if (fstat(fd.get(), &st) != 0 || !S_ISREG(st.st_mode)) {
+    if (!isSafeOwnedRegularFile(fd.get())) {
         return {};
     }
 
-    fchmod(fd.get(), 0600);
+    if (mode == LogMode::Truncate && ftruncate(fd.get(), 0) != 0) {
+        return {};
+    }
+
+    const ReportAccess access = reportAccess();
+    if (access.valid && fchown(fd.get(), geteuid(), access.gid) != 0) {
+        return {};
+    }
+
+    const mode_t modeBits = access.valid ? 0640 : 0600;
+    if (fchmod(fd.get(), modeBits) != 0) {
+        return {};
+    }
+
     return fd;
 }
 
@@ -873,13 +944,23 @@ void checkUniversalManagers(UpdateStatus& status) {
     }
 }
 
-bool cleanupUniversal(const UpdateStatus& status) {
-    bool ok = true;
+void logOptionalCleanupFailure(const std::string& action) {
+    writeLogLine(kLogFile, "optional cleanup: " + action + " failed - skipped");
+}
 
+bool cleanupUniversal(const UpdateStatus& status) {
     if (status.hasFlatpak) {
-        ok = runShellOk("flatpak uninstall --unused -y", "----cleaning_flatpak----") && ok;
+        if (!runShellOk("flatpak uninstall --unused -y", "----cleaning_flatpak----")) {
+            if (g_interrupted) {
+                return false;
+            }
+            logOptionalCleanupFailure("flatpak uninstall --unused");
+        }
+
         writeLogHeader("----cleaning_flatpak_cache----");
-        ok = removeEntriesWithPrefix("/var/tmp", "flatpak-cache-") && ok;
+        if (!removeEntriesWithPrefix("/var/tmp", "flatpak-cache-")) {
+            logOptionalCleanupFailure("flatpak cache cleanup");
+        }
     }
 
     if (status.hasSnap) {
@@ -891,20 +972,30 @@ bool cleanupUniversal(const UpdateStatus& status) {
                                                    true);
 
         if (list.exitCode != 0) {
-            ok = false;
-        }
-
-        for (const auto& [name, revision] : parseDisabledSnapRevisions(list.output)) {
-            const std::string command = "snap remove " + shellQuote(name) +
-                                        " --revision=" + shellQuote(revision);
-            ok = runShellOk(command, "----removing_snap_revision_" + name + "_" + revision + "----") && ok;
+            if (g_interrupted) {
+                return false;
+            }
+            logOptionalCleanupFailure("snap list --all");
+        } else {
+            for (const auto& [name, revision] : parseDisabledSnapRevisions(list.output)) {
+                const std::string command = "snap remove " + shellQuote(name) +
+                                            " --revision=" + shellQuote(revision);
+                if (!runShellOk(command, "----removing_snap_revision_" + name + "_" + revision + "----")) {
+                    if (g_interrupted) {
+                        return false;
+                    }
+                    logOptionalCleanupFailure("snap remove " + name + " revision " + revision);
+                }
+            }
         }
 
         writeLogHeader("----cleaning_snap_cache----");
-        ok = removeDirectoryEntries("/var/lib/snapd/cache") && ok;
+        if (!removeDirectoryEntries("/var/lib/snapd/cache")) {
+            logOptionalCleanupFailure("snap cache cleanup");
+        }
     }
 
-    return ok;
+    return !g_interrupted;
 }
 
 bool finishAndReport(const Options& options, bool ok, int total, int step) {
