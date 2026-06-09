@@ -1,4 +1,7 @@
 #include "main.h"
+#include <algorithm> // Wymagane dla std::remove i std::max
+#include <sstream>
+#include <vector>
 
 using namespace std;
 using zpm_update::exec;
@@ -17,8 +20,6 @@ static const char* LOG_APPEND = " >> /tmp/zupgr.log 2>&1";
 static string L(const string& cmd) { return cmd + LOG_APPEND; }
 
 // ─── wersja zainstalowana ─────────────────────────────────────────────────────
-// Zwraca {stable, pre} — jeśli VERSION.txt zawiera "-pre", traktuje jako prerelease
-// i wypełnia oba pola (stable = "unknown", pre = wersja z pliku)
 pair<string,string> ZPM_localVersions() {
     string ver_file, prever_file;
 
@@ -37,24 +38,20 @@ pair<string,string> ZPM_localVersions() {
     string local_pre = "unknown";
 
     if (!ver_file.empty()) {
-        // Jeśli VERSION.txt zawiera "-pre" → to jest prerelease install
         if (ver_file.find("-pre") != string::npos) {
             local_pre = ver_file;
-            // local_v pozostaje "unknown" — nie mamy zainstalowanej stabilnej
         } else {
             local_v = ver_file;
         }
     }
 
-    // PREVERSION.txt ma wyższy priorytet dla pola pre
     if (!prever_file.empty())
         local_pre = prever_file;
 
-    // Wyświetl
     if (local_v != "unknown")
         cout << "ZPM installed version:"    << YELLOW << " v" << local_v   << RESET << "\n";
     else
-        cout << "ZPM installed version: "   << YELLOW << "none"             << RESET << "\n";
+        cout << "ZPM installed version: "   << YELLOW << "none"              << RESET << "\n";
 
     if (local_pre != "unknown")
         cout << "ZPM installed preversion:" << YELLOW << " v" << local_pre << RESET << "\n";
@@ -82,9 +79,7 @@ void versionmessage() {
 }
 
 // ─── GitHub API: pobiera stable i prerelease w jednym curl ────────────────────
-// Zwraca {stable_ver, prerelease_ver} bez prefiksu 'v'
 static pair<string,string> fetchGitHubVersions() {
-    // Pobieramy listę releases (zawiera i stable i pre), jeden request zamiast dwóch
     string cmd =
         "curl -fsSL -H 'User-Agent: ZPM' "
         "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases 2>/dev/null "
@@ -103,13 +98,12 @@ static pair<string,string> fetchGitHubVersions() {
 
     string out = exec(cmd.c_str());
 
-    // Podziel na dwie linie
     string stable, pre;
     size_t nl = out.find('\n');
     if (nl != string::npos) {
         stable = out.substr(0, nl);
         pre    = out.substr(nl + 1);
-        // trim
+        
         auto trimStr = [](string& s) {
             s.erase(remove(s.begin(), s.end(), '\n'), s.end());
             s.erase(remove(s.begin(), s.end(), '\r'), s.end());
@@ -121,7 +115,7 @@ static pair<string,string> fetchGitHubVersions() {
     return {stable, pre};
 }
 
-// ─── parsowanie wersji ────────────────────────────────────────────────────────
+// ─── parsowanie i porównywanie wersji ─────────────────────────────────────────
 static vector<int> parseVersion(string ver) {
     size_t dash = ver.find('-');
     if (dash != string::npos)
@@ -139,12 +133,28 @@ static vector<int> parseVersion(string ver) {
 
 static bool isVersionOlder(const string& v1, const string& v2) {
     auto a = parseVersion(v1), b = parseVersion(v2);
-    while (a.size() < b.size()) a.push_back(0);
-    while (b.size() < a.size()) b.push_back(0);
-    for (size_t i = 0; i < a.size(); i++) {
-        if (a[i] < b[i]) return true;
-        if (a[i] > b[i]) return false;
+    
+    // Porównanie głównych członów wersji X.Y.Z
+    for (size_t i = 0; i < max(a.size(), b.size()); i++) {
+        int valA = (i < a.size()) ? a[i] : 0;
+        int valB = (i < b.size()) ? b[i] : 0;
+        if (valA < valB) return true;
+        if (valA > valB) return false;
     }
+
+    // Jeśli bazy X.Y.Z są identyczne, decyduje obecność i treść tagu pre-release
+    size_t dash1 = v1.find('-');
+    size_t dash2 = v2.find('-');
+
+    // Wersja z tagiem prerelease jest STARSZA niż czysta stabilna wersja bazowa
+    if (dash1 != string::npos && dash2 == string::npos) return true;
+    if (dash1 == string::npos && dash2 != string::npos) return false;
+
+    // Jeśli obie to prerelease, porównujemy je alfanumerycznie (np. -pre1 < -pre2)
+    if (dash1 != string::npos && dash2 != string::npos) {
+        return v1.substr(dash1) < v2.substr(dash2);
+    }
+
     return false;
 }
 
@@ -154,11 +164,11 @@ bool run_update(const string& tag_name, const string& zip_name, bool is_pre = fa
     string zip_url = "https://github.com/Zielina-Konrad-productions/ZPM/archive/refs/tags/v"
                      + tag_name + ".zip";
 
-    // 0/5 — init: backup configa, wyczyść stare pliki
+    // 0/5 — init: bezpieczny backup configa, wyczyść stare pliki
     progressbar_start(0.0f, "0/5 | Starting update...");
     system(("{ echo '---starting update---';"
             "  rm -rf /tmp/ZPM* /tmp/zielina.conf;"
-            "  mv /opt/ZPM/zielina.conf /tmp/zielina.conf;"
+            "  [ -f /opt/ZPM/zielina.conf ] && mv /opt/ZPM/zielina.conf /tmp/zielina.conf;"
             "  rm -rf /opt/ZPM; } > " + string(LOG) + " 2>&1").c_str());
 
     // 1/5 — download + rozpakowanie
@@ -175,22 +185,26 @@ bool run_update(const string& tag_name, const string& zip_name, bool is_pre = fa
 
     // 2/5 — build
     progressbar_update(40.0f, "2/5 | Building ZPM...");
-    if (system(L("{ echo '---building ZPM---'; bash /opt/ZPM/src/build.sh; }").c_str()) != 0)
+    if (system(L("{ echo '---building ZPM---'; bash /opt/ZPM/src/build.sh; }").c_str()) != 0) {
         fail = true;
-    system(L("chmod +x /opt/ZPM/bin/*").c_str());
+    }
 
-    // 3/5 — symlinki
-    progressbar_update(70.0f, "3/5 | Updating symlinks...");
-    system(L("{ echo '---updating symlinks---';"
-             "  for f in /opt/ZPM/bin/z*; do"
-             "    [ -f \"$f\" ] && ln -sf \"$f\" /usr/bin/$(basename \"$f\");"
-             "  done; }").c_str());
+    // 3/5 — symlinki (wykonywane tylko gdy kompilacja się udała)
+    if (!fail) {
+        system(L("chmod +x /opt/ZPM/bin/*").c_str());
+        progressbar_update(70.0f, "3/5 | Updating symlinks...");
+        system(L("{ echo '---updating symlinks---';"
+                 "  for f in /opt/ZPM/bin/z*; do"
+                 "    [ -f \"$f\" ] && ln -sf \"$f\" /usr/bin/$(basename \"$f\");"
+                 "  done; }").c_str());
+    } else {
+        progressbar_update(70.0f, "3/5 | Skipping symlinks due to build failure...");
+    }
 
-    // 4/5 — cleanup
+    // 4/5 — cleanup (przywracanie configu działa niezależnie od powodzenia buildu)
     progressbar_update(90.0f, "4/5 | Cleaning up...");
     system(("{ echo '---cleaning---';"
-            "  rm -f /opt/ZPM/zielina.conf;"
-            "  mv /tmp/zielina.conf /opt/ZPM/zielina.conf;"
+            "  [ -f /tmp/zielina.conf ] && mv /tmp/zielina.conf /opt/ZPM/zielina.conf;"
             "  rm -rf /tmp/ZPM-built /tmp/" + zip_name + "; } " + LOG_APPEND).c_str());
 
     // 5/5 — wynik
@@ -237,13 +251,11 @@ int main(int argc, char* argv[]) {
 
     cout << RED << "ZPM Update program\n\n" << RESET;
 
-    // Wersje lokalne — jedna funkcja wykrywa też prerelease w VERSION.txt
     cout << BOLD << "INSTALLED ZPM VERSIONS\n" << RESET
          << CYAN << "------------------------------------------------------\n" << RESET;
     auto [local_v, local_pre] = ZPM_localVersions();
     cout << CYAN << "------------------------------------------------------\n\n" << RESET;
 
-    // Wersje z GitHub — jeden request
     cout << BOLD << "INTERNET ZPM VERSIONS\n" << RESET
          << CYAN << "------------------------------------------------------\n" << RESET;
     auto [repo_v, repo_pre] = fetchGitHubVersions();
@@ -260,7 +272,6 @@ int main(int argc, char* argv[]) {
 
     cout << CYAN << "------------------------------------------------------\n\n" << RESET;
 
-    // Logika aktualizacji
     if (experimental) {
         if (repo_pre.empty()) {
             cout << RED << "No prerelease version available.\n" << RESET;
@@ -282,14 +293,12 @@ int main(int argc, char* argv[]) {
         }
         bool localIsPrerelease = (local_v == "unknown" && local_pre != "unknown");
 
-        // 1. Jeśli jesteś na prerelease, tylko informujemy i wychodzimy (lub lecimy dalej)
         if (localIsPrerelease && !force) {
             cout << YELLOW << "Currently on prerelease (" << local_pre << "), stable " << repo_v << " available.\n" << RESET;
             cout << RED << "To update ZPM to normal release use -f or --force" << RESET << endl;
-            return 0; // Albo break/return w zależności od reszty funkcji, żeby nie pytał o update
+            return 0;
         }
 
-        // 2. Standardowa logika dla normalnej aktualizacji lub wymuszenia (force)
         if (local_v == "unknown" || isVersionOlder(local_v, repo_v) || force) {
             cout << GREEN << "ZPM update available" << RESET << "\n";
             cout << "Continue? [y/n]: ";
