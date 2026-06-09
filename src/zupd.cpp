@@ -1,331 +1,757 @@
 #include "main.h"
 
-using namespace std;
+#include <cerrno>
+#include <csignal>
+#include <cctype>
+#include <cstring>
+#include <set>
+#include <sys/file.h>
+#include <sys/wait.h>
 
-//zmienne globalne-------------------------------------------------------------
-bool reboot     = false;
-bool shutdown   = false;
-bool help       = false;
-bool version    = false;
-bool yes        = false;
-bool fullupdate = false;
-string ans;
+namespace {
 
-static int g_lockFd = -1;
-volatile sig_atomic_t g_interrupted = 0;
-//koniec zmiennych globalnych--------------------------------------------------
+constexpr const char* kLogFile = "/tmp/zupd.log";
+constexpr const char* kPatchLogFile = "/tmp/zupd_patchcheck.log";
 
-static void handleSigint(int) { g_interrupted = 1; }
+volatile std::sig_atomic_t g_interrupted = 0;
 
-//funkcje pomocnicze-----------------------------------------------------------
-static int decodeExitStatus(int rc) {
-    if (rc == -1) return 127;
-    if (WIFEXITED(rc)) return WEXITSTATUS(rc);
-    return 127;
-}
+enum class LogMode {
+    Truncate,
+    Append
+};
 
-static string runCmd(const string& cmd, int* exitCode = nullptr) {
-    string result;
-    FILE* p = popen(cmd.c_str(), "r");
-    if (!p) {
-        if (exitCode) *exitCode = 127;
-        return result;
+enum class NativeUpdateResult {
+    Ok,
+    Failed,
+    RestartRequired
+};
+
+struct Options {
+    bool reboot = false;
+    bool shutdown = false;
+    bool help = false;
+    bool version = false;
+    bool yes = false;
+    bool fullUpdate = false;
+};
+
+struct CommandResult {
+    int exitCode = 127;
+    std::string output;
+};
+
+struct UpdateStatus {
+    bool native = false;
+    bool hasFlatpak = false;
+    bool hasSnap = false;
+    bool dnf5 = false;
+    bool checkError = false;
+    bool zypperDup = false;
+
+    std::vector<std::string> nativePackages;
+    std::vector<std::string> zypperPatches;
+    std::vector<std::string> flatpakPackages;
+    std::vector<std::string> snapPackages;
+
+    bool hasFlatpakUpdates() const {
+        return hasFlatpak && !flatpakPackages.empty();
     }
 
-    char buf[256];
-    while (fgets(buf, sizeof(buf), p))
-        result += buf;
+    bool hasSnapUpdates() const {
+        return hasSnap && !snapPackages.empty();
+    }
 
-    if (exitCode) *exitCode = decodeExitStatus(pclose(p));
-    else            pclose(p);
+    bool any() const {
+        return native || hasFlatpakUpdates() || hasSnapUpdates();
+    }
+};
 
-    return result;
+class FileDescriptor {
+public:
+    FileDescriptor() = default;
+    explicit FileDescriptor(int fd) : fd_(fd) {}
+
+    FileDescriptor(const FileDescriptor&) = delete;
+    FileDescriptor& operator=(const FileDescriptor&) = delete;
+
+    FileDescriptor(FileDescriptor&& other) noexcept : fd_(other.fd_) {
+        other.fd_ = -1;
+    }
+
+    FileDescriptor& operator=(FileDescriptor&& other) noexcept {
+        if (this != &other) {
+            reset();
+            fd_ = other.fd_;
+            other.fd_ = -1;
+        }
+        return *this;
+    }
+
+    ~FileDescriptor() {
+        reset();
+    }
+
+    int get() const {
+        return fd_;
+    }
+
+    bool valid() const {
+        return fd_ >= 0;
+    }
+
+    void reset(int fd = -1) {
+        if (fd_ >= 0) {
+            close(fd_);
+        }
+        fd_ = fd;
+    }
+
+private:
+    int fd_ = -1;
+};
+
+class FileLock {
+public:
+    bool acquire() {
+        const char* paths[] = {"/run/zupd.lock", "/tmp/zupd.lock"};
+        bool busy = false;
+        bool openFailed = false;
+
+        for (const char* path : paths) {
+            FileDescriptor fd(open(path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0644));
+            if (!fd.valid()) {
+                openFailed = true;
+                continue;
+            }
+
+            struct stat st {};
+            if (fstat(fd.get(), &st) != 0 || !S_ISREG(st.st_mode)) {
+                openFailed = true;
+                continue;
+            }
+
+            if (flock(fd.get(), LOCK_EX | LOCK_NB) == 0) {
+                fd_ = std::move(fd);
+                return true;
+            }
+
+            if (errno == EWOULDBLOCK || errno == EAGAIN) {
+                busy = true;
+            } else {
+                openFailed = true;
+            }
+        }
+
+        if (busy) {
+            std::cerr << RED << "Error: Another zupd instance is already running.\n" << RESET;
+        } else if (openFailed) {
+            std::cerr << RED << "Error: Cannot create lock file.\n" << RESET;
+        }
+        return false;
+    }
+
+    ~FileLock() {
+        if (fd_.valid()) {
+            flock(fd_.get(), LOCK_UN);
+        }
+    }
+
+private:
+    FileDescriptor fd_;
+};
+
+class SigintGuard {
+public:
+    SigintGuard() {
+        struct sigaction sa {};
+        sa.sa_handler = handleSigint;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;
+        installed_ = (sigaction(SIGINT, &sa, &previous_) == 0);
+    }
+
+    SigintGuard(const SigintGuard&) = delete;
+    SigintGuard& operator=(const SigintGuard&) = delete;
+
+    ~SigintGuard() {
+        if (installed_) {
+            sigaction(SIGINT, &previous_, nullptr);
+        }
+    }
+
+private:
+    static void handleSigint(int) {
+        g_interrupted = 1;
+    }
+
+    bool installed_ = false;
+    struct sigaction previous_ {};
+};
+
+std::string trim(const std::string& input) {
+    const auto begin = input.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return {};
+    }
+
+    const auto end = input.find_last_not_of(" \t\r\n");
+    return input.substr(begin, end - begin + 1);
 }
 
-static int runCmdExit(const string& cmd) {
-    return decodeExitStatus(system(cmd.c_str()));
+std::string toLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
 }
 
-static bool systemOk(const char* cmd) {
-    return decodeExitStatus(system(cmd)) == 0;
+bool startsWith(const std::string& value, const std::string& prefix) {
+    return value.rfind(prefix, 0) == 0;
 }
 
-static bool checkInterrupted(bool& ok) {
-    if (!g_interrupted) return false;
+std::vector<std::string> splitLines(const std::string& text) {
+    std::vector<std::string> lines;
+    std::stringstream ss(text);
+    std::string line;
+    while (std::getline(ss, line)) {
+        lines.push_back(line);
+    }
+    return lines;
+}
 
-    cout << "\n" << YELLOW << "Cancelled by user (Ctrl+C).\n" << RESET;
-    ok = false;
+std::vector<std::string> split(const std::string& text, char delimiter) {
+    std::vector<std::string> parts;
+    std::stringstream ss(text);
+    std::string part;
+    while (std::getline(ss, part, delimiter)) {
+        parts.push_back(part);
+    }
+    return parts;
+}
+
+void addUnique(std::vector<std::string>& values, const std::string& value) {
+    const std::string cleaned = trim(value);
+    if (cleaned.empty()) {
+        return;
+    }
+
+    if (std::find(values.begin(), values.end(), cleaned) == values.end()) {
+        values.push_back(cleaned);
+    }
+}
+
+bool writeAll(int fd, const char* data, size_t size) {
+    while (size > 0) {
+        const ssize_t written = write(fd, data, size);
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        data += written;
+        size -= static_cast<size_t>(written);
+    }
     return true;
 }
 
-static bool acquireLock() {
-    const char* paths[] = { "/run/zupd.lock", "/tmp/zupd.lock" };
-    bool lockBusy = false;
+bool writeAll(int fd, const std::string& text) {
+    return writeAll(fd, text.data(), text.size());
+}
 
-    for (const char* path : paths) {
-        g_lockFd = open(path, O_CREAT | O_RDWR, 0644);
-        if (g_lockFd < 0) continue;
+FileDescriptor openLogFile(const char* path, LogMode mode) {
+    const int flags = O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW |
+                      (mode == LogMode::Truncate ? O_TRUNC : O_APPEND);
 
-        if (flock(g_lockFd, LOCK_EX | LOCK_NB) == 0)
-            return true;
-
-        lockBusy = true;
-        close(g_lockFd);
-        g_lockFd = -1;
+    FileDescriptor fd(open(path, flags, 0600));
+    if (!fd.valid()) {
+        return {};
     }
 
-    if (lockBusy) {
-        cerr << RED << "Error: Another zupd instance is already running.\n"
-             << RESET;
-    } else {
-        cerr << RED << "Error: Cannot create lock file.\n" << RESET;
+    struct stat st {};
+    if (fstat(fd.get(), &st) != 0 || !S_ISREG(st.st_mode)) {
+        return {};
+    }
+
+    fchmod(fd.get(), 0600);
+    return fd;
+}
+
+void writeLogLine(const char* path, const std::string& line, LogMode mode = LogMode::Append) {
+    FileDescriptor fd = openLogFile(path, mode);
+    if (!fd.valid()) {
+        return;
+    }
+
+    writeAll(fd.get(), line + "\n");
+}
+
+void writeLogHeader(const std::string& header, LogMode mode = LogMode::Append) {
+    writeLogLine(kLogFile, header, mode);
+}
+
+int decodeExitStatus(int status) {
+    if (status == -1) {
+        return 127;
+    }
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return 127;
+}
+
+int waitForChild(pid_t pid) {
+    int status = 0;
+    bool signalSent = false;
+
+    for (;;) {
+        const pid_t result = waitpid(pid, &status, 0);
+        if (result == pid) {
+            return decodeExitStatus(status);
+        }
+
+        if (result < 0 && errno == EINTR) {
+            if (g_interrupted && !signalSent) {
+                kill(pid, SIGINT);
+                signalSent = true;
+            }
+            continue;
+        }
+
+        return 127;
+    }
+}
+
+void redirectToDevNull(int targetFd) {
+    const int nullFd = open("/dev/null", O_WRONLY | O_CLOEXEC);
+    if (nullFd >= 0) {
+        dup2(nullFd, targetFd);
+        close(nullFd);
+    }
+}
+
+int runShellLogged(const std::string& command,
+                   const std::string& header,
+                   LogMode mode = LogMode::Append,
+                   const char* logPath = kLogFile) {
+    FileDescriptor log = openLogFile(logPath, mode);
+    if (!log.valid()) {
+        return 127;
+    }
+
+    if (!header.empty()) {
+        writeAll(log.get(), header + "\n");
+    }
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        return 127;
+    }
+
+    if (pid == 0) {
+        dup2(log.get(), STDOUT_FILENO);
+        dup2(log.get(), STDERR_FILENO);
+        execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+
+    return waitForChild(pid);
+}
+
+CommandResult runShellCapture(const std::string& command,
+                              const char* logPath = nullptr,
+                              const std::string& header = {},
+                              LogMode mode = LogMode::Append,
+                              bool mirrorStdoutToLog = false,
+                              bool stderrToLog = false) {
+    int pipeFd[2] = {-1, -1};
+    if (pipe(pipeFd) != 0) {
+        return {};
+    }
+
+    fcntl(pipeFd[0], F_SETFD, FD_CLOEXEC);
+    fcntl(pipeFd[1], F_SETFD, FD_CLOEXEC);
+
+    FileDescriptor readEnd(pipeFd[0]);
+    FileDescriptor writeEnd(pipeFd[1]);
+    FileDescriptor log;
+
+    if (logPath != nullptr && (!header.empty() || mirrorStdoutToLog || stderrToLog)) {
+        log = openLogFile(logPath, mode);
+        if (!log.valid()) {
+            return {};
+        }
+        if (!header.empty()) {
+            writeAll(log.get(), header + "\n");
+        }
+    }
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        return {};
+    }
+
+    if (pid == 0) {
+        readEnd.reset();
+        dup2(writeEnd.get(), STDOUT_FILENO);
+
+        if (stderrToLog && log.valid()) {
+            dup2(log.get(), STDERR_FILENO);
+        } else {
+            redirectToDevNull(STDERR_FILENO);
+        }
+
+        execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+
+    writeEnd.reset();
+
+    CommandResult result;
+    std::array<char, 4096> buffer {};
+
+    for (;;) {
+        const ssize_t count = read(readEnd.get(), buffer.data(), buffer.size());
+        if (count > 0) {
+            result.output.append(buffer.data(), static_cast<size_t>(count));
+            if (mirrorStdoutToLog && log.valid()) {
+                writeAll(log.get(), buffer.data(), static_cast<size_t>(count));
+            }
+            continue;
+        }
+
+        if (count == 0) {
+            break;
+        }
+
+        if (errno == EINTR) {
+            if (g_interrupted) {
+                kill(pid, SIGINT);
+            }
+            continue;
+        }
+
+        break;
+    }
+
+    result.exitCode = waitForChild(pid);
+    return result;
+}
+
+int runShellSplitLogs(const std::string& command,
+                      const char* stdoutLogPath,
+                      const std::string& stdoutHeader,
+                      LogMode stdoutMode,
+                      const char* stderrLogPath) {
+    FileDescriptor stdoutLog = openLogFile(stdoutLogPath, stdoutMode);
+    FileDescriptor stderrLog = openLogFile(stderrLogPath, LogMode::Append);
+
+    if (!stdoutLog.valid() || !stderrLog.valid()) {
+        return 127;
+    }
+
+    if (!stdoutHeader.empty()) {
+        writeAll(stdoutLog.get(), stdoutHeader + "\n");
+        writeAll(stderrLog.get(), stdoutHeader + "\n");
+    }
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        return 127;
+    }
+
+    if (pid == 0) {
+        dup2(stdoutLog.get(), STDOUT_FILENO);
+        dup2(stderrLog.get(), STDERR_FILENO);
+        execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+
+    return waitForChild(pid);
+}
+
+bool runShellOk(const std::string& command,
+                const std::string& header,
+                LogMode mode = LogMode::Append) {
+    return runShellLogged(command, header, mode) == 0;
+}
+
+std::string shellQuote(const std::string& value) {
+    std::string quoted = "'";
+    for (const char c : value) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+bool executableAt(const std::string& path) {
+    return access(path.c_str(), X_OK) == 0;
+}
+
+bool commandExists(const std::string& command) {
+    if (command.find('/') != std::string::npos) {
+        return executableAt(command);
+    }
+
+    const char* pathEnv = getenv("PATH");
+    const std::string path = pathEnv != nullptr
+        ? pathEnv
+        : "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+    std::stringstream ss(path);
+    std::string dir;
+    while (std::getline(ss, dir, ':')) {
+        if (dir.empty()) {
+            dir = ".";
+        }
+        if (executableAt(dir + "/" + command)) {
+            return true;
+        }
     }
     return false;
 }
 
-static void releaseLock() {
-    if (g_lockFd < 0) return;
+std::map<std::string, std::string> readOsRelease() {
+    std::map<std::string, std::string> values;
+    std::ifstream file("/etc/os-release");
+    std::string line;
 
-    flock(g_lockFd, LOCK_UN);
-    close(g_lockFd);
-    g_lockFd = -1;
-}
-
-struct ScopedLock {
-    bool active = false;
-
-    ScopedLock() { active = acquireLock(); }
-    ~ScopedLock() { if (active) releaseLock(); }
-};
-
-static bool commandExists(const string& path) {
-    return access(path.c_str(), X_OK) == 0;
-}
-
-static bool isTumbleweedLike() {
-    string os = runCmd("cat /etc/os-release 2>/dev/null");
-
-    transform(os.begin(), os.end(), os.begin(),
-              [](unsigned char c) { return static_cast<char>(tolower(c)); });
-
-    return os.find("tumbleweed") != string::npos ||
-           os.find("slowroll")   != string::npos;
-}
-
-static void printCmdLines(const string& cmd, const string& prefix) {
-    FILE* p = popen(cmd.c_str(), "r");
-    if (!p) return;
-
-    char buf[512];
-    while (fgets(buf, sizeof(buf), p)) {
-        string line(buf);
-        size_t end = line.find_last_not_of(" \n\r\t");
-        if (end == string::npos) continue;
-
-        line = line.substr(0, end + 1);
-        cout << prefix << line << "\n";
-    }
-
-    pclose(p);
-}
-
-void helpmessage(const char* progName) {
-    cout << RED << "Usage: " << RESET << progName << " [options]"
-         << " or zpm upd/update [options]\n";
-    cout << RED << "Options:" << RESET << "\n"
-         << "  --full, -f     Perform a full system upgrade\n"
-         << "  -r             Reboot the system after update\n"
-         << "  -s             Shutdown the system after update\n"
-         << "  --yes, -y      Automatic system update\n"
-         << "  --help, -h     Show this help message\n"
-         << "  --version, -v  Show version information\n";
-}
-
-void versionmessage() {
-    cout << RED << "zupd component version: v" << zpm_version::version()
-         << " of ZPM\n" << RESET
-         << "https://github.com/Zielina-Konrad-productions/ZPM\n"
-         << "Copyright (c) 2026 Ignacyyy & Ry3ball\n"
-         << "License: MIT\n";
-}
-
-//-----------------------------------------------------------------------------
-// repo()
-//-----------------------------------------------------------------------------
-void repo(const string& pm) {
-    bool hasflatpak = (commandExists("/usr/bin/flatpak") ||
-                       commandExists("/usr/local/bin/flatpak"));
-    bool hassnap    = commandExists("/usr/bin/snap");
-
-    cout << YELLOW << "[SYS] " << RESET;
-
-    string osname = runCmd(
-        "grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\"'"
-    );
-
-    if (!osname.empty() && osname.back() == '\n')
-        osname.pop_back();
-
-    cout << osname << "\n";
-
-    const string pfx = string(YELLOW) + "- " + RESET;
-
-    if (pm == "apt") {
-        cout << "\n" << YELLOW << "[D]" << RESET
-             << GREEN << " APT Repositories:\n" << RESET;
-
-        printCmdLines(
-            "{ grep -rhE '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null;"
-            "  grep -rhE '^URIs:' /etc/apt/sources.list.d/*.sources 2>/dev/null"
-            "    | sed 's/^URIs:[[:space:]]*/deb /'; } | sort -u",
-            pfx
-        );
-    }
-    else if (pm == "zypper") {
-        cout << "\n" << YELLOW << "[Z]" << RESET
-             << GREEN << " Zypper Repositories:\n" << RESET;
-
-        printCmdLines(
-            "zypper lr 2>/dev/null"
-            " | awk -F'|' '/^[[:space:]]*[0-9]+/{"
-            "gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $2); print $2}'",
-            pfx
-        );
-    }
-    else if (pm == "dnf") {
-        cout << "\n" << YELLOW << "[R]" << RESET
-             << GREEN << " DNF Repositories:\n" << RESET;
-
-        bool hasdnf5 = commandExists("/usr/bin/dnf5");
-
-        printCmdLines(
-            hasdnf5
-                ? "dnf5 repolist -q 2>/dev/null | awk 'NR>1 && NF{print $1}'"
-                : "dnf repolist -q 2>/dev/null | awk 'NR>1 && NF{print $1}'",
-            pfx
-        );
-    }
-
-    if (hasflatpak) {
-        cout << "\n" << YELLOW << "[F]" << RESET
-             << GREEN << " Flatpak Remotes:\n" << RESET;
-
-        printCmdLines("flatpak remotes --columns=name 2>/dev/null", pfx);
-    }
-
-    if (hassnap) {
-        cout << "\n" << YELLOW << "[S]" << RESET
-             << GREEN << " Snap is available.\n" << RESET;
-    }
-}
-
-//-----------------------------------------------------------------------------
-// UpdateStatus
-//-----------------------------------------------------------------------------
-struct UpdateStatus {
-    bool native       = false;
-    bool flatpak      = false;
-    bool snap         = false;
-    bool hasflatpak   = false;
-    bool hassnap      = false;
-    bool dnf5         = false;
-
-    bool check_error  = false;
-    bool zypper_dup   = false;
-
-    bool any() const {
-        return native || flatpak || snap;
-    }
-};
-
-static int countSteps(const UpdateStatus& s) {
-    int n = 2; // CHECKING + CLEANUP zawsze
-
-    if (s.native)                  n++;
-    if (s.hasflatpak && s.flatpak) n++;
-    if (s.hassnap    && s.snap)    n++;
-
-    return n;
-}
-
-static void checkUniversalManagers(UpdateStatus& s) {
-    s.hasflatpak = (commandExists("/usr/bin/flatpak") ||
-                    commandExists("/usr/local/bin/flatpak"));
-    s.hassnap    = commandExists("/usr/bin/snap");
-
-    if (s.hasflatpak || s.hassnap) {
-        string check_cmd;
-
-        if (s.hasflatpak) {
-            check_cmd +=
-                "flatpak remote-ls --updates 2>/dev/null "
-                "| grep -q . && echo HAS_FLATPAK_UPDATES;";
+    while (std::getline(file, line)) {
+        line = trim(line);
+        if (line.empty() || line.front() == '#') {
+            continue;
         }
 
-        if (s.hassnap) {
-            check_cmd +=
-                "snap refresh --list 2>/dev/null "
-                "| grep -qvE '^(Name|All snaps)' && echo HAS_SNAP_UPDATES;";
+        const auto eq = line.find('=');
+        if (eq == std::string::npos) {
+            continue;
         }
 
-        string out = runCmd(check_cmd);
+        std::string key = line.substr(0, eq);
+        std::string value = line.substr(eq + 1);
 
-        s.flatpak = (out.find("HAS_FLATPAK_UPDATES") != string::npos);
-        s.snap    = (out.find("HAS_SNAP_UPDATES")    != string::npos);
+        if (value.size() >= 2 &&
+            ((value.front() == '"' && value.back() == '"') ||
+             (value.front() == '\'' && value.back() == '\''))) {
+            value = value.substr(1, value.size() - 2);
+        }
+
+        values[key] = value;
+    }
+
+    return values;
+}
+
+bool isTumbleweedLike() {
+    const auto os = readOsRelease();
+    std::string combined;
+
+    for (const char* key : {"ID", "ID_LIKE", "NAME", "PRETTY_NAME", "VERSION"}) {
+        const auto it = os.find(key);
+        if (it != os.end()) {
+            combined += " " + it->second;
+        }
+    }
+
+    combined = toLower(combined);
+    return combined.find("tumbleweed") != std::string::npos ||
+           combined.find("slowroll") != std::string::npos;
+}
+
+void printCommandLines(const std::string& command, const std::string& prefix) {
+    const CommandResult result = runShellCapture(command);
+    for (const std::string& rawLine : splitLines(result.output)) {
+        const std::string line = trim(rawLine);
+        if (!line.empty()) {
+            std::cout << prefix << line << "\n";
+        }
     }
 }
 
-static void printUniversalUpdateLists(const UpdateStatus& s) {
-    const string pfx = string(YELLOW) + "[+] " + RESET;
-
-    if (s.hasflatpak && s.flatpak) {
-        cout << RED << "\nPackages to update (Flatpak):\n" << RESET;
-        printCmdLines(
-            "flatpak remote-ls --updates --columns=name 2>/dev/null",
-            pfx
-        );
+std::vector<std::string> nonEmptyLines(const std::string& text) {
+    std::vector<std::string> lines;
+    for (const std::string& line : splitLines(text)) {
+        addUnique(lines, line);
     }
-
-    if (s.hassnap && s.snap) {
-        cout << RED << "\nPackages to update (Snap):\n" << RESET;
-        printCmdLines(
-            "snap refresh --list 2>/dev/null "
-            "| grep -vE '^(Name|All snaps)' | awk '{print $1}'",
-            pfx
-        );
-    }
+    return lines;
 }
 
-static bool askConfirm() {
-    if (yes) return true;
+std::vector<std::string> parseAptSimulation(const std::string& output) {
+    std::vector<std::string> packages;
 
-    cout << "\n" << YELLOW << "Proceed with update?" << RESET << " [y/n]: ";
+    for (const std::string& line : splitLines(output)) {
+        if (!startsWith(line, "Inst ")) {
+            continue;
+        }
 
-    if (!(cin >> ans)) return false;
+        std::istringstream ss(line);
+        std::string marker;
+        std::string package;
+        if (ss >> marker >> package) {
+            addUnique(packages, package);
+        }
+    }
 
-    return (ans == "y" || ans == "yes");
+    return packages;
 }
 
-static bool cleanupUniversal(const UpdateStatus& s) {
+std::vector<std::string> parseZypperListUpdates(const std::string& output) {
+    std::vector<std::string> packages;
+
+    for (const std::string& line : splitLines(output)) {
+        const auto columns = split(line, '|');
+        if (columns.size() < 3) {
+            continue;
+        }
+
+        if (trim(columns[0]) == "v") {
+            addUnique(packages, columns[2]);
+        }
+    }
+
+    return packages;
+}
+
+std::vector<std::string> parseZypperPatches(const std::string& output) {
+    static const std::set<std::string> wanted = {
+        "needed", "security", "recommended", "optional"
+    };
+
+    std::vector<std::string> patches;
+
+    for (const std::string& line : splitLines(output)) {
+        const auto columns = split(line, '|');
+        if (columns.size() < 3) {
+            continue;
+        }
+
+        if (wanted.count(toLower(trim(columns[0]))) != 0) {
+            addUnique(patches, columns[2]);
+        }
+    }
+
+    return patches;
+}
+
+std::vector<std::string> parseDnfUpdates(const std::string& output) {
+    std::vector<std::string> packages;
+
+    for (const std::string& rawLine : splitLines(output)) {
+        const std::string line = trim(rawLine);
+        if (line.empty() ||
+            startsWith(line, "Last metadata") ||
+            startsWith(line, "Available") ||
+            startsWith(line, "Package ")) {
+            continue;
+        }
+
+        std::istringstream ss(line);
+        std::string packageWithArch;
+        std::string version;
+        std::string repo;
+        if (!(ss >> packageWithArch >> version >> repo)) {
+            continue;
+        }
+
+        const auto dot = packageWithArch.rfind('.');
+        if (dot == std::string::npos) {
+            continue;
+        }
+
+        addUnique(packages, packageWithArch.substr(0, dot));
+    }
+
+    return packages;
+}
+
+std::vector<std::string> parseSnapRefreshList(const std::string& output) {
+    std::vector<std::string> snaps;
+
+    for (const std::string& rawLine : splitLines(output)) {
+        const std::string line = trim(rawLine);
+        const std::string lower = toLower(line);
+
+        if (line.empty() ||
+            startsWith(lower, "name ") ||
+            startsWith(lower, "all snaps")) {
+            continue;
+        }
+
+        std::istringstream ss(line);
+        std::string name;
+        if (ss >> name) {
+            addUnique(snaps, name);
+        }
+    }
+
+    return snaps;
+}
+
+bool isSafeToken(const std::string& value) {
+    return !value.empty() &&
+           std::all_of(value.begin(), value.end(), [](unsigned char c) {
+               return std::isalnum(c) || c == '_' || c == '-' || c == '.';
+           });
+}
+
+bool isDigits(const std::string& value) {
+    return !value.empty() &&
+           std::all_of(value.begin(), value.end(), [](unsigned char c) {
+               return std::isdigit(c);
+           });
+}
+
+std::vector<std::pair<std::string, std::string>> parseDisabledSnapRevisions(const std::string& output) {
+    std::vector<std::pair<std::string, std::string>> revisions;
+
+    for (const std::string& rawLine : splitLines(output)) {
+        const std::string line = trim(rawLine);
+        const std::string lower = toLower(line);
+
+        if (line.empty() || startsWith(lower, "name ") || lower.find("disabled") == std::string::npos) {
+            continue;
+        }
+
+        std::istringstream ss(line);
+        std::string name;
+        std::string version;
+        std::string revision;
+
+        if ((ss >> name >> version >> revision) &&
+            isSafeToken(name) &&
+            isDigits(revision)) {
+            revisions.emplace_back(name, revision);
+        }
+    }
+
+    return revisions;
+}
+
+bool removeDirectoryEntries(const std::filesystem::path& directory) {
+    std::error_code ec;
+    if (!std::filesystem::exists(directory, ec)) {
+        return true;
+    }
+
+    const std::filesystem::directory_iterator entries(directory, ec);
+    if (ec) {
+        writeLogLine(kLogFile, "cleanup: cannot iterate " + directory.string() + ": " + ec.message());
+        return false;
+    }
+
     bool ok = true;
-
-    if (s.hasflatpak) {
-        if (!systemOk(
-            "flatpak uninstall --unused -y >> /tmp/zupd.log 2>&1"
-            " ; rm -rf /var/tmp/flatpak-cache-* >> /tmp/zupd.log 2>&1"
-        )) {
-            ok = false;
-        }
-    }
-
-    if (s.hassnap) {
-        if (!systemOk(
-            "snap list --all 2>/dev/null"
-            " | awk '/disabled/{print $1, $3}'"
-            " | while read name rev; do snap remove \"$name\" --revision=\"$rev\"; done"
-            " >> /tmp/zupd.log 2>&1"
-            " ; rm -rf /var/lib/snapd/cache/* >> /tmp/zupd.log 2>&1"
-        )) {
+    for (const auto& entry : entries) {
+        std::error_code removeError;
+        std::filesystem::remove_all(entry.path(), removeError);
+        if (removeError) {
+            writeLogLine(kLogFile, "cleanup: cannot remove " + entry.path().string() + ": " + removeError.message());
             ok = false;
         }
     }
@@ -333,7 +759,159 @@ static bool cleanupUniversal(const UpdateStatus& s) {
     return ok;
 }
 
-static void finishAndReport(bool ok, int total, int step) {
+bool removeEntriesWithPrefix(const std::filesystem::path& directory, const std::string& prefix) {
+    std::error_code ec;
+    if (!std::filesystem::exists(directory, ec)) {
+        return true;
+    }
+
+    const std::filesystem::directory_iterator entries(directory, ec);
+    if (ec) {
+        writeLogLine(kLogFile, "cleanup: cannot iterate " + directory.string() + ": " + ec.message());
+        return false;
+    }
+
+    bool ok = true;
+    for (const auto& entry : entries) {
+        const std::string filename = entry.path().filename().string();
+        if (!startsWith(filename, prefix)) {
+            continue;
+        }
+
+        std::error_code removeError;
+        std::filesystem::remove_all(entry.path(), removeError);
+        if (removeError) {
+            writeLogLine(kLogFile, "cleanup: cannot remove " + entry.path().string() + ": " + removeError.message());
+            ok = false;
+        }
+    }
+
+    return ok;
+}
+
+int countSteps(const UpdateStatus& status) {
+    int steps = 2; // consistency check + cleanup
+
+    if (status.native) {
+        ++steps;
+    }
+    if (status.hasFlatpakUpdates()) {
+        ++steps;
+    }
+    if (status.hasSnapUpdates()) {
+        ++steps;
+    }
+
+    return steps;
+}
+
+bool checkInterrupted(bool& ok) {
+    if (!g_interrupted) {
+        return false;
+    }
+
+    std::cout << "\n" << YELLOW << "Cancelled by user (Ctrl+C).\n" << RESET;
+    ok = false;
+    return true;
+}
+
+bool askConfirm(const Options& options) {
+    if (options.yes) {
+        return true;
+    }
+
+    std::cout << "\n" << YELLOW << "Proceed with update?" << RESET << " [y/n]: ";
+
+    std::string answer;
+    if (!std::getline(std::cin >> std::ws, answer)) {
+        return false;
+    }
+
+    answer = toLower(trim(answer));
+    return answer == "y" || answer == "yes";
+}
+
+void printPackageList(const std::string& title,
+                      const std::vector<std::string>& packages,
+                      bool showWhenEmpty = false) {
+    if (packages.empty() && !showWhenEmpty) {
+        return;
+    }
+
+    const std::string prefix = std::string(YELLOW) + "[+] " + RESET;
+    std::cout << RED << "\nPackages to update (" << title << "):\n" << RESET;
+
+    if (packages.empty()) {
+        std::cout << YELLOW << "(no packages listed)" << RESET << "\n";
+        return;
+    }
+
+    for (const std::string& package : packages) {
+        std::cout << prefix << package << "\n";
+    }
+}
+
+void printUniversalUpdateLists(const UpdateStatus& status) {
+    printPackageList("Flatpak", status.flatpakPackages);
+    printPackageList("Snap", status.snapPackages);
+}
+
+void checkUniversalManagers(UpdateStatus& status) {
+    status.hasFlatpak = commandExists("flatpak") ||
+                        commandExists("/usr/bin/flatpak") ||
+                        commandExists("/usr/local/bin/flatpak");
+    status.hasSnap = commandExists("snap") || commandExists("/usr/bin/snap");
+
+    if (status.hasFlatpak) {
+        const CommandResult result = runShellCapture("flatpak remote-ls --updates --columns=name");
+        status.flatpakPackages = nonEmptyLines(result.output);
+    }
+
+    if (status.hasSnap) {
+        const CommandResult result = runShellCapture("snap refresh --list");
+        status.snapPackages = parseSnapRefreshList(result.output);
+    }
+}
+
+bool cleanupUniversal(const UpdateStatus& status) {
+    bool ok = true;
+
+    if (status.hasFlatpak) {
+        ok = runShellOk("flatpak uninstall --unused -y", "----cleaning_flatpak----") && ok;
+        writeLogHeader("----cleaning_flatpak_cache----");
+        ok = removeEntriesWithPrefix("/var/tmp", "flatpak-cache-") && ok;
+    }
+
+    if (status.hasSnap) {
+        const CommandResult list = runShellCapture("snap list --all",
+                                                   kLogFile,
+                                                   "----checking_disabled_snap_revisions----",
+                                                   LogMode::Append,
+                                                   true,
+                                                   true);
+
+        if (list.exitCode != 0) {
+            ok = false;
+        }
+
+        for (const auto& [name, revision] : parseDisabledSnapRevisions(list.output)) {
+            const std::string command = "snap remove " + shellQuote(name) +
+                                        " --revision=" + shellQuote(revision);
+            ok = runShellOk(command, "----removing_snap_revision_" + name + "_" + revision + "----") && ok;
+        }
+
+        writeLogHeader("----cleaning_snap_cache----");
+        ok = removeDirectoryEntries("/var/lib/snapd/cache") && ok;
+    }
+
+    return ok;
+}
+
+bool finishAndReport(const Options& options, bool ok, int total, int step) {
+    if (g_interrupted) {
+        ok = false;
+    }
+
     if (ok) {
         progressbar_set_state(UiState::DONE, total);
         progressbar_finish("DONE!");
@@ -341,79 +919,286 @@ static void finishAndReport(bool ok, int total, int step) {
         progressbar_set_state(UiState::ERROR, step);
         progressbar_finish("ERROR!");
 
-        cout << RED << "ERROR," << RESET
-             << " check /tmp/zupd.log for details.\n";
-        return;
+        std::cout << RED << "ERROR," << RESET
+                  << " check " << kLogFile << " for details.\n";
+        return false;
     }
 
-    cout << YELLOW << "[RAPORT]" << RESET << " /tmp/zupd.log\n";
+    std::cout << YELLOW << "[RAPORT]" << RESET << " " << kLogFile << "\n";
 
-    if (reboot) {
-        cout << YELLOW << "[*] Rebooting in 3s..." << RESET << "\n";
-        system("sleep 3 && reboot");
+    if (options.reboot) {
+        std::cout << YELLOW << "[*] Rebooting in 3s..." << RESET << "\n";
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+        runShellLogged("reboot", "-----reboot-----");
+    } else if (options.shutdown) {
+        std::cout << YELLOW << "[*] Shutting down in 3s..." << RESET << "\n";
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+        runShellLogged("shutdown -h now", "-----shutdown-----");
     }
-    else if (shutdown) {
-        cout << YELLOW << "[*] Shutting down in 3s..." << RESET << "\n";
-        system("sleep 3 && shutdown -h now");
+
+    return true;
+}
+
+void printHelp(const char* progName) {
+    std::cout << RED << "Usage: " << RESET << progName << " [options]"
+              << " or zpm upd/update [options]\n";
+    std::cout << RED << "Options:" << RESET << "\n"
+              << "  --full, -f       Perform a full system upgrade\n"
+              << "  --reboot, -r     Reboot the system after update\n"
+              << "  --shutdown, -s   Shutdown the system after update\n"
+              << "  --yes, -y        Automatic system update\n"
+              << "  --help, -h       Show this help message\n"
+              << "  --version, -v    Show version information\n";
+}
+
+void printVersion() {
+    std::cout << RED << "zupd component version: v" << zpm_version::version()
+              << " of ZPM\n" << RESET
+              << "https://github.com/Zielina-Konrad-productions/ZPM\n"
+              << "Copyright (c) 2026 Ignacyyy & Ry3ball\n"
+              << "License: MIT\n";
+}
+
+bool parseOptions(int argc, char* argv[], Options& options) {
+    std::vector<std::string> errors;
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+
+        if (arg == "--full" || arg == "-f") {
+            options.fullUpdate = true;
+        } else if (arg == "--reboot" || arg == "-r") {
+            options.reboot = true;
+        } else if (arg == "--shutdown" || arg == "-s") {
+            options.shutdown = true;
+        } else if (arg == "--help" || arg == "-h") {
+            options.help = true;
+        } else if (arg == "--version" || arg == "-v") {
+            options.version = true;
+        } else if (arg == "--yes" || arg == "-y") {
+            options.yes = true;
+        } else {
+            errors.push_back("Unknown option: " + arg);
+        }
+    }
+
+    if (options.reboot && options.shutdown) {
+        errors.push_back("-r/--reboot and -s/--shutdown are mutually exclusive.");
+    }
+
+    if ((options.help || options.version) &&
+        (options.reboot || options.shutdown || options.yes || options.fullUpdate)) {
+        errors.push_back("--help and --version can only be combined with each other.");
+    }
+
+    for (const std::string& error : errors) {
+        std::cerr << RED << "Error: " << error << RESET << "\n";
+    }
+
+    return errors.empty();
+}
+
+void printRepositorySummary(const std::string& packageManager) {
+    const auto os = readOsRelease();
+    const auto pretty = os.find("PRETTY_NAME");
+
+    std::cout << YELLOW << "[SYS] " << RESET;
+    if (pretty != os.end() && !pretty->second.empty()) {
+        std::cout << pretty->second;
+    } else {
+        std::cout << "Unknown Linux distribution";
+    }
+    std::cout << "\n";
+
+    const std::string prefix = std::string(YELLOW) + "- " + RESET;
+
+    if (packageManager == "apt") {
+        std::cout << "\n" << YELLOW << "[D]" << RESET
+                  << GREEN << " APT Repositories:\n" << RESET;
+
+        printCommandLines(
+            "{ grep -rhE '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null;"
+            "  grep -rhE '^URIs:' /etc/apt/sources.list.d/*.sources 2>/dev/null"
+            "    | sed 's/^URIs:[[:space:]]*/deb /'; } | sort -u",
+            prefix
+        );
+    } else if (packageManager == "zypper") {
+        std::cout << "\n" << YELLOW << "[Z]" << RESET
+                  << GREEN << " Zypper Repositories:\n" << RESET;
+
+        printCommandLines(
+            "zypper lr 2>/dev/null"
+            " | awk -F'|' '/^[[:space:]]*[0-9]+/{"
+            "gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $2); print $2}'",
+            prefix
+        );
+    } else if (packageManager == "dnf") {
+        std::cout << "\n" << YELLOW << "[R]" << RESET
+                  << GREEN << " DNF Repositories:\n" << RESET;
+
+        printCommandLines(
+            commandExists("dnf5")
+                ? "dnf5 repolist -q 2>/dev/null | awk 'NR>1 && NF{print $1}'"
+                : "dnf repolist -q 2>/dev/null | awk 'NR>1 && NF{print $1}'",
+            prefix
+        );
+    }
+
+    if (commandExists("flatpak") ||
+        commandExists("/usr/bin/flatpak") ||
+        commandExists("/usr/local/bin/flatpak")) {
+        std::cout << "\n" << YELLOW << "[F]" << RESET
+                  << GREEN << " Flatpak Remotes:\n" << RESET;
+
+        printCommandLines("flatpak remotes --columns=name 2>/dev/null", prefix);
+    }
+
+    if (commandExists("snap") || commandExists("/usr/bin/snap")) {
+        std::cout << "\n" << YELLOW << "[S]" << RESET
+                  << GREEN << " Snap is available.\n" << RESET;
     }
 }
 
-//=============================================================================
-// APT
-//=============================================================================
 UpdateStatus aptCheckUpdates() {
-    UpdateStatus s;
+    UpdateStatus status;
 
-    cout << "\n" << YELLOW << "[*] Refreshing package cache..."
-         << RESET << "\n";
+    std::cout << "\n" << YELLOW << "[*] Refreshing package cache..." << RESET << "\n";
 
-    int rc = runCmdExit(
-        "{ echo '-----apt_update-----'; "
-        "  apt-get update -qq; "
-        "} > /tmp/zupd.log 2>&1"
+    if (!runShellOk("apt-get update -qq", "-----apt_update-----", LogMode::Truncate)) {
+        status.checkError = true;
+        checkUniversalManagers(status);
+        return status;
+    }
+
+    const CommandResult simulation = runShellCapture(
+        "LC_ALL=C apt-get dist-upgrade -s",
+        kLogFile,
+        "-----apt_simulate_dist_upgrade-----",
+        LogMode::Append,
+        true,
+        true
     );
 
-    if (rc != 0) {
-        s.check_error = true;
-        checkUniversalManagers(s);
-        return s;
+    if (simulation.exitCode != 0) {
+        status.checkError = true;
+        checkUniversalManagers(status);
+        return status;
     }
 
-    int sim_rc = 0;
-    string out = runCmd("apt-get dist-upgrade -s 2>>/tmp/zupd.log", &sim_rc);
+    status.nativePackages = parseAptSimulation(simulation.output);
+    status.native = !status.nativePackages.empty();
 
-    if (sim_rc != 0) {
-        s.check_error = true;
-        checkUniversalManagers(s);
-        return s;
-    }
-
-    s.native = (out.find("Inst ") != string::npos);
-
-    checkUniversalManagers(s);
-    return s;
+    checkUniversalManagers(status);
+    return status;
 }
 
-static bool aptUpdate(const UpdateStatus& status) {
-    const string pfx = string(YELLOW) + "[+] " + RESET;
+UpdateStatus zypperCheckUpdates(const Options& options) {
+    UpdateStatus status;
 
-    cout << RED << "\nPackages to update (APT):\n" << RESET;
+    std::cout << "\n" << YELLOW << "[*] Refreshing package cache..." << RESET << "\n";
 
-    // POPRAWKA JĘZYKOWA: Dodano LC_ALL=C, aby wymusić standardowy format POSIX 
-    // dla wyjścia komendy 'apt-get', eliminując problemy z lokalizacją językową.
-    printCmdLines(
-        "LC_ALL=C apt-get dist-upgrade -s 2>/dev/null "
-        "| grep '^Inst ' | awk '{print $2}'",
-        pfx
-    );
+    status.zypperDup = options.fullUpdate || isTumbleweedLike();
 
-    printUniversalUpdateLists(status);
-
-    if (!askConfirm()) {
-        cout << YELLOW << "[*] Update cancelled by user." << RESET << "\n";
-        return true;
+    if (!runShellOk("zypper --non-interactive refresh",
+                    "-----zypper_refresh-----",
+                    LogMode::Truncate)) {
+        status.checkError = true;
+        checkUniversalManagers(status);
+        return status;
     }
 
+    const std::string updateCommand = status.zypperDup
+        ? "LC_ALL=C zypper --no-refresh list-updates --all -t package"
+        : "LC_ALL=C zypper --no-refresh list-updates -t package";
+
+    const CommandResult updates = runShellCapture(
+        updateCommand,
+        kLogFile,
+        "-----zypper_list_updates-----",
+        LogMode::Append,
+        true,
+        true
+    );
+
+    if (updates.exitCode != 0) {
+        status.checkError = true;
+        checkUniversalManagers(status);
+        return status;
+    }
+
+    status.nativePackages = parseZypperListUpdates(updates.output);
+
+    const int patchExit = runShellSplitLogs(
+        "LC_ALL=C zypper --no-refresh patch-check",
+        kPatchLogFile,
+        "-----zypper_patch_check-----",
+        LogMode::Truncate,
+        kLogFile
+    );
+
+    const bool hasPatches = (patchExit == 100 || patchExit == 101);
+    if (patchExit != 0 && !hasPatches) {
+        status.checkError = true;
+    }
+
+    if (!status.zypperDup) {
+        const CommandResult patches = runShellCapture(
+            "LC_ALL=C zypper --no-refresh list-patches",
+            kLogFile,
+            "-----zypper_list_patches-----",
+            LogMode::Append,
+            true,
+            true
+        );
+
+        if (patches.exitCode == 0) {
+            status.zypperPatches = parseZypperPatches(patches.output);
+        }
+    }
+
+    status.native = !status.nativePackages.empty() || hasPatches;
+
+    checkUniversalManagers(status);
+    return status;
+}
+
+UpdateStatus dnfCheckUpdates() {
+    UpdateStatus status;
+
+    std::cout << "\n" << YELLOW << "[*] Refreshing package cache..." << RESET << "\n";
+
+    status.dnf5 = commandExists("dnf5") || commandExists("/usr/bin/dnf5");
+
+    const std::string command = status.dnf5
+        ? "LC_ALL=C dnf5 check-upgrade -q"
+        : "LC_ALL=C dnf check-update -q --refresh";
+
+    const CommandResult result = runShellCapture(
+        command,
+        kLogFile,
+        status.dnf5 ? "-----dnf5_check_upgrade-----" : "-----dnf_check_update-----",
+        LogMode::Truncate,
+        true,
+        true
+    );
+
+    if (result.exitCode == 100) {
+        status.native = true;
+        status.nativePackages = parseDnfUpdates(result.output);
+    } else if (result.exitCode != 0) {
+        status.checkError = true;
+    }
+
+    checkUniversalManagers(status);
+    return status;
+}
+
+bool runUpdateFlow(const Options& options,
+                   const UpdateStatus& status,
+                   UiState nativeState,
+                   const std::function<bool()>& checkConsistency,
+                   const std::function<NativeUpdateResult()>& updateNative,
+                   const std::function<bool()>& cleanupNative) {
     const int total = countSteps(status);
     int step = 0;
     bool ok = true;
@@ -421,605 +1206,320 @@ static bool aptUpdate(const UpdateStatus& status) {
     progressbar_start(total);
 
     progressbar_set_state(UiState::CHECKING, ++step);
-
-    if (!systemOk(
-        "{ echo '-----checking_system_consistency-----';"
-        "  DEBIAN_FRONTEND=noninteractive dpkg --configure -a; "
-        "} > /tmp/zupd.log 2>&1"
-    )) {
+    if (!checkConsistency()) {
         ok = false;
     }
-
-    if (checkInterrupted(ok)) goto apt_finish;
-
-    sleep(1);
+    if (checkInterrupted(ok)) {
+        return finishAndReport(options, ok, total, step);
+    }
 
     if (status.native && ok) {
-        progressbar_set_state(UiState::APT, ++step);
+        progressbar_set_state(nativeState, ++step);
+        const NativeUpdateResult result = updateNative();
 
-        if (!systemOk(
-            "{ echo '-----updating_APT-----';"
-            "  DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y"
-            "    -o Dpkg::Options::='--force-confdef'"
-            "    -o Dpkg::Options::='--force-confold'; "
-            "} >> /tmp/zupd.log 2>&1"
-        )) {
-            ok = false;
-        }
-    }
-
-    if (checkInterrupted(ok)) goto apt_finish;
-
-    if (status.hasflatpak && status.flatpak && ok) {
-        progressbar_set_state(UiState::FLATPAK, ++step);
-
-        if (!systemOk(
-            "{ echo '----updating_flatpak----'; flatpak update -y; } "
-            ">> /tmp/zupd.log 2>&1"
-        )) {
-            ok = false;
-        }
-    }
-
-    if (checkInterrupted(ok)) goto apt_finish;
-
-    if (status.hassnap && status.snap && ok) {
-        progressbar_set_state(UiState::SNAP, ++step);
-
-        if (!systemOk(
-            "{ echo '----updating_snap----'; snap refresh; } "
-            ">> /tmp/zupd.log 2>&1"
-        )) {
-            ok = false;
-        }
-    }
-
-    if (checkInterrupted(ok)) goto apt_finish;
-
-    progressbar_set_state(UiState::CLEANUP, ++step);
-
-    if (!systemOk(
-        "{ echo '----cleaning----';"
-        "  apt-get autoremove -y; apt-get autoclean; "
-        "} >> /tmp/zupd.log 2>&1"
-    )) {
-        ok = false;
-    }
-
-    if (!cleanupUniversal(status))
-        ok = false;
-
-apt_finish:
-    finishAndReport(ok, total, step);
-    return ok && !g_interrupted;
-}
-
-//=============================================================================
-// ZYPPER
-//=============================================================================
-UpdateStatus zypperCheckUpdates() {
-    UpdateStatus s;
-
-    cout << "\n" << YELLOW << "[*] Refreshing package cache..."
-         << RESET << "\n";
-
-    s.zypper_dup = fullupdate || isTumbleweedLike();
-
-    int refresh_rc = runCmdExit(
-        "{ echo '-----zypper_refresh-----'; "
-        "  zypper --non-interactive refresh; "
-        "} > /tmp/zupd.log 2>&1"
-    );
-
-    if (refresh_rc != 0) {
-        s.check_error = true;
-        checkUniversalManagers(s);
-        return s;
-    }
-
-    string pkg_cmd;
-
-    if (s.zypper_dup) {
-        pkg_cmd =
-            "zypper --no-refresh list-updates --all -t package 2>>/tmp/zupd.log "
-            "| awk -F'|' '$1 ~ /v/ {"
-            "gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $3); print $3"
-            "}'";
-    } else {
-        pkg_cmd =
-            "zypper --no-refresh list-updates -t package 2>>/tmp/zupd.log "
-            "| awk -F'|' '$1 ~ /v/ {"
-            "gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $3); print $3"
-            "}'";
-    }
-
-    int pkg_rc = 0;
-    string pkg_updates = runCmd(pkg_cmd, &pkg_rc);
-
-    if (pkg_rc != 0) {
-        s.check_error = true;
-        checkUniversalManagers(s);
-        return s;
-    }
-
-    int patch_rc = runCmdExit(
-        "zypper --no-refresh patch-check "
-        "> /tmp/zupd_patchcheck.log 2>>/tmp/zupd.log"
-    );
-
-    bool has_patches = (patch_rc == 100 || patch_rc == 101);
-
-    if (patch_rc != 0 && patch_rc != 100 && patch_rc != 101) {
-        s.check_error = true;
-    }
-
-    s.native = !pkg_updates.empty() || has_patches;
-
-    checkUniversalManagers(s);
-    return s;
-}
-
-static bool zypperUpdate(const UpdateStatus& status) {
-    const string pfx = string(YELLOW) + "[+] " + RESET;
-
-    cout << RED << "\nPackages to update (Zypper):\n" << RESET;
-
-    // POPRAWKA JĘZYKOWA I PARSOWANIA: Dodano LC_ALL=C oraz rygorystyczne kotwice ^ i $ w awk.
-    // Dzięki temu skrypt zadziała na każdym języku systemu i nie złapie losowych tekstów.
-    if (status.zypper_dup) {
-        printCmdLines(
-            "LC_ALL=C zypper --no-refresh list-updates --all -t package 2>/dev/null "
-            "| awk -F'|' '$1 ~ /^[[:space:]]*v[[:space:]]*$/ {"
-            "gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $3); print $3"
-            "}'",
-            pfx
-        );
-    } else {
-        printCmdLines(
-            "LC_ALL=C zypper --no-refresh list-updates -t package 2>/dev/null "
-            "| awk -F'|' '$1 ~ /^[[:space:]]*v[[:space:]]*$/ {"
-            "gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $3); print $3"
-            "}'",
-            pfx
-        );
-
-        printCmdLines(
-            "LC_ALL=C zypper --no-refresh list-patches 2>/dev/null "
-            "| awk -F'|' '$1 ~ /^[[:space:]]*(needed|security|recommended|optional)[[:space:]]*$/ {"
-            "gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $3); print $3"
-            "}'",
-            pfx
-        );
-    }
-
-    printUniversalUpdateLists(status);
-
-    if (!askConfirm()) {
-        cout << YELLOW << "[*] Update cancelled by user." << RESET << "\n";
-        return true;
-    }
-
-    const int total = countSteps(status);
-    int step = 0;
-    bool ok = true;
-
-    progressbar_start(total);
-
-    progressbar_set_state(UiState::CHECKING, ++step);
-
-    system("{ echo '-----checking_system_consistency-----'; } > /tmp/zupd.log 2>&1");
-
-    if (checkInterrupted(ok)) goto zypper_finish;
-
-    sleep(1);
-
-    if (status.native && ok) {
-        progressbar_set_state(UiState::ZYPPER, ++step);
-
-        const char* zypper_cmd = status.zypper_dup
-            ? "{ echo '-----updating_zypper_DUP-----'; "
-              "  zypper dup -y --auto-agree-with-licenses; "
-              "} >> /tmp/zupd.log 2>&1"
-            : "{ echo '-----updating_zypper_PATCH_WITH_UPDATE-----'; "
-              "  zypper patch --with-update -y --auto-agree-with-licenses; "
-              "} >> /tmp/zupd.log 2>&1";
-
-        int zypper_exit = decodeExitStatus(system(zypper_cmd));
-
-        if (zypper_exit == 103 || zypper_exit == 8) {
+        if (result == NativeUpdateResult::RestartRequired) {
             progressbar_finish("RESTART NEEDED");
 
-            cout << "\n" << YELLOW
-                 << "[*] Zypper is adjusting its stack manager and has aborted the download.\n"
-                 << "[*] The remaining system packages are NOT updated.\n"
-                 << "[*] Restart command to update system.\n"
-                 << RESET << "\n";
+            std::cout << "\n" << YELLOW
+                      << "[*] Zypper is adjusting its stack manager and has aborted the download.\n"
+                      << "[*] The remaining system packages are NOT updated.\n"
+                      << "[*] Restart command to update system.\n"
+                      << RESET << "\n";
 
-            system("{ echo '----cleaning----'; zypper clean -a; } >> /tmp/zupd.log 2>&1");
+            cleanupNative();
             cleanupUniversal(status);
             return false;
         }
-        else if (zypper_exit != 0) {
+
+        if (result == NativeUpdateResult::Failed) {
             ok = false;
         }
     }
+    if (checkInterrupted(ok)) {
+        return finishAndReport(options, ok, total, step);
+    }
 
-    if (checkInterrupted(ok)) goto zypper_finish;
-
-    if (status.hasflatpak && status.flatpak && ok) {
+    if (status.hasFlatpakUpdates() && ok) {
         progressbar_set_state(UiState::FLATPAK, ++step);
-
-        if (!systemOk(
-            "{ echo '----updating_flatpak----'; flatpak update -y; } "
-            ">> /tmp/zupd.log 2>&1"
-        )) {
+        if (!runShellOk("flatpak update -y", "----updating_flatpak----")) {
             ok = false;
         }
     }
+    if (checkInterrupted(ok)) {
+        return finishAndReport(options, ok, total, step);
+    }
 
-    if (checkInterrupted(ok)) goto zypper_finish;
-
-    if (status.hassnap && status.snap && ok) {
+    if (status.hasSnapUpdates() && ok) {
         progressbar_set_state(UiState::SNAP, ++step);
-
-        if (!systemOk(
-            "{ echo '----updating_snap----'; snap refresh; } "
-            ">> /tmp/zupd.log 2>&1"
-        )) {
+        if (!runShellOk("snap refresh", "----updating_snap----")) {
             ok = false;
         }
     }
-
-    if (checkInterrupted(ok)) goto zypper_finish;
+    if (checkInterrupted(ok)) {
+        return finishAndReport(options, ok, total, step);
+    }
 
     progressbar_set_state(UiState::CLEANUP, ++step);
-
-    if (!systemOk(
-        "{ echo '----cleaning----'; zypper clean -a; } "
-        ">> /tmp/zupd.log 2>&1"
-    )) {
+    if (!cleanupNative()) {
+        ok = false;
+    }
+    if (!cleanupUniversal(status)) {
         ok = false;
     }
 
-    if (!cleanupUniversal(status))
-        ok = false;
-
-zypper_finish:
-    finishAndReport(ok, total, step);
-    return ok && !g_interrupted;
+    checkInterrupted(ok);
+    return finishAndReport(options, ok, total, step);
 }
 
-//=============================================================================
-// DNF / DNF5
-//=============================================================================
-UpdateStatus dnfCheckUpdates() {
-    UpdateStatus s;
-
-    cout << "\n" << YELLOW << "[*] Refreshing package cache..."
-         << RESET << "\n";
-
-    s.dnf5 = commandExists("/usr/bin/dnf5");
-
-    int rc;
-
-    if (s.dnf5) {
-        rc = runCmdExit(
-            "{ echo '-----dnf5_check_upgrade-----'; "
-            "  dnf5 check-upgrade -q; "
-            "} > /tmp/zupd.log 2>&1"
-        );
-    } else {
-        rc = runCmdExit(
-            "{ echo '-----dnf_check_update-----'; "
-            "  dnf check-update -q --refresh; "
-            "} > /tmp/zupd.log 2>&1"
-        );
-    }
-
-    // DNF zwraca 100, gdy są aktualizacje.
-    if (rc == 100) {
-        s.native = true;
-    } else if (rc != 0) {
-        s.check_error = true;
-    }
-
-    checkUniversalManagers(s);
-    return s;
-}
-
-static bool dnfUpdate(const UpdateStatus& status) {
-    const string pfx = string(YELLOW) + "[+] " + RESET;
-
-    cout << RED << "\nPackages to update (DNF"
-         << (status.dnf5 ? "5" : "") << "):\n" << RESET;
-
-    {
-        // POPRAWKA JĘZYKOWA: Dodano LC_ALL=C, aby DNF zawsze zwracał dane 
-        // w standardowym angielskim formacie, bez względu na język systemu.
-        const string list_cmd = status.dnf5
-            ? "LC_ALL=C dnf5 list --upgrades -q 2>/dev/null"
-            : "LC_ALL=C dnf list updates -q 2>/dev/null";
-
-        FILE* p = popen(list_cmd.c_str(), "r");
-
-        if (p) {
-            char buf[512];
-            bool any = false;
-
-            while (fgets(buf, sizeof(buf), p)) {
-                string line(buf);
-                
-                // UODPORNIENIE PARSOWANIA: Używamy strumienia (upewnij się, że masz #include <sstream>)
-                // Prawdziwy wpis pakietu w DNF zawsze składa się z 3 kolumn (Nazwa.arch Wersja Repozytorium).
-                stringstream ss(line);
-                string pkg, version, repo;
-
-                // Jeśli linia nie ma 3 kolumn (np. pusta linia lub krótki komunikat), pomijamy ją
-                if (!(ss >> pkg >> version >> repo)) continue;
-
-                // Szukamy kropki oddzielającej architekturę (np. .x86_64, .noarch)
-                size_t dot = pkg.rfind('.');
-                if (dot == string::npos) continue;
-
-                // Dodatkowe odfiltrowanie angielskich nagłówków tabeli DNF
-                if (pkg == "Available" || pkg == "Package") continue;
-
-                string name = pkg.substr(0, dot);
-                cout << pfx << name << "\n";
-                any = true;
-            }
-
-            pclose(p);
-
-            if (!any)
-                cout << YELLOW << "(no packages listed)" << RESET << "\n";
-        }
-    }
-
+bool aptUpdate(const Options& options, const UpdateStatus& status) {
+    printPackageList("APT", status.nativePackages, status.native);
     printUniversalUpdateLists(status);
 
-    if (!askConfirm()) {
-        cout << YELLOW << "[*] Update cancelled by user." << RESET << "\n";
+    if (!askConfirm(options)) {
+        std::cout << YELLOW << "[*] Update cancelled by user." << RESET << "\n";
         return true;
     }
 
-    const int total = countSteps(status);
-    int step = 0;
-    bool ok = true;
-
-    progressbar_start(total);
-    progressbar_set_state(UiState::CHECKING, ++step);
-
-    system("{ echo '-----checking_system_consistency-----'; } > /tmp/zupd.log 2>&1");
-
-    if (checkInterrupted(ok)) goto dnf_finish;
-
-    sleep(1);
-
-    if (status.native && ok) {
-        progressbar_set_state(UiState::DNF, ++step);
-        const char* dnf_cmd;
-
-        if (status.dnf5) {
-            dnf_cmd = fullupdate
-                ? "{ echo '-----updating_DNF5_distro-sync-----'; dnf5 distro-sync -y; } >> /tmp/zupd.log 2>&1"
-                : "{ echo '-----updating_DNF5-----'; dnf5 upgrade -y; } >> /tmp/zupd.log 2>&1";
-        } else {
-            dnf_cmd = fullupdate
-                ? "{ echo '-----updating_DNF_distro-sync-----'; dnf distro-sync -y; } >> /tmp/zupd.log 2>&1"
-                : "{ echo '-----updating_DNF-----'; dnf upgrade -y; } >> /tmp/zupd.log 2>&1";
+    return runUpdateFlow(
+        options,
+        status,
+        UiState::APT,
+        [] {
+            return runShellOk(
+                "DEBIAN_FRONTEND=noninteractive dpkg --configure -a",
+                "-----checking_system_consistency-----"
+            );
+        },
+        [] {
+            return runShellOk(
+                "DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y "
+                "-o Dpkg::Options::=--force-confdef "
+                "-o Dpkg::Options::=--force-confold",
+                "-----updating_APT-----"
+            ) ? NativeUpdateResult::Ok : NativeUpdateResult::Failed;
+        },
+        [] {
+            return runShellOk(
+                "DEBIAN_FRONTEND=noninteractive apt-get autoremove -y && apt-get autoclean",
+                "----cleaning_APT----"
+            );
         }
-
-        if (decodeExitStatus(system(dnf_cmd)) != 0)
-            ok = false;
-    }
-
-    if (checkInterrupted(ok)) goto dnf_finish;
-
-    if (status.hasflatpak && status.flatpak && ok) {
-        progressbar_set_state(UiState::FLATPAK, ++step);
-
-        if (!systemOk(
-            "{ echo '----updating_flatpak----'; flatpak update -y; } "
-            ">> /tmp/zupd.log 2>&1"
-        )) {
-            ok = false;
-        }
-    }
-
-    if (checkInterrupted(ok)) goto dnf_finish;
-
-    if (status.hassnap && status.snap && ok) {
-        progressbar_set_state(UiState::SNAP, ++step);
-
-        if (!systemOk(
-            "{ echo '----updating_snap----'; snap refresh; } "
-            ">> /tmp/zupd.log 2>&1"
-        )) {
-            ok = false;
-        }
-    }
-
-    if (checkInterrupted(ok)) goto dnf_finish;
-
-    progressbar_set_state(UiState::CLEANUP, ++step);
-
-    if (status.dnf5) {
-        if (!systemOk(
-            "{ echo '----cleaning----';"
-            "  dnf5 autoremove -y; dnf5 clean packages; "
-            "} >> /tmp/zupd.log 2>&1"
-        )) {
-            ok = false;
-        }
-    } else {
-        if (!systemOk(
-            "{ echo '----cleaning----';"
-            "  dnf autoremove -y; dnf clean packages; "
-            "} >> /tmp/zupd.log 2>&1"
-        )) {
-            ok = false;
-        }
-    }
-
-    if (!cleanupUniversal(status))
-        ok = false;
-
-dnf_finish:
-    finishAndReport(ok, total, step);
-    return ok && !g_interrupted;
+    );
 }
 
-//=============================================================================
-// main
-//=============================================================================
-int main(int argc, char* argv[]) {
-    string pm = get_package_manager();
+bool zypperUpdate(const Options& options, const UpdateStatus& status) {
+    printPackageList("Zypper", status.nativePackages, status.native);
+    if (!status.zypperDup) {
+        printPackageList("Zypper patches", status.zypperPatches);
+    }
+    printUniversalUpdateLists(status);
 
-    zpm_update::checkForUpdates();
-
-    for (int i = 1; i < argc; i++) {
-        string arg = argv[i];
-
-        if      (arg == "--full"     || arg == "-f") fullupdate = true;
-        else if (arg == "--reboot"   || arg == "-r") reboot     = true;
-        else if (arg == "--shutdown" || arg == "-s") shutdown   = true;
-        else if (arg == "--help"     || arg == "-h") help       = true;
-        else if (arg == "--version"  || arg == "-v") version    = true;
-        else if (arg == "--yes"      || arg == "-y") yes        = true;
+    if (!askConfirm(options)) {
+        std::cout << YELLOW << "[*] Update cancelled by user." << RESET << "\n";
+        return true;
     }
 
-    if ((reboot && shutdown)         ||
-        (help    && reboot)          ||
-        (help    && shutdown)        ||
-        (version && yes)             ||
-        (help    && yes)             ||
-        (version && reboot)          ||
-        (version && shutdown)        ||
-        (fullupdate && version)      ||
-        (fullupdate && help)) {
-        cerr << RED
-             << "Error: -r and -s are mutually exclusive. "
-             << "--help and --version cannot be combined with other options."
-             << RESET << "\n";
+    return runUpdateFlow(
+        options,
+        status,
+        UiState::ZYPPER,
+        [] {
+            writeLogHeader("-----checking_system_consistency-----");
+            return true;
+        },
+        [&status] {
+            const std::string command = status.zypperDup
+                ? "zypper --non-interactive dup -y --auto-agree-with-licenses"
+                : "zypper --non-interactive patch --with-update -y --auto-agree-with-licenses";
+
+            const int exitCode = runShellLogged(
+                command,
+                status.zypperDup
+                    ? "-----updating_zypper_DUP-----"
+                    : "-----updating_zypper_PATCH_WITH_UPDATE-----"
+            );
+
+            if (exitCode == 103 || exitCode == 8) {
+                return NativeUpdateResult::RestartRequired;
+            }
+
+            return exitCode == 0 ? NativeUpdateResult::Ok : NativeUpdateResult::Failed;
+        },
+        [] {
+            return runShellOk("zypper clean -a", "----cleaning_zypper----");
+        }
+    );
+}
+
+bool dnfUpdate(const Options& options, const UpdateStatus& status) {
+    printPackageList(status.dnf5 ? "DNF5" : "DNF", status.nativePackages, status.native);
+    printUniversalUpdateLists(status);
+
+    if (!askConfirm(options)) {
+        std::cout << YELLOW << "[*] Update cancelled by user." << RESET << "\n";
+        return true;
+    }
+
+    return runUpdateFlow(
+        options,
+        status,
+        UiState::DNF,
+        [] {
+            writeLogHeader("-----checking_system_consistency-----");
+            return true;
+        },
+        [&options, &status] {
+            std::string command;
+            std::string header;
+
+            if (status.dnf5) {
+                command = options.fullUpdate ? "dnf5 distro-sync -y" : "dnf5 upgrade -y";
+                header = options.fullUpdate ? "-----updating_DNF5_distro-sync-----" : "-----updating_DNF5-----";
+            } else {
+                command = options.fullUpdate ? "dnf distro-sync -y" : "dnf upgrade -y";
+                header = options.fullUpdate ? "-----updating_DNF_distro-sync-----" : "-----updating_DNF-----";
+            }
+
+            return runShellOk(command, header) ? NativeUpdateResult::Ok : NativeUpdateResult::Failed;
+        },
+        [&status] {
+            return status.dnf5
+                ? runShellOk("dnf5 autoremove -y && dnf5 clean packages", "----cleaning_DNF5----")
+                : runShellOk("dnf autoremove -y && dnf clean packages", "----cleaning_DNF----");
+        }
+    );
+}
+
+int handleApt(const Options& options) {
+    UpdateStatus status = aptCheckUpdates();
+
+    if (status.checkError) {
+        std::cerr << RED
+                  << "Error: Could not check APT updates. Check " << kLogFile
+                  << RESET << "\n";
         return 1;
     }
 
-    if (version && help) {
-        cout << YELLOW << "--version" << RESET << "\n";
-        versionmessage();
-
-        cout << "\n";
-
-        cout << YELLOW << "--help" << RESET << "\n";
-        helpmessage(argv[0]);
-
+    if (!status.any()) {
+        std::cout << "\n" << GREEN << "System is up to date!" << RESET << "\n";
         return 0;
     }
 
-    if (version) {
-        versionmessage();
+    if (options.fullUpdate) {
+        std::cout << YELLOW << "FULL UPDATE MODE" << RESET << "\n";
+    }
+
+    return aptUpdate(options, status) ? 0 : 1;
+}
+
+int handleZypper(const Options& options) {
+    UpdateStatus status = zypperCheckUpdates(options);
+
+    if (status.checkError) {
+        std::cerr << RED
+                  << "Error: Could not check Zypper updates. Check "
+                  << kLogFile << " and " << kPatchLogFile
+                  << RESET << "\n";
+        return 1;
+    }
+
+    if (!status.any()) {
+        std::cout << "\n" << GREEN << "System is up to date!" << RESET << "\n";
         return 0;
     }
 
-    if (help) {
-        helpmessage(argv[0]);
+    if (status.zypperDup) {
+        std::cout << YELLOW << "FULL UPDATE MODE (dup)" << RESET << "\n";
+    }
+
+    return zypperUpdate(options, status) ? 0 : 1;
+}
+
+int handleDnf(const Options& options) {
+    UpdateStatus status = dnfCheckUpdates();
+
+    if (status.checkError) {
+        std::cerr << RED
+                  << "Error: Could not check DNF updates. Check " << kLogFile
+                  << RESET << "\n";
+        return 1;
+    }
+
+    if (!status.any()) {
+        std::cout << "\n" << GREEN << "System is up to date!" << RESET << "\n";
+        return 0;
+    }
+
+    if (options.fullUpdate) {
+        std::cout << YELLOW << "FULL UPDATE MODE (distro-sync)" << RESET << "\n";
+    }
+
+    return dnfUpdate(options, status) ? 0 : 1;
+}
+
+} // namespace
+
+int main(int argc, char* argv[]) {
+    Options options;
+
+    if (!parseOptions(argc, argv, options)) {
+        std::cerr << YELLOW << "Use --help to show available options." << RESET << "\n";
+        return 1;
+    }
+
+    if (options.version && options.help) {
+        std::cout << YELLOW << "--version" << RESET << "\n";
+        printVersion();
+        std::cout << "\n" << YELLOW << "--help" << RESET << "\n";
+        printHelp(argv[0]);
+        return 0;
+    }
+
+    if (options.version) {
+        printVersion();
+        return 0;
+    }
+
+    if (options.help) {
+        printHelp(argv[0]);
         return 0;
     }
 
     if (geteuid() != 0) {
-        cerr << RED << "Run with sudo!\n" << RESET;
+        std::cerr << RED << "Run with sudo!\n" << RESET;
         return 1;
     }
 
-    if (pm == "unknown") {
-        cerr << RED
-             << "Error: Could not detect a supported package manager "
-             << "(apt / zypper / dnf).\n"
-             << RESET;
+    zpm_update::checkForUpdates();
+
+    const std::string packageManager = get_package_manager();
+    if (packageManager == "unknown") {
+        std::cerr << RED
+                  << "Error: Could not detect a supported package manager "
+                  << "(apt / zypper / dnf).\n"
+                  << RESET;
         return 1;
     }
 
-    ScopedLock lock;
-    if (!lock.active)
+    FileLock lock;
+    if (!lock.acquire()) {
         return 1;
-
-    signal(SIGINT, handleSigint);
-
-    repo(pm);
-
-    bool updateOk = true;
-
-    if (pm == "apt") {
-        UpdateStatus s = aptCheckUpdates();
-
-        if (s.check_error) {
-            cerr << RED
-                 << "Error: Could not check APT updates. "
-                 << "Check /tmp/zupd.log"
-                 << RESET << "\n";
-            return 1;
-        }
-
-        if (!s.any()) {
-            cout << "\n" << GREEN << "System is up to date!" << RESET << "\n";
-            return 0;
-        }
-
-        if (fullupdate) {
-            cout << YELLOW << "FULL UPDATE MODE" << RESET << "\n";
-            sleep(1);
-        }
-
-        updateOk = aptUpdate(s);
-    }
-    else if (pm == "zypper") {
-        UpdateStatus s = zypperCheckUpdates();
-
-        if (s.check_error) {
-            cerr << RED
-                 << "Error: Could not check Zypper updates. "
-                 << "Check /tmp/zupd.log and /tmp/zupd_patchcheck.log"
-                 << RESET << "\n";
-            return 1;
-        }
-
-        if (!s.any()) {
-            cout << "\n" << GREEN << "System is up to date!" << RESET << "\n";
-            return 0;
-        }
-
-        if (s.zypper_dup) {
-            cout << YELLOW << "FULL UPDATE MODE (dup)" << RESET << "\n";
-            sleep(1);
-        }
-
-        updateOk = zypperUpdate(s);
-    }
-    else if (pm == "dnf") {
-        UpdateStatus s = dnfCheckUpdates();
-
-        if (s.check_error) {
-            cerr << RED
-                 << "Error: Could not check DNF updates. "
-                 << "Check /tmp/zupd.log"
-                 << RESET << "\n";
-            return 1;
-        }
-
-        if (!s.any()) {
-            cout << "\n" << GREEN << "System is up to date!" << RESET << "\n";
-            return 0;
-        }
-
-        if (fullupdate) {
-            cout << YELLOW << "FULL UPDATE MODE (distro-sync)" << RESET << "\n";
-            sleep(1);
-        }
-
-        updateOk = dnfUpdate(s);
     }
 
-    if (g_interrupted) return 130;
-    return updateOk ? 0 : 1;
+    SigintGuard sigintGuard;
+    printRepositorySummary(packageManager);
+
+    int result = 1;
+    if (packageManager == "apt") {
+        result = handleApt(options);
+    } else if (packageManager == "zypper") {
+        result = handleZypper(options);
+    } else if (packageManager == "dnf") {
+        result = handleDnf(options);
+    }
+
+    if (g_interrupted) {
+        return 130;
+    }
+    return result;
 }
