@@ -1,3 +1,4 @@
+
 #include "main.h"
 
 using namespace std;
@@ -12,7 +13,6 @@ bool fullupdate = false;
 string ans;
 //koniec zmiennych globalnych--------------------------------------------------
 
-//funkcje pomocnicze-----------------------------------------------------------
 static string runCmd(const string& cmd) {
     string result;
     FILE* p = popen(cmd.c_str(), "r");
@@ -58,9 +58,6 @@ void versionmessage() {
          << "License: MIT\n";
 }
 
-//-----------------------------------------------------------------------------
-// repo()
-//-----------------------------------------------------------------------------
 void repo(const string& pm) {
     bool hasflatpak = (access("/usr/bin/flatpak", X_OK) == 0 ||
                        access("/usr/local/bin/flatpak", X_OK) == 0);
@@ -107,9 +104,6 @@ void repo(const string& pm) {
     }
 }
 
-//-----------------------------------------------------------------------------
-// UpdateStatus
-//-----------------------------------------------------------------------------
 struct UpdateStatus {
     bool native     = false;
     bool flatpak    = false;
@@ -122,7 +116,7 @@ struct UpdateStatus {
 };
 
 static int countSteps(const UpdateStatus& s) {
-    int n = 2; // CHECKING + CLEANUP zawsze
+    int n = 2;
     if (s.native)                  n++;
     if (s.hasflatpak && s.flatpak) n++;
     if (s.hassnap    && s.snap)    n++;
@@ -202,7 +196,7 @@ UpdateStatus aptCheckUpdates() {
     UpdateStatus s;
     cout << "\n" << YELLOW << "[*] Refreshing package cache..." << RESET << "\n";
 
-    system("apt-get update -qq 2>/dev/null");
+    system("apt-get update 2>/dev/null");
     string out = runCmd("apt-get dist-upgrade -s 2>/dev/null");
     s.native = (out.find("Inst ") != string::npos);
 
@@ -268,7 +262,7 @@ UpdateStatus zypperCheckUpdates() {
     UpdateStatus s;
     cout << "\n" << YELLOW << "[*] Refreshing package cache..." << RESET << "\n";
 
-    system("zypper refresh -q 2>/dev/null");
+    system("zypper refresh 2>/dev/null");
     string out = runCmd("zypper list-updates 2>/dev/null");
     s.native = (out.find("v |") != string::npos);
 
@@ -336,12 +330,12 @@ UpdateStatus dnfCheckUpdates() {
     s.dnf5 = (access("/usr/bin/dnf5", X_OK) == 0);
 
     if (s.dnf5) {
-        system("dnf5 check-upgrade -q >/dev/null 2>&1");
+        system("dnf5 check-upgrade >/dev/null 2>&1");
         string out = runCmd("dnf5 list --upgrades 2>/dev/null");
         s.native = (out.find('\n') != string::npos &&
                     out.find('\n') != out.rfind('\n'));
     } else {
-        system("dnf check-update -q --refresh >/dev/null 2>&1");
+        system("dnf check-update --refresh >/dev/null 2>&1");
         string out = runCmd("dnf list updates 2>/dev/null");
         s.native = (out.find('\n') != string::npos &&
                     out.find('\n') != out.rfind('\n'));
