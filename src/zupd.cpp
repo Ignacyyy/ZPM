@@ -321,8 +321,10 @@ void aptUpdate(const UpdateStatus& status) {
 
     cout << RED << "\nPackages to update (APT):\n" << RESET;
 
+    // POPRAWKA JĘZYKOWA: Dodano LC_ALL=C, aby wymusić standardowy format POSIX 
+    // dla wyjścia komendy 'apt-get', eliminując problemy z lokalizacją językową.
     printCmdLines(
-        "apt-get dist-upgrade -s 2>/dev/null "
+        "LC_ALL=C apt-get dist-upgrade -s 2>/dev/null "
         "| grep '^Inst ' | awk '{print $2}'",
         pfx
     );
@@ -367,7 +369,6 @@ void aptUpdate(const UpdateStatus& status) {
             "} >> /tmp/zupd.log 2>&1"
         );
         
-        // POPRAWKA: Bezpieczne dekodowanie statusu zakończenia procesu APT
         int apt_exit = WIFEXITED(apt_rc) ? WEXITSTATUS(apt_rc) : 127;
         if (apt_exit != 0) {
             ok = false;
@@ -382,7 +383,6 @@ void aptUpdate(const UpdateStatus& status) {
             ">> /tmp/zupd.log 2>&1"
         );
         
-        // POPRAWKA: Bezpieczne dekodowanie statusu dla Flatpaka
         int flatpak_exit = WIFEXITED(flatpak_rc) ? WEXITSTATUS(flatpak_rc) : 127;
         if (flatpak_exit != 0) {
             ok = false;
@@ -397,7 +397,6 @@ void aptUpdate(const UpdateStatus& status) {
             ">> /tmp/zupd.log 2>&1"
         );
         
-        // POPRAWKA: Bezpieczne dekodowanie statusu dla Snapa
         int snap_exit = WIFEXITED(snap_rc) ? WEXITSTATUS(snap_rc) : 127;
         if (snap_exit != 0) {
             ok = false;
@@ -479,26 +478,28 @@ void zypperUpdate(const UpdateStatus& status) {
 
     cout << RED << "\nPackages to update (Zypper):\n" << RESET;
 
+    // POPRAWKA JĘZYKOWA I PARSOWANIA: Dodano LC_ALL=C oraz rygorystyczne kotwice ^ i $ w awk.
+    // Dzięki temu skrypt zadziała na każdym języku systemu i nie złapie losowych tekstów.
     if (status.zypper_dup) {
         printCmdLines(
-            "zypper --no-refresh list-updates --all -t package 2>/dev/null "
-            "| awk -F'|' '$1 ~ /v/ {"
+            "LC_ALL=C zypper --no-refresh list-updates --all -t package 2>/dev/null "
+            "| awk -F'|' '$1 ~ /^[[:space:]]*v[[:space:]]*$/ {"
             "gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $3); print $3"
             "}'",
             pfx
         );
     } else {
         printCmdLines(
-            "zypper --no-refresh list-updates -t package 2>/dev/null "
-            "| awk -F'|' '$1 ~ /v/ {"
+            "LC_ALL=C zypper --no-refresh list-updates -t package 2>/dev/null "
+            "| awk -F'|' '$1 ~ /^[[:space:]]*v[[:space:]]*$/ {"
             "gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $3); print $3"
             "}'",
             pfx
         );
 
         printCmdLines(
-            "zypper --no-refresh list-patches 2>/dev/null "
-            "| awk -F'|' '$1 ~ /needed|security|recommended|optional/ {"
+            "LC_ALL=C zypper --no-refresh list-patches 2>/dev/null "
+            "| awk -F'|' '$1 ~ /^[[:space:]]*(needed|security|recommended|optional)[[:space:]]*$/ {"
             "gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $3); print $3"
             "}'",
             pfx
@@ -520,11 +521,8 @@ void zypperUpdate(const UpdateStatus& status) {
 
     progressbar_set_state(UiState::CHECKING, ++step);
 
-    system(
-        "{ echo '-----checking_system_consistency-----'; "
-        "  rpm --rebuilddb; "
-        "} > /tmp/zupd.log 2>&1"
-    );
+    // POPRAWKA: Usunięto powolne i ryzykowne 'rpm --rebuilddb' z fazy sprawdzania.
+    system("{ echo '-----checking_system_consistency-----'; } > /tmp/zupd.log 2>&1");
 
     sleep(1);
 
@@ -542,26 +540,18 @@ void zypperUpdate(const UpdateStatus& status) {
         int zypper_rc = system(zypper_cmd);
         int zypper_exit = WIFEXITED(zypper_rc) ? WEXITSTATUS(zypper_rc) : 127;
 
-        // NOWA POPRAWKA: Obsługa wymuszonego restartu Zyppera z przerwaniem i czyszczeniem
+        // Obsługa wymuszonego restartu Zyppera (kod 103 lub 8)
         if (zypper_exit == 103 || zypper_exit == 8) {
-            // 1. Kończymy pasek postępu statusem ostrzegawczym (zapobiega rozjechaniu UI)
             progressbar_finish("RESTART NEEDED");
             
-            // 2. Informujemy użytkownika o konieczności ponownego uruchomienia w nowej linii
             cout << "\n" << YELLOW
                  << "[*] Zypper is adjusting its stack manager and has aborted the download.\n"
                  << "[*] The remaining system packages are NOT updated.\n"
                  << "[*] Restart command to update system.\n"
                  << RESET << "\n";
 
-            // 3. Wykonujemy czyszczenie, ponieważ sesja Zyppera i tak została zamknięta
-            system(
-                "{ echo '----cleaning----'; zypper clean -a; } "
-                ">> /tmp/zupd.log 2>&1"
-            );
+            system("{ echo '----cleaning----'; zypper clean -a; } >> /tmp/zupd.log 2>&1");
             cleanupUniversal(status);
-
-            // 4. Wychodzimy z funkcji wcześniej – NIE przechodzimy do Flatpak/Snap i nie piszemy "DONE!"
             return;
         } 
         else if (zypper_exit != 0) {
@@ -572,10 +562,13 @@ void zypperUpdate(const UpdateStatus& status) {
     if (status.hasflatpak && status.flatpak) {
         progressbar_set_state(UiState::FLATPAK, ++step);
 
-        if (system(
+        // POPRAWKA: Bezpieczne dekodowanie statusu wyjścia Flatpaka
+        int flatpak_rc = system(
             "{ echo '----updating_flatpak----'; flatpak update -y; } "
             ">> /tmp/zupd.log 2>&1"
-        ) != 0) {
+        );
+        int flatpak_exit = WIFEXITED(flatpak_rc) ? WEXITSTATUS(flatpak_rc) : 127;
+        if (flatpak_exit != 0) {
             ok = false;
         }
     }
@@ -583,10 +576,13 @@ void zypperUpdate(const UpdateStatus& status) {
     if (status.hassnap && status.snap) {
         progressbar_set_state(UiState::SNAP, ++step);
 
-        if (system(
+        // POPRAWKA: Bezpieczne dekodowanie statusu wyjścia Snapa
+        int snap_rc = system(
             "{ echo '----updating_snap----'; snap refresh; } "
             ">> /tmp/zupd.log 2>&1"
-        ) != 0) {
+        );
+        int snap_exit = WIFEXITED(snap_rc) ? WEXITSTATUS(snap_rc) : 127;
+        if (snap_exit != 0) {
             ok = false;
         }
     }
@@ -653,10 +649,11 @@ void dnfUpdate(const UpdateStatus& status) {
          << (status.dnf5 ? "5" : "") << "):\n" << RESET;
 
     {
-        // Dodano flagę -q (quiet), aby ograniczyć zbędne komunikaty DNF
+        // POPRAWKA JĘZYKOWA: Dodano LC_ALL=C, aby DNF zawsze zwracał dane 
+        // w standardowym angielskim formacie, bez względu na język systemu.
         const string list_cmd = status.dnf5
-            ? "dnf5 list --upgrades -q 2>/dev/null"
-            : "dnf list updates -q 2>/dev/null";
+            ? "LC_ALL=C dnf5 list --upgrades -q 2>/dev/null"
+            : "LC_ALL=C dnf list updates -q 2>/dev/null";
 
         FILE* p = popen(list_cmd.c_str(), "r");
 
@@ -666,18 +663,23 @@ void dnfUpdate(const UpdateStatus& status) {
 
             while (fgets(buf, sizeof(buf), p)) {
                 string line(buf);
+                
+                // UODPORNIENIE PARSOWANIA: Używamy strumienia (upewnij się, że masz #include <sstream>)
+                // Prawdziwy wpis pakietu w DNF zawsze składa się z 3 kolumn (Nazwa.arch Wersja Repozytorium).
+                stringstream ss(line);
+                string pkg, version, repo;
 
-                size_t end = line.find_last_not_of(" \n\r\t");
-                if (end == string::npos) continue;
+                // Jeśli linia nie ma 3 kolumn (np. pusta linia lub krótki komunikat), pomijamy ją
+                if (!(ss >> pkg >> version >> repo)) continue;
 
-                string name = line.substr(0, line.find(' '));
-                size_t dot = name.rfind('.');
-
-                // POPRAWKA: Jeśli linia nie ma kropki separatora architektury (np. .x86_64 lub .noarch),
-                // to jest to nagłówek lub komunikat informacyjny – pomijamy ją!
+                // Szukamy kropki oddzielającej architekturę (np. .x86_64, .noarch)
+                size_t dot = pkg.rfind('.');
                 if (dot == string::npos) continue;
 
-                name = name.substr(0, dot);
+                // Dodatkowe odfiltrowanie angielskich nagłówków tabeli DNF
+                if (pkg == "Available" || pkg == "Package") continue;
+
+                string name = pkg.substr(0, dot);
                 cout << pfx << name << "\n";
                 any = true;
             }
@@ -701,39 +703,25 @@ void dnfUpdate(const UpdateStatus& status) {
     bool ok = true;
 
     progressbar_start(total);
-
     progressbar_set_state(UiState::CHECKING, ++step);
 
-    // POPRAWKA: Usunięto niebezpieczne i powolne 'rpm --rebuilddb'. 
-    // Zamiast tego czyszczony jest tylko log i następuje krótka pauza.
     system("{ echo '-----checking_system_consistency-----'; } > /tmp/zupd.log 2>&1");
-
     sleep(1);
 
     if (status.native) {
         progressbar_set_state(UiState::DNF, ++step);
-
         const char* dnf_cmd;
 
         if (status.dnf5) {
             dnf_cmd = fullupdate
-                ? "{ echo '-----updating_DNF5_distro-sync-----'; "
-                  "  dnf5 distro-sync -y; "
-                  "} >> /tmp/zupd.log 2>&1"
-                : "{ echo '-----updating_DNF5-----'; "
-                  "  dnf5 upgrade -y; "
-                  "} >> /tmp/zupd.log 2>&1";
+                ? "{ echo '-----updating_DNF5_distro-sync-----'; dnf5 distro-sync -y; } >> /tmp/zupd.log 2>/dev/null"
+                : "{ echo '-----updating_DNF5-----'; dnf5 upgrade -y; } >> /tmp/zupd.log 2>&1";
         } else {
             dnf_cmd = fullupdate
-                ? "{ echo '-----updating_DNF_distro-sync-----'; "
-                  "  dnf distro-sync -y; "
-                  "} >> /tmp/zupd.log 2>&1"
-                : "{ echo '-----updating_DNF-----'; "
-                  "  dnf upgrade -y; "
-                  "} >> /tmp/zupd.log 2>&1";
+                ? "{ echo '-----updating_DNF_distro-sync-----'; dnf distro-sync -y; } >> /tmp/zupd.log 2>&1"
+                : "{ echo '-----updating_DNF-----'; dnf upgrade -y; } >> /tmp/zupd.log 2>&1";
         }
 
-        // POPRAWKA: Bezpieczne dekodowanie statusu wyjścia procesu za pomocą makr POSIX
         int dnf_rc = system(dnf_cmd);
         int dnf_exit = WIFEXITED(dnf_rc) ? WEXITSTATUS(dnf_rc) : 127;
         
@@ -745,10 +733,13 @@ void dnfUpdate(const UpdateStatus& status) {
     if (status.hasflatpak && status.flatpak) {
         progressbar_set_state(UiState::FLATPAK, ++step);
 
-        if (system(
+        // POPRAWKA: Bezpieczne dekodowanie statusu wyjścia Flatpaka
+        int flatpak_rc = system(
             "{ echo '----updating_flatpak----'; flatpak update -y; } "
             ">> /tmp/zupd.log 2>&1"
-        ) != 0) {
+        );
+        int flatpak_exit = WIFEXITED(flatpak_rc) ? WEXITSTATUS(flatpak_rc) : 127;
+        if (flatpak_exit != 0) {
             ok = false;
         }
     }
@@ -756,10 +747,13 @@ void dnfUpdate(const UpdateStatus& status) {
     if (status.hassnap && status.snap) {
         progressbar_set_state(UiState::SNAP, ++step);
 
-        if (system(
+        // POPRAWKA: Bezpieczne dekodowanie statusu wyjścia Snapa
+        int snap_rc = system(
             "{ echo '----updating_snap----'; snap refresh; } "
             ">> /tmp/zupd.log 2>&1"
-        ) != 0) {
+        );
+        int snap_exit = WIFEXITED(snap_rc) ? WEXITSTATUS(snap_rc) : 127;
+        if (snap_exit != 0) {
             ok = false;
         }
     }
