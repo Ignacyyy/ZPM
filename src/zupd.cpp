@@ -529,9 +529,9 @@ void zypperUpdate(const UpdateStatus& status) {
             
             // 2. Informujemy użytkownika o konieczności ponownego uruchomienia w nowej linii
             cout << "\n" << YELLOW
-                 << "[*] Zypper zaktualizował swój stos menedżera i przerwał dalsze pobieranie.\n"
-                 << "[*] Pozostałe pakiety systemowe NIE zostały jeszcze zaktualizowane.\n"
-                 << "[*] Uruchom komendę ponownie: 'zpm upd' (lub 'sudo zupd'), aby dokończyć.\n"
+                 << "[*] Zypper is adjusting its stack manager and has aborted the download.\n"
+                 << "[*] The remaining system packages are NOT updated.\n"
+                 << "[*] Restart command to update system.\n"
                  << RESET << "\n";
 
             // 3. Wykonujemy czyszczenie, ponieważ sesja Zyppera i tak została zamknięta
