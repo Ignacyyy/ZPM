@@ -1,6 +1,7 @@
 #include "main.h"
 
 #include <sys/wait.h>
+#include <sys/file.h>
 #include <algorithm>
 
 using namespace std;
@@ -13,28 +14,93 @@ bool version    = false;
 bool yes        = false;
 bool fullupdate = false;
 string ans;
+
+static int g_lockFd = -1;
+volatile sig_atomic_t g_interrupted = 0;
 //koniec zmiennych globalnych--------------------------------------------------
 
+static void handleSigint(int) { g_interrupted = 1; }
+
 //funkcje pomocnicze-----------------------------------------------------------
-static string runCmd(const string& cmd) {
+static int decodeExitStatus(int rc) {
+    if (rc == -1) return 127;
+    if (WIFEXITED(rc)) return WEXITSTATUS(rc);
+    return 127;
+}
+
+static string runCmd(const string& cmd, int* exitCode = nullptr) {
     string result;
     FILE* p = popen(cmd.c_str(), "r");
-    if (!p) return result;
+    if (!p) {
+        if (exitCode) *exitCode = 127;
+        return result;
+    }
 
     char buf[256];
     while (fgets(buf, sizeof(buf), p))
         result += buf;
 
-    pclose(p);
+    if (exitCode) *exitCode = decodeExitStatus(pclose(p));
+    else            pclose(p);
+
     return result;
 }
 
 static int runCmdExit(const string& cmd) {
-    int rc = system(cmd.c_str());
-    if (rc == -1) return 127;
-    if (WIFEXITED(rc)) return WEXITSTATUS(rc);
-    return 127;
+    return decodeExitStatus(system(cmd.c_str()));
 }
+
+static bool systemOk(const char* cmd) {
+    return decodeExitStatus(system(cmd)) == 0;
+}
+
+static bool checkInterrupted(bool& ok) {
+    if (!g_interrupted) return false;
+
+    cout << "\n" << YELLOW << "Cancelled by user (Ctrl+C).\n" << RESET;
+    ok = false;
+    return true;
+}
+
+static bool acquireLock() {
+    const char* paths[] = { "/run/zupd.lock", "/tmp/zupd.lock" };
+    bool lockBusy = false;
+
+    for (const char* path : paths) {
+        g_lockFd = open(path, O_CREAT | O_RDWR, 0644);
+        if (g_lockFd < 0) continue;
+
+        if (flock(g_lockFd, LOCK_EX | LOCK_NB) == 0)
+            return true;
+
+        lockBusy = true;
+        close(g_lockFd);
+        g_lockFd = -1;
+    }
+
+    if (lockBusy) {
+        cerr << RED << "Error: Another zupd instance is already running.\n"
+             << RESET;
+    } else {
+        cerr << RED << "Error: Cannot create lock file.\n" << RESET;
+    }
+    return false;
+}
+
+static void releaseLock() {
+    if (g_lockFd < 0) return;
+
+    flock(g_lockFd, LOCK_UN);
+    close(g_lockFd);
+    g_lockFd = -1;
+}
+
+struct ScopedLock {
+    bool active = false;
+
+    ScopedLock() { active = acquireLock(); }
+    ~ScopedLock() { if (active) releaseLock(); }
+};
 
 static bool commandExists(const string& path) {
     return access(path.c_str(), X_OK) == 0;
@@ -244,23 +310,31 @@ static bool askConfirm() {
     return (ans == "y" || ans == "yes");
 }
 
-static void cleanupUniversal(const UpdateStatus& s) {
+static bool cleanupUniversal(const UpdateStatus& s) {
+    bool ok = true;
+
     if (s.hasflatpak) {
-        system(
+        if (!systemOk(
             "flatpak uninstall --unused -y >> /tmp/zupd.log 2>&1"
             " ; rm -rf /var/tmp/flatpak-cache-* >> /tmp/zupd.log 2>&1"
-        );
+        )) {
+            ok = false;
+        }
     }
 
     if (s.hassnap) {
-        system(
+        if (!systemOk(
             "snap list --all 2>/dev/null"
             " | awk '/disabled/{print $1, $3}'"
             " | while read name rev; do snap remove \"$name\" --revision=\"$rev\"; done"
             " >> /tmp/zupd.log 2>&1"
             " ; rm -rf /var/lib/snapd/cache/* >> /tmp/zupd.log 2>&1"
-        );
+        )) {
+            ok = false;
+        }
     }
+
+    return ok;
 }
 
 static void finishAndReport(bool ok, int total, int step) {
@@ -309,14 +383,22 @@ UpdateStatus aptCheckUpdates() {
         return s;
     }
 
-    string out = runCmd("apt-get dist-upgrade -s 2>>/tmp/zupd.log");
+    int sim_rc = 0;
+    string out = runCmd("apt-get dist-upgrade -s 2>>/tmp/zupd.log", &sim_rc);
+
+    if (sim_rc != 0) {
+        s.check_error = true;
+        checkUniversalManagers(s);
+        return s;
+    }
+
     s.native = (out.find("Inst ") != string::npos);
 
     checkUniversalManagers(s);
     return s;
 }
 
-void aptUpdate(const UpdateStatus& status) {
+static bool aptUpdate(const UpdateStatus& status) {
     const string pfx = string(YELLOW) + "[+] " + RESET;
 
     cout << RED << "\nPackages to update (APT):\n" << RESET;
@@ -333,7 +415,7 @@ void aptUpdate(const UpdateStatus& status) {
 
     if (!askConfirm()) {
         cout << YELLOW << "[*] Update cancelled by user." << RESET << "\n";
-        return;
+        return true;
     }
 
     const int total = countSteps(status);
@@ -343,76 +425,77 @@ void aptUpdate(const UpdateStatus& status) {
     progressbar_start(total);
 
     progressbar_set_state(UiState::CHECKING, ++step);
-    
-    // Sprawdzamy status fazy wstępnej konfiguracji dpkg
-    int check_rc = system(
+
+    if (!systemOk(
         "{ echo '-----checking_system_consistency-----';"
         "  DEBIAN_FRONTEND=noninteractive dpkg --configure -a; "
         "} > /tmp/zupd.log 2>&1"
-    );
-    int check_exit = WIFEXITED(check_rc) ? WEXITSTATUS(check_rc) : 127;
-    if (check_exit != 0) {
+    )) {
         ok = false;
     }
 
+    if (checkInterrupted(ok)) goto apt_finish;
+
     sleep(1);
 
-    // Wykonujemy aktualizację APT tylko, jeśli poprzedni krok (dpkg) się udał
     if (status.native && ok) {
         progressbar_set_state(UiState::APT, ++step);
 
-        int apt_rc = system(
+        if (!systemOk(
             "{ echo '-----updating_APT-----';"
             "  DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y"
             "    -o Dpkg::Options::='--force-confdef'"
             "    -o Dpkg::Options::='--force-confold'; "
             "} >> /tmp/zupd.log 2>&1"
-        );
-        
-        int apt_exit = WIFEXITED(apt_rc) ? WEXITSTATUS(apt_rc) : 127;
-        if (apt_exit != 0) {
+        )) {
             ok = false;
         }
     }
+
+    if (checkInterrupted(ok)) goto apt_finish;
 
     if (status.hasflatpak && status.flatpak && ok) {
         progressbar_set_state(UiState::FLATPAK, ++step);
 
-        int flatpak_rc = system(
+        if (!systemOk(
             "{ echo '----updating_flatpak----'; flatpak update -y; } "
             ">> /tmp/zupd.log 2>&1"
-        );
-        
-        int flatpak_exit = WIFEXITED(flatpak_rc) ? WEXITSTATUS(flatpak_rc) : 127;
-        if (flatpak_exit != 0) {
+        )) {
             ok = false;
         }
     }
+
+    if (checkInterrupted(ok)) goto apt_finish;
 
     if (status.hassnap && status.snap && ok) {
         progressbar_set_state(UiState::SNAP, ++step);
 
-        int snap_rc = system(
+        if (!systemOk(
             "{ echo '----updating_snap----'; snap refresh; } "
             ">> /tmp/zupd.log 2>&1"
-        );
-        
-        int snap_exit = WIFEXITED(snap_rc) ? WEXITSTATUS(snap_rc) : 127;
-        if (snap_exit != 0) {
+        )) {
             ok = false;
         }
     }
 
+    if (checkInterrupted(ok)) goto apt_finish;
+
     progressbar_set_state(UiState::CLEANUP, ++step);
 
-    system(
+    if (!systemOk(
         "{ echo '----cleaning----';"
         "  apt-get autoremove -y; apt-get autoclean; "
         "} >> /tmp/zupd.log 2>&1"
-    );
+    )) {
+        ok = false;
+    }
 
-    cleanupUniversal(status);
+    if (!cleanupUniversal(status))
+        ok = false;
+
+apt_finish:
     finishAndReport(ok, total, step);
+    return ok && !g_interrupted;
 }
 
 //=============================================================================
@@ -454,7 +537,14 @@ UpdateStatus zypperCheckUpdates() {
             "}'";
     }
 
-    string pkg_updates = runCmd(pkg_cmd);
+    int pkg_rc = 0;
+    string pkg_updates = runCmd(pkg_cmd, &pkg_rc);
+
+    if (pkg_rc != 0) {
+        s.check_error = true;
+        checkUniversalManagers(s);
+        return s;
+    }
 
     int patch_rc = runCmdExit(
         "zypper --no-refresh patch-check "
@@ -473,7 +563,7 @@ UpdateStatus zypperCheckUpdates() {
     return s;
 }
 
-void zypperUpdate(const UpdateStatus& status) {
+static bool zypperUpdate(const UpdateStatus& status) {
     const string pfx = string(YELLOW) + "[+] " + RESET;
 
     cout << RED << "\nPackages to update (Zypper):\n" << RESET;
@@ -510,7 +600,7 @@ void zypperUpdate(const UpdateStatus& status) {
 
     if (!askConfirm()) {
         cout << YELLOW << "[*] Update cancelled by user." << RESET << "\n";
-        return;
+        return true;
     }
 
     const int total = countSteps(status);
@@ -521,12 +611,13 @@ void zypperUpdate(const UpdateStatus& status) {
 
     progressbar_set_state(UiState::CHECKING, ++step);
 
-    // POPRAWKA: Usunięto powolne i ryzykowne 'rpm --rebuilddb' z fazy sprawdzania.
     system("{ echo '-----checking_system_consistency-----'; } > /tmp/zupd.log 2>&1");
+
+    if (checkInterrupted(ok)) goto zypper_finish;
 
     sleep(1);
 
-    if (status.native) {
+    if (status.native && ok) {
         progressbar_set_state(UiState::ZYPPER, ++step);
 
         const char* zypper_cmd = status.zypper_dup
@@ -537,13 +628,11 @@ void zypperUpdate(const UpdateStatus& status) {
               "  zypper patch --with-update -y --auto-agree-with-licenses; "
               "} >> /tmp/zupd.log 2>&1";
 
-        int zypper_rc = system(zypper_cmd);
-        int zypper_exit = WIFEXITED(zypper_rc) ? WEXITSTATUS(zypper_rc) : 127;
+        int zypper_exit = decodeExitStatus(system(zypper_cmd));
 
-        // Obsługa wymuszonego restartu Zyppera (kod 103 lub 8)
         if (zypper_exit == 103 || zypper_exit == 8) {
             progressbar_finish("RESTART NEEDED");
-            
+
             cout << "\n" << YELLOW
                  << "[*] Zypper is adjusting its stack manager and has aborted the download.\n"
                  << "[*] The remaining system packages are NOT updated.\n"
@@ -552,50 +641,56 @@ void zypperUpdate(const UpdateStatus& status) {
 
             system("{ echo '----cleaning----'; zypper clean -a; } >> /tmp/zupd.log 2>&1");
             cleanupUniversal(status);
-            return;
-        } 
+            return false;
+        }
         else if (zypper_exit != 0) {
             ok = false;
         }
     }
 
-    if (status.hasflatpak && status.flatpak) {
+    if (checkInterrupted(ok)) goto zypper_finish;
+
+    if (status.hasflatpak && status.flatpak && ok) {
         progressbar_set_state(UiState::FLATPAK, ++step);
 
-        // POPRAWKA: Bezpieczne dekodowanie statusu wyjścia Flatpaka
-        int flatpak_rc = system(
+        if (!systemOk(
             "{ echo '----updating_flatpak----'; flatpak update -y; } "
             ">> /tmp/zupd.log 2>&1"
-        );
-        int flatpak_exit = WIFEXITED(flatpak_rc) ? WEXITSTATUS(flatpak_rc) : 127;
-        if (flatpak_exit != 0) {
+        )) {
             ok = false;
         }
     }
 
-    if (status.hassnap && status.snap) {
+    if (checkInterrupted(ok)) goto zypper_finish;
+
+    if (status.hassnap && status.snap && ok) {
         progressbar_set_state(UiState::SNAP, ++step);
 
-        // POPRAWKA: Bezpieczne dekodowanie statusu wyjścia Snapa
-        int snap_rc = system(
+        if (!systemOk(
             "{ echo '----updating_snap----'; snap refresh; } "
             ">> /tmp/zupd.log 2>&1"
-        );
-        int snap_exit = WIFEXITED(snap_rc) ? WEXITSTATUS(snap_rc) : 127;
-        if (snap_exit != 0) {
+        )) {
             ok = false;
         }
     }
+
+    if (checkInterrupted(ok)) goto zypper_finish;
 
     progressbar_set_state(UiState::CLEANUP, ++step);
 
-    system(
+    if (!systemOk(
         "{ echo '----cleaning----'; zypper clean -a; } "
         ">> /tmp/zupd.log 2>&1"
-    );
+    )) {
+        ok = false;
+    }
 
-    cleanupUniversal(status);
+    if (!cleanupUniversal(status))
+        ok = false;
+
+zypper_finish:
     finishAndReport(ok, total, step);
+    return ok && !g_interrupted;
 }
 
 //=============================================================================
@@ -617,24 +712,18 @@ UpdateStatus dnfCheckUpdates() {
             "  dnf5 check-upgrade -q; "
             "} > /tmp/zupd.log 2>&1"
         );
-
-        string out = runCmd("dnf5 list --upgrades 2>>/tmp/zupd.log");
-        s.native = (out.find('\n') != string::npos &&
-                    out.find('\n') != out.rfind('\n'));
     } else {
         rc = runCmdExit(
             "{ echo '-----dnf_check_update-----'; "
             "  dnf check-update -q --refresh; "
             "} > /tmp/zupd.log 2>&1"
         );
-
-        string out = runCmd("dnf list updates 2>>/tmp/zupd.log");
-        s.native = (out.find('\n') != string::npos &&
-                    out.find('\n') != out.rfind('\n'));
     }
 
     // DNF zwraca 100, gdy są aktualizacje.
-    if (rc != 0 && rc != 100) {
+    if (rc == 100) {
+        s.native = true;
+    } else if (rc != 0) {
         s.check_error = true;
     }
 
@@ -642,7 +731,7 @@ UpdateStatus dnfCheckUpdates() {
     return s;
 }
 
-void dnfUpdate(const UpdateStatus& status) {
+static bool dnfUpdate(const UpdateStatus& status) {
     const string pfx = string(YELLOW) + "[+] " + RESET;
 
     cout << RED << "\nPackages to update (DNF"
@@ -695,7 +784,7 @@ void dnfUpdate(const UpdateStatus& status) {
 
     if (!askConfirm()) {
         cout << YELLOW << "[*] Update cancelled by user." << RESET << "\n";
-        return;
+        return true;
     }
 
     const int total = countSteps(status);
@@ -706,15 +795,18 @@ void dnfUpdate(const UpdateStatus& status) {
     progressbar_set_state(UiState::CHECKING, ++step);
 
     system("{ echo '-----checking_system_consistency-----'; } > /tmp/zupd.log 2>&1");
+
+    if (checkInterrupted(ok)) goto dnf_finish;
+
     sleep(1);
 
-    if (status.native) {
+    if (status.native && ok) {
         progressbar_set_state(UiState::DNF, ++step);
         const char* dnf_cmd;
 
         if (status.dnf5) {
             dnf_cmd = fullupdate
-                ? "{ echo '-----updating_DNF5_distro-sync-----'; dnf5 distro-sync -y; } >> /tmp/zupd.log 2>/dev/null"
+                ? "{ echo '-----updating_DNF5_distro-sync-----'; dnf5 distro-sync -y; } >> /tmp/zupd.log 2>&1"
                 : "{ echo '-----updating_DNF5-----'; dnf5 upgrade -y; } >> /tmp/zupd.log 2>&1";
         } else {
             dnf_cmd = fullupdate
@@ -722,60 +814,64 @@ void dnfUpdate(const UpdateStatus& status) {
                 : "{ echo '-----updating_DNF-----'; dnf upgrade -y; } >> /tmp/zupd.log 2>&1";
         }
 
-        int dnf_rc = system(dnf_cmd);
-        int dnf_exit = WIFEXITED(dnf_rc) ? WEXITSTATUS(dnf_rc) : 127;
-        
-        if (dnf_exit != 0) {
+        if (decodeExitStatus(system(dnf_cmd)) != 0)
             ok = false;
-        }
     }
 
-    if (status.hasflatpak && status.flatpak) {
+    if (checkInterrupted(ok)) goto dnf_finish;
+
+    if (status.hasflatpak && status.flatpak && ok) {
         progressbar_set_state(UiState::FLATPAK, ++step);
 
-        // POPRAWKA: Bezpieczne dekodowanie statusu wyjścia Flatpaka
-        int flatpak_rc = system(
+        if (!systemOk(
             "{ echo '----updating_flatpak----'; flatpak update -y; } "
             ">> /tmp/zupd.log 2>&1"
-        );
-        int flatpak_exit = WIFEXITED(flatpak_rc) ? WEXITSTATUS(flatpak_rc) : 127;
-        if (flatpak_exit != 0) {
+        )) {
             ok = false;
         }
     }
 
-    if (status.hassnap && status.snap) {
+    if (checkInterrupted(ok)) goto dnf_finish;
+
+    if (status.hassnap && status.snap && ok) {
         progressbar_set_state(UiState::SNAP, ++step);
 
-        // POPRAWKA: Bezpieczne dekodowanie statusu wyjścia Snapa
-        int snap_rc = system(
+        if (!systemOk(
             "{ echo '----updating_snap----'; snap refresh; } "
             ">> /tmp/zupd.log 2>&1"
-        );
-        int snap_exit = WIFEXITED(snap_rc) ? WEXITSTATUS(snap_rc) : 127;
-        if (snap_exit != 0) {
+        )) {
             ok = false;
         }
     }
+
+    if (checkInterrupted(ok)) goto dnf_finish;
 
     progressbar_set_state(UiState::CLEANUP, ++step);
 
     if (status.dnf5) {
-        system(
+        if (!systemOk(
             "{ echo '----cleaning----';"
             "  dnf5 autoremove -y; dnf5 clean packages; "
             "} >> /tmp/zupd.log 2>&1"
-        );
+        )) {
+            ok = false;
+        }
     } else {
-        system(
+        if (!systemOk(
             "{ echo '----cleaning----';"
             "  dnf autoremove -y; dnf clean packages; "
             "} >> /tmp/zupd.log 2>&1"
-        );
+        )) {
+            ok = false;
+        }
     }
 
-    cleanupUniversal(status);
+    if (!cleanupUniversal(status))
+        ok = false;
+
+dnf_finish:
     finishAndReport(ok, total, step);
+    return ok && !g_interrupted;
 }
 
 //=============================================================================
@@ -848,7 +944,15 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    ScopedLock lock;
+    if (!lock.active)
+        return 1;
+
+    signal(SIGINT, handleSigint);
+
     repo(pm);
+
+    bool updateOk = true;
 
     if (pm == "apt") {
         UpdateStatus s = aptCheckUpdates();
@@ -871,7 +975,7 @@ int main(int argc, char* argv[]) {
             sleep(1);
         }
 
-        aptUpdate(s);
+        updateOk = aptUpdate(s);
     }
     else if (pm == "zypper") {
         UpdateStatus s = zypperCheckUpdates();
@@ -894,7 +998,7 @@ int main(int argc, char* argv[]) {
             sleep(1);
         }
 
-        zypperUpdate(s);
+        updateOk = zypperUpdate(s);
     }
     else if (pm == "dnf") {
         UpdateStatus s = dnfCheckUpdates();
@@ -917,8 +1021,9 @@ int main(int argc, char* argv[]) {
             sleep(1);
         }
 
-        dnfUpdate(s);
+        updateOk = dnfUpdate(s);
     }
 
-    return 0;
+    if (g_interrupted) return 130;
+    return updateOk ? 0 : 1;
 }
