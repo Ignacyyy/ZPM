@@ -1,4 +1,3 @@
-
 #include "main.h"
 
 using namespace std;
@@ -271,8 +270,7 @@ UpdateStatus zypperCheckUpdates() {
 
     system("zypper refresh -q 2>/dev/null");
     string out = runCmd("zypper list-updates 2>/dev/null");
-    s.native = (out.find("| v |") != string::npos ||
-                out.find("|v|")   != string::npos);
+    s.native = (out.find("v |") != string::npos);
 
     checkUniversalManagers(s);
     return s;
@@ -283,7 +281,7 @@ void zypperUpdate(const UpdateStatus& status) {
 
     cout << RED << "\nPackages to update (Zypper):\n" << RESET;
     printCmdLines(
-        "zypper list-updates 2>/dev/null | awk -F'|' '/\\| v \\|/{gsub(/^[[:space:]]+|[[:space:]]+$/,\"\",$3); print $3}'",
+        "zypper list-updates 2>/dev/null | awk -F'|' '/v \\|/{gsub(/^[[:space:]]+|[[:space:]]+$/,\"\",$3); print $3}'",
         pfx);
     printUniversalUpdateLists(status);
 
