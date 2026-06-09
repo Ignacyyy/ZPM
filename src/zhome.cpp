@@ -13,7 +13,7 @@ void PAGE1() {
     std::cout << BOLD << RED << "ZPM Configuration:" << RESET << std::endl;
     std::cout << "  Config file: /opt/ZPM/zielina.conf" << std::endl;
     std::cout << "  Used for runtime behavior and update settings" << std::endl;
-    std::cout << "Config editing:" << std::endl;
+    std::cout << "  Config editing:" << std::endl;
     std::cout << "  zhome" << std::endl;
     std::cout << "  zpm home" << std::endl;
     std::cout << "  --edit-config, -ed" << std::endl;
@@ -80,7 +80,7 @@ void PAGE1_PAGE2(){
     std::cout << BOLD << RED << "ZPM Configuration:" << RESET << std::endl;
     std::cout << "  Config file: /opt/ZPM/zielina.conf" << std::endl;
     std::cout << "  Used for runtime behavior and update settings" << std::endl;
-    std::cout << "Config editing:" << std::endl;
+    std::cout << "  Config editing:" << std::endl;
     std::cout << "  zhome" << std::endl;
     std::cout << "  zpm home" << std::endl;
     std::cout << "  --edit-config, -ed" << std::endl;
