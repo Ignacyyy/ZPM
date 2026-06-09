@@ -1,9 +1,5 @@
 #include "main.h"
 
-#include <sys/wait.h>
-#include <sys/file.h>
-#include <algorithm>
-
 using namespace std;
 
 //zmienne globalne-------------------------------------------------------------
