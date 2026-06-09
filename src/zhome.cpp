@@ -13,16 +13,11 @@ void PAGE1() {
     std::cout << BOLD << RED << "ZPM Configuration:" << RESET << std::endl;
     std::cout << "  Config file: /opt/ZPM/zielina.conf" << std::endl;
     std::cout << "  Used for runtime behavior and update settings" << std::endl;
-    std::cout << std::endl;
-    std::cout << BOLD << " Options:" << RESET << std::endl;
-    std::cout << "  update-info=true/false" << std::endl;
-    std::cout << "     shows update notifications in ZPM tools" << std::endl;
-    std::cout << "  zhelp-default-page-1=true/false" << std::endl;
-    std::cout << "      zhelp default page 1" << std::endl;
-    std::cout << "  zhelp-default-page-2=true/false" << std::endl;
-    std::cout << "      zhelp default page 2" << std::endl;
-    std::cout << "  zhelp-show-all-pages=true/false" << std::endl;
-    std::cout << "      zhelp will show all pages at onice" << std::endl;
+    std::cout << "Config editing:" << std::endl;
+    std::cout << "  zhome" << std::endl;
+    std::cout << "  zpm home" << std::endl;
+    std::cout << "  --edit-config, -ed" << std::endl;
+    std::cout << "  Opens /opt/ZPM/zielina.conf" << std::endl;
     std::cout << std::endl;
     std::cout << BOLD << RED << "ARM support:" << RESET << std::endl;
     std::cout << "  ZPM supports ARM (aarch64 / armhf) systems" << std::endl;
@@ -30,7 +25,7 @@ void PAGE1() {
     std::cout << std::endl;
    
     //zhome page info
-    std::cout << BOLD << "Type zhome -p2 to see PAGE2." << RESET << std::endl;
+    std::cout << BOLD << "Type zhome -p2 / zpm home -p2 to see PAGE2." << RESET << std::endl;
 }
 
 void PAGE2(){
@@ -75,7 +70,7 @@ void PAGE2(){
       std::cout << "" << std::endl;
   
       //page 1 info
-      std::cout << BOLD << "Type zhome -p1 to see PAGE1." << RESET << std::endl;
+      std::cout << BOLD << "Type zhome -p1 / zpm home -p1 to see PAGE1." << RESET << std::endl;
 }
 
 void PAGE1_PAGE2(){
@@ -85,16 +80,11 @@ void PAGE1_PAGE2(){
     std::cout << BOLD << RED << "ZPM Configuration:" << RESET << std::endl;
     std::cout << "  Config file: /opt/ZPM/zielina.conf" << std::endl;
     std::cout << "  Used for runtime behavior and update settings" << std::endl;
-    std::cout << std::endl;
-    std::cout << BOLD << " Options:" << RESET << std::endl;
-    std::cout << "  update-info=true/false" << std::endl;
-    std::cout << "     shows update notifications in ZPM tools" << std::endl;
-    std::cout << "  zhelp-default-page-1=true/false" << std::endl;
-    std::cout << "      zhelp default page 1" << std::endl;
-    std::cout << "  zhelp-default-page-2=true/false" << std::endl;
-    std::cout << "      zhelp default page 2" << std::endl;
-    std::cout << "  zhelp-show-all-pages=true/false" << std::endl;
-    std::cout << "      zhelp will show all pages at onice" << std::endl;
+    std::cout << "Config editing:" << std::endl;
+    std::cout << "  zhome" << std::endl;
+    std::cout << "  zpm home" << std::endl;
+    std::cout << "  --edit-config, -ed" << std::endl;
+    std::cout << "  Opens /opt/ZPM/zielina.conf" << std::endl;
     std::cout << std::endl;
     std::cout << BOLD << RED << "ARM support:" << RESET << std::endl;
     std::cout << "  ZPM supports ARM (aarch64 / armhf) systems" << std::endl;
@@ -137,15 +127,41 @@ void PAGE1_PAGE2(){
 
 int main(int argc, char* argv[]) {
 
+    zpm_update::checkForUpdates();
+
     bool page2 = false;
     bool page1 = false;
+    bool config = false;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "-p2") page2 = true;
         if (arg == "-p1") page1 = true;
+        if (arg == "--edit-config" || arg == "-ed") config = true;
     }
 
-    zpm_update::checkForUpdates();
+    if ((page1 && config) || (page2 && config)) {
+        std::cerr << RED
+        << "Error: --edit-config / -ed must be used alone"
+        << RESET << std::endl;
+        return 1;
+    }
+
+    if (config) {
+
+        bool exists = (system("command -v nano > /dev/null 2>&1") == 0);
+        if (!exists){
+         std::cerr << RED << "Error: install nano!\n" << RESET;
+            return 1;
+        }
+
+        if (geteuid() != 0) {
+            std::cerr << RED << "Run with sudo!\n" << RESET;
+            return 1;
+        }
+        execlp("nano", "nano", "/opt/ZPM/zielina.conf", nullptr);
+        perror("execlp");
+        return 1;
+    }
 
     std::cout << RED << "Zielina Package Manager (ZPM) " << RESET << "v" << zpm_version::version() << std::endl;
     std::cout << "" << std::endl;
