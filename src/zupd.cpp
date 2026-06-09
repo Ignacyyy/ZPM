@@ -633,9 +633,10 @@ void dnfUpdate(const UpdateStatus& status) {
          << (status.dnf5 ? "5" : "") << "):\n" << RESET;
 
     {
+        // Dodano flagę -q (quiet), aby ograniczyć zbędne komunikaty DNF
         const string list_cmd = status.dnf5
-            ? "dnf5 list --upgrades 2>/dev/null | tail -n +2"
-            : "dnf list updates 2>/dev/null | tail -n +2";
+            ? "dnf5 list --upgrades -q 2>/dev/null"
+            : "dnf list updates -q 2>/dev/null";
 
         FILE* p = popen(list_cmd.c_str(), "r");
 
@@ -652,9 +653,11 @@ void dnfUpdate(const UpdateStatus& status) {
                 string name = line.substr(0, line.find(' '));
                 size_t dot = name.rfind('.');
 
-                if (dot != string::npos)
-                    name = name.substr(0, dot);
+                // POPRAWKA: Jeśli linia nie ma kropki separatora architektury (np. .x86_64 lub .noarch),
+                // to jest to nagłówek lub komunikat informacyjny – pomijamy ją!
+                if (dot == string::npos) continue;
 
+                name = name.substr(0, dot);
                 cout << pfx << name << "\n";
                 any = true;
             }
@@ -681,10 +684,9 @@ void dnfUpdate(const UpdateStatus& status) {
 
     progressbar_set_state(UiState::CHECKING, ++step);
 
-    system(
-        "{ echo '-----checking_system_consistency-----'; rpm --rebuilddb; } "
-        "> /tmp/zupd.log 2>&1"
-    );
+    // POPRAWKA: Usunięto niebezpieczne i powolne 'rpm --rebuilddb'. 
+    // Zamiast tego czyszczony jest tylko log i następuje krótka pauza.
+    system("{ echo '-----checking_system_consistency-----'; } > /tmp/zupd.log 2>&1");
 
     sleep(1);
 
@@ -711,8 +713,13 @@ void dnfUpdate(const UpdateStatus& status) {
                   "} >> /tmp/zupd.log 2>&1";
         }
 
-        if (system(dnf_cmd) != 0)
+        // POPRAWKA: Bezpieczne dekodowanie statusu wyjścia procesu za pomocą makr POSIX
+        int dnf_rc = system(dnf_cmd);
+        int dnf_exit = WIFEXITED(dnf_rc) ? WEXITSTATUS(dnf_rc) : 127;
+        
+        if (dnf_exit != 0) {
             ok = false;
+        }
     }
 
     if (status.hasflatpak && status.flatpak) {
