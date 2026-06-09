@@ -341,45 +341,65 @@ void aptUpdate(const UpdateStatus& status) {
     progressbar_start(total);
 
     progressbar_set_state(UiState::CHECKING, ++step);
-    system(
+    
+    // Sprawdzamy status fazy wstępnej konfiguracji dpkg
+    int check_rc = system(
         "{ echo '-----checking_system_consistency-----';"
         "  DEBIAN_FRONTEND=noninteractive dpkg --configure -a; "
         "} > /tmp/zupd.log 2>&1"
     );
+    int check_exit = WIFEXITED(check_rc) ? WEXITSTATUS(check_rc) : 127;
+    if (check_exit != 0) {
+        ok = false;
+    }
+
     sleep(1);
 
-    if (status.native) {
+    // Wykonujemy aktualizację APT tylko, jeśli poprzedni krok (dpkg) się udał
+    if (status.native && ok) {
         progressbar_set_state(UiState::APT, ++step);
 
-        if (system(
+        int apt_rc = system(
             "{ echo '-----updating_APT-----';"
             "  DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y"
             "    -o Dpkg::Options::='--force-confdef'"
             "    -o Dpkg::Options::='--force-confold'; "
             "} >> /tmp/zupd.log 2>&1"
-        ) != 0) {
+        );
+        
+        // POPRAWKA: Bezpieczne dekodowanie statusu zakończenia procesu APT
+        int apt_exit = WIFEXITED(apt_rc) ? WEXITSTATUS(apt_rc) : 127;
+        if (apt_exit != 0) {
             ok = false;
         }
     }
 
-    if (status.hasflatpak && status.flatpak) {
+    if (status.hasflatpak && status.flatpak && ok) {
         progressbar_set_state(UiState::FLATPAK, ++step);
 
-        if (system(
+        int flatpak_rc = system(
             "{ echo '----updating_flatpak----'; flatpak update -y; } "
             ">> /tmp/zupd.log 2>&1"
-        ) != 0) {
+        );
+        
+        // POPRAWKA: Bezpieczne dekodowanie statusu dla Flatpaka
+        int flatpak_exit = WIFEXITED(flatpak_rc) ? WEXITSTATUS(flatpak_rc) : 127;
+        if (flatpak_exit != 0) {
             ok = false;
         }
     }
 
-    if (status.hassnap && status.snap) {
+    if (status.hassnap && status.snap && ok) {
         progressbar_set_state(UiState::SNAP, ++step);
 
-        if (system(
+        int snap_rc = system(
             "{ echo '----updating_snap----'; snap refresh; } "
             ">> /tmp/zupd.log 2>&1"
-        ) != 0) {
+        );
+        
+        // POPRAWKA: Bezpieczne dekodowanie statusu dla Snapa
+        int snap_exit = WIFEXITED(snap_rc) ? WEXITSTATUS(snap_rc) : 127;
+        if (snap_exit != 0) {
             ok = false;
         }
     }
