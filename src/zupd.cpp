@@ -1415,8 +1415,7 @@ bool zypperUpdate(const Options& options, const UpdateStatus& status) {
         status,
         UiState::ZYPPER,
         [] {
-            writeLogHeader("-----checking_system_consistency-----");
-            return true;
+            return runShellOk("rpm --rebuilddb", "-----checking_system_consistency-----");
         },
         [&status] {
             const std::string command = status.zypperDup
@@ -1456,8 +1455,7 @@ bool dnfUpdate(const Options& options, const UpdateStatus& status) {
         status,
         UiState::DNF,
         [] {
-            writeLogHeader("-----checking_system_consistency-----");
-            return true;
+            return runShellOk("rpm --rebuilddb", "-----checking_system_consistency-----");
         },
         [&options, &status] {
             std::string command;

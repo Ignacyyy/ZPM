@@ -3,6 +3,8 @@
 #include <cerrno>
 #include <csignal>
 #include <cctype>
+#include <cstdlib>
+#include <limits>
 #include <sys/file.h>
 #include <sys/wait.h>
 
@@ -43,6 +45,11 @@ struct ProcessResult {
     std::string output;
 };
 
+struct ReportAccess {
+    bool valid = false;
+    gid_t gid = 0;
+};
+
 struct ProcessConfig {
     bool captureStdout = false;
     bool mirrorCapturedStdoutToLog = false;
@@ -61,6 +68,7 @@ struct AppContext {
     std::string flatpakFlag;
     bool hasFlatpak = false;
     bool hasSnap = false;
+    bool nativeConsistencyChecked = false;
     bool aptCacheRefreshed = false;
 };
 
@@ -124,6 +132,60 @@ private:
     int fd_ = -1;
 };
 
+bool isSafeOwnedRegularFile(int fd) {
+    struct stat st {};
+    if (fstat(fd, &st) != 0) {
+        return false;
+    }
+
+    return S_ISREG(st.st_mode) &&
+           st.st_nlink == 1 &&
+           st.st_uid == geteuid();
+}
+
+bool parseGid(const char* text, gid_t& gid) {
+    if (text == nullptr || *text == '\0') {
+        return false;
+    }
+
+    const std::string value(text);
+    if (!std::all_of(value.begin(), value.end(), [](unsigned char c) {
+            return std::isdigit(c);
+        })) {
+        return false;
+    }
+
+    char* end = nullptr;
+    errno = 0;
+    const unsigned long parsed = std::strtoul(value.c_str(), &end, 10);
+    if (errno != 0 || end == value.c_str() || *end != '\0') {
+        return false;
+    }
+
+    if (parsed > static_cast<unsigned long>(std::numeric_limits<gid_t>::max())) {
+        return false;
+    }
+
+    gid = static_cast<gid_t>(parsed);
+    return true;
+}
+
+ReportAccess reportAccess() {
+    ReportAccess access;
+
+    if (geteuid() != 0) {
+        return access;
+    }
+
+    gid_t sudoGid = 0;
+    if (parseGid(getenv("SUDO_GID"), sudoGid)) {
+        access.valid = true;
+        access.gid = sudoGid;
+    }
+
+    return access;
+}
+
 class FileLock {
 public:
     bool acquire() {
@@ -138,8 +200,7 @@ public:
                 continue;
             }
 
-            struct stat st {};
-            if (fstat(fd.get(), &st) != 0 || !S_ISREG(st.st_mode)) {
+            if (!isSafeOwnedRegularFile(fd.get())) {
                 failed = true;
                 continue;
             }
@@ -314,19 +375,31 @@ bool writeAll(int fd, const std::string& text) {
 
 FileDescriptor openLog(LogMode mode) {
     const int flags = O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW |
-                      (mode == LogMode::Truncate ? O_TRUNC : O_APPEND);
+                      (mode == LogMode::Append ? O_APPEND : 0);
 
     FileDescriptor fd(open(kLogPath, flags, 0600));
     if (!fd.valid()) {
         return {};
     }
 
-    struct stat st {};
-    if (fstat(fd.get(), &st) != 0 || !S_ISREG(st.st_mode)) {
+    if (!isSafeOwnedRegularFile(fd.get())) {
         return {};
     }
 
-    fchmod(fd.get(), 0600);
+    if (mode == LogMode::Truncate && ftruncate(fd.get(), 0) != 0) {
+        return {};
+    }
+
+    const ReportAccess access = reportAccess();
+    if (access.valid && fchown(fd.get(), geteuid(), access.gid) != 0) {
+        return {};
+    }
+
+    const mode_t modeBits = access.valid ? 0640 : 0600;
+    if (fchmod(fd.get(), modeBits) != 0) {
+        return {};
+    }
+
     return fd;
 }
 
@@ -964,6 +1037,34 @@ bool targetAlreadyInstalled(const AppContext& context, const InstallTarget& targ
     return false;
 }
 
+bool ensureNativeConsistency(AppContext& context, float startPct, const std::string& label) {
+    if (context.nativeConsistencyChecked) {
+        return true;
+    }
+
+    progressbar_start(startPct, label + " - checking system...");
+
+    int exitCode = 0;
+    if (context.packageManager == "apt") {
+        exitCode = runLogged({"dpkg", "--configure", "-a"},
+                             "-----checking_system_consistency-----",
+                             {{"DEBIAN_FRONTEND", "noninteractive"}});
+    } else if (context.packageManager == "zypper" || context.packageManager == "dnf") {
+        exitCode = runLogged({"rpm", "--rebuilddb"}, "-----checking_system_consistency-----");
+    }
+
+    if (g_interrupted) {
+        return false;
+    }
+
+    if (exitCode != 0) {
+        return false;
+    }
+
+    context.nativeConsistencyChecked = true;
+    return true;
+}
+
 InstallStatus installNative(AppContext& context,
                             const std::string& package,
                             float startPct,
@@ -972,6 +1073,14 @@ InstallStatus installNative(AppContext& context,
                             int total) {
     const std::string label = std::to_string(index) + "/" + std::to_string(total) +
                               " | " + nativeShortLabel(context) + ": " + package;
+
+    if (!ensureNativeConsistency(context, startPct, label)) {
+        if (g_interrupted) {
+            return InstallStatus::Interrupted;
+        }
+        progressbar_update(endPct, label + " - failed");
+        return InstallStatus::Failed;
+    }
 
     if (context.packageManager == "apt" && !context.aptCacheRefreshed) {
         progressbar_start(startPct, label + " - refreshing cache...");
