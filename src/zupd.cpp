@@ -519,16 +519,16 @@ void zypperUpdate(const UpdateStatus& status) {
               "  zypper patch --with-update -y --auto-agree-with-licenses; "
               "} >> /tmp/zupd.log 2>&1";
 
-              int zypper_rc = system(zypper_cmd);
-              int zypper_exit = WIFEXITED(zypper_rc) ? WEXITSTATUS(zypper_rc) : 127;
-              
-              if (zypper_exit == 8) {
-                  cout << YELLOW
-                       << "[*] Zypper restart required — run zpm upd again.\n"
-                       << RESET;
-              } else if (zypper_rc != 0) {
-                  ok = false;
-              }
+        int zypper_rc = system(zypper_cmd);
+        int zypper_exit = WIFEXITED(zypper_rc) ? WEXITSTATUS(zypper_rc) : 127;
+
+        if (zypper_exit == 8) {
+            cout << YELLOW
+                 << "[*] Zypper restart required — run zpm upd again.\n"
+                 << RESET;
+        } else if (zypper_exit != 0) {
+            ok = false;
+        }
     }
 
     if (status.hasflatpak && status.flatpak) {
