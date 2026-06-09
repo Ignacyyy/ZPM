@@ -4,9 +4,9 @@ set -euo pipefail
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
 readonly LOG="/tmp/ZPM_INSTALL.log"
 readonly TARGET="/opt/ZPM"
-readonly REQUIRED_DEPS_APT=(curl git wget python3 g++ sudo zip sed gawk coreutils)
-readonly REQUIRED_DEPS_ZYPPER=(curl git wget python3 gcc-c++ sudo zip sed gawk coreutils)
-readonly REQUIRED_DEPS_DNF=(curl git wget python3 gcc-c++ sudo zip sed gawk coreutils)
+readonly REQUIRED_DEPS_APT=(curl git wget python3 g++ sudo zip sed gawk coreutils nano)
+readonly REQUIRED_DEPS_ZYPPER=(curl git wget python3 gcc-c++ sudo zip sed gawk coreutils nano)
+readonly REQUIRED_DEPS_DNF=(curl git wget python3 gcc-c++ sudo zip sed gawk coreutils nano)
 
 # ── LOGGING ───────────────────────────────────────────────────────────────────
 exec > >(tee -a "$LOG") 2>&1
