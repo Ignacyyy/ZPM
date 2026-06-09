@@ -1,3 +1,4 @@
+
 #include "main.h"
 
 using namespace std;
@@ -13,7 +14,6 @@ string ans;
 //koniec zmiennych globalnych--------------------------------------------------
 
 //funkcje pomocnicze-----------------------------------------------------------
-// Uruchamia komendę i zwraca output jako string
 static string runCmd(const string& cmd) {
     string result;
     FILE* p = popen(cmd.c_str(), "r");
@@ -25,14 +25,12 @@ static string runCmd(const string& cmd) {
     return result;
 }
 
-// Uruchamia komendę i drukuje output linia po linii z prefiksem
 static void printCmdLines(const string& cmd, const string& prefix) {
     FILE* p = popen(cmd.c_str(), "r");
     if (!p) return;
     char buf[512];
     while (fgets(buf, sizeof(buf), p)) {
         string line(buf);
-        // usuń trailing whitespace
         size_t end = line.find_last_not_of(" \n\r\t");
         if (end == string::npos) continue;
         line = line.substr(0, end + 1);
@@ -62,18 +60,15 @@ void versionmessage() {
 }
 
 //-----------------------------------------------------------------------------
-// repo() — wszystkie listy przez popen, bez oddzielnych system() na każdą linię
+// repo()
 //-----------------------------------------------------------------------------
 void repo(const string& pm) {
-    // Jeden system() call żeby sprawdzić oba menedżery
     bool hasflatpak = (access("/usr/bin/flatpak", X_OK) == 0 ||
                        access("/usr/local/bin/flatpak", X_OK) == 0);
     bool hassnap    = (access("/usr/bin/snap", X_OK) == 0);
 
     cout << YELLOW << "[SYS] " << RESET;
-    // Wyciągnij PRETTY_NAME jednym popen
-    string osname = runCmd("grep PRETTY_NAME /etc/os-release 2>/dev/null"
-                           " | cut -d= -f2 | tr -d '\"'");
+    string osname = runCmd("grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\"'");
     if (!osname.empty() && osname.back() == '\n') osname.pop_back();
     cout << osname << "\n";
 
@@ -81,7 +76,6 @@ void repo(const string& pm) {
 
     if (pm == "apt") {
         cout << "\n" << YELLOW << "[D]" << RESET << GREEN << " APT Repositories:\n" << RESET;
-        // Parsujemy też format DEB822 (.sources) w jednym wywołaniu
         printCmdLines(
             "{ grep -rhE '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null;"
             "  grep -rhE '^URIs:' /etc/apt/sources.list.d/*.sources 2>/dev/null"
@@ -97,8 +91,11 @@ void repo(const string& pm) {
     }
     else if (pm == "dnf") {
         cout << "\n" << YELLOW << "[R]" << RESET << GREEN << " DNF Repositories:\n" << RESET;
+        bool hasdnf5 = (access("/usr/bin/dnf5", X_OK) == 0);
         printCmdLines(
-            "dnf repolist -q 2>/dev/null | awk 'NR>1 && NF{print $1}'",
+            hasdnf5
+                ? "dnf5 repolist -q 2>/dev/null | awk 'NR>1 && NF{print $1}'"
+                : "dnf repolist -q 2>/dev/null | awk 'NR>1 && NF{print $1}'",
             pfx);
     }
 
@@ -120,6 +117,7 @@ struct UpdateStatus {
     bool snap       = false;
     bool hasflatpak = false;
     bool hassnap    = false;
+    bool dnf5       = false;
 
     bool any() const { return native || flatpak || snap; }
 };
@@ -132,13 +130,11 @@ static int countSteps(const UpdateStatus& s) {
     return n;
 }
 
-// Sprawdza flatpak i snap jednym blokiem
 static void checkUniversalManagers(UpdateStatus& s) {
     s.hasflatpak = (access("/usr/bin/flatpak", X_OK) == 0 ||
                     access("/usr/local/bin/flatpak", X_OK) == 0);
     s.hassnap    = (access("/usr/bin/snap", X_OK) == 0);
 
-    // Oba sprawdzenia uruchamiamy w jednym subshell żeby nie forkować dwa razy
     if (s.hasflatpak || s.hassnap) {
         string check_cmd;
         if (s.hasflatpak)
@@ -152,7 +148,6 @@ static void checkUniversalManagers(UpdateStatus& s) {
     }
 }
 
-// Drukuje listę pakietów dla flatpak/snap jeśli są dostępne
 static void printUniversalUpdateLists(const UpdateStatus& s) {
     const string pfx = string(YELLOW) + "[+] " + RESET;
     if (s.hasflatpak && s.flatpak) {
@@ -165,7 +160,6 @@ static void printUniversalUpdateLists(const UpdateStatus& s) {
     }
 }
 
-// Pyta o potwierdzenie, zwraca false jeśli użytkownik anuluje
 static bool askConfirm() {
     if (yes) return true;
     cout << "\n" << YELLOW << "Proceed with update?" << RESET << " [y/n]: ";
@@ -173,7 +167,6 @@ static bool askConfirm() {
     return (ans == "y" || ans == "yes");
 }
 
-// Wspólny cleanup dla flatpak/snap
 static void cleanupUniversal(const UpdateStatus& s) {
     if (s.hasflatpak) {
         system("flatpak uninstall --unused -y >> /tmp/zupd.log 2>&1"
@@ -188,7 +181,6 @@ static void cleanupUniversal(const UpdateStatus& s) {
     }
 }
 
-// Finalizacja paska postępu i raport
 static void finishAndReport(bool ok, int total, int step) {
     if (ok) {
         progressbar_set_state(UiState::DONE, total);
@@ -211,9 +203,9 @@ UpdateStatus aptCheckUpdates() {
     UpdateStatus s;
     cout << "\n" << YELLOW << "[*] Refreshing package cache..." << RESET << "\n";
 
-    // update + simulation w jednym wywołaniu
     system("apt-get update -qq 2>/dev/null");
-    s.native = (system("apt-get dist-upgrade -s 2>/dev/null | grep -q '^Inst '") == 0);
+    string out = runCmd("apt-get dist-upgrade -s 2>/dev/null");
+    s.native = (out.find("Inst ") != string::npos);
 
     checkUniversalManagers(s);
     return s;
@@ -237,13 +229,11 @@ void aptUpdate(const UpdateStatus& status) {
 
     progressbar_start(total);
 
-    // CHECKING — dpkg consistency
     progressbar_set_state(UiState::CHECKING, ++step);
     system("{ echo '-----checking_system_consistency-----';"
            "  DEBIAN_FRONTEND=noninteractive dpkg --configure -a; } > /tmp/zupd.log 2>&1");
     sleep(1);
 
-    // APT upgrade
     if (status.native) {
         progressbar_set_state(UiState::APT, ++step);
         if (system("{ echo '-----updating_APT-----';"
@@ -253,21 +243,17 @@ void aptUpdate(const UpdateStatus& status) {
             ok = false;
     }
 
-    // Flatpak
     if (status.hasflatpak && status.flatpak) {
         progressbar_set_state(UiState::FLATPAK, ++step);
         if (system("{ echo '----updating_flatpak----'; flatpak update -y; } >> /tmp/zupd.log 2>&1") != 0)
             ok = false;
     }
-
-    // Snap
     if (status.hassnap && status.snap) {
         progressbar_set_state(UiState::SNAP, ++step);
         if (system("{ echo '----updating_snap----'; snap refresh; } >> /tmp/zupd.log 2>&1") != 0)
             ok = false;
     }
 
-    // Cleanup — wszystko w jednym system()
     progressbar_set_state(UiState::CLEANUP, ++step);
     system("{ echo '----cleaning----';"
            "  apt-get autoremove -y; apt-get autoclean; } >> /tmp/zupd.log 2>&1");
@@ -283,9 +269,10 @@ UpdateStatus zypperCheckUpdates() {
     UpdateStatus s;
     cout << "\n" << YELLOW << "[*] Refreshing package cache..." << RESET << "\n";
 
-    // refresh + check w jednym shell wywołaniu
-    s.native = (system("zypper refresh -q 2>/dev/null"
-                       " && zypper list-updates 2>/dev/null | grep -q '^v '") == 0);
+    system("zypper refresh -q 2>/dev/null");
+    string out = runCmd("zypper list-updates 2>/dev/null");
+    s.native = (out.find("| v |") != string::npos ||
+                out.find("|v|")   != string::npos);
 
     checkUniversalManagers(s);
     return s;
@@ -296,7 +283,7 @@ void zypperUpdate(const UpdateStatus& status) {
 
     cout << RED << "\nPackages to update (Zypper):\n" << RESET;
     printCmdLines(
-        "zypper list-updates 2>/dev/null | grep '^v ' | awk -F'|' '{gsub(/^[[:space:]]+|[[:space:]]+$/,\"\",$3); print $3}'",
+        "zypper list-updates 2>/dev/null | awk -F'|' '/\\| v \\|/{gsub(/^[[:space:]]+|[[:space:]]+$/,\"\",$3); print $3}'",
         pfx);
     printUniversalUpdateLists(status);
 
@@ -342,15 +329,25 @@ void zypperUpdate(const UpdateStatus& status) {
 }
 
 //=============================================================================
-// DNF
+// DNF / DNF5
 //=============================================================================
 UpdateStatus dnfCheckUpdates() {
     UpdateStatus s;
     cout << "\n" << YELLOW << "[*] Refreshing package cache..." << RESET << "\n";
 
-    // dnf check-update: exit 100 = są updates
-    int ret = system("dnf check-update -q --refresh >/dev/null 2>&1");
-    s.native = (WEXITSTATUS(ret) == 100);
+    s.dnf5 = (access("/usr/bin/dnf5", X_OK) == 0);
+
+    if (s.dnf5) {
+        system("dnf5 check-upgrade -q >/dev/null 2>&1");
+        string out = runCmd("dnf5 list --upgrades 2>/dev/null");
+        s.native = (out.find('\n') != string::npos &&
+                    out.find('\n') != out.rfind('\n'));
+    } else {
+        system("dnf check-update -q --refresh >/dev/null 2>&1");
+        string out = runCmd("dnf list updates 2>/dev/null");
+        s.native = (out.find('\n') != string::npos &&
+                    out.find('\n') != out.rfind('\n'));
+    }
 
     checkUniversalManagers(s);
     return s;
@@ -359,10 +356,12 @@ UpdateStatus dnfCheckUpdates() {
 void dnfUpdate(const UpdateStatus& status) {
     const string pfx = string(YELLOW) + "[+] " + RESET;
 
-    cout << RED << "\nPackages to update (DNF):\n" << RESET;
-    // Wyciągamy nazwy pakietów bez architektury
+    cout << RED << "\nPackages to update (DNF" << (status.dnf5 ? "5" : "") << "):\n" << RESET;
     {
-        FILE* p = popen("dnf list updates 2>/dev/null | tail -n +2", "r");
+        const string list_cmd = status.dnf5
+            ? "dnf5 list --upgrades 2>/dev/null | tail -n +2"
+            : "dnf list updates 2>/dev/null | tail -n +2";
+        FILE* p = popen(list_cmd.c_str(), "r");
         if (p) {
             char buf[512];
             bool any = false;
@@ -399,9 +398,16 @@ void dnfUpdate(const UpdateStatus& status) {
 
     if (status.native) {
         progressbar_set_state(UiState::DNF, ++step);
-        const char* dnf_cmd = fullupdate
-            ? "{ echo '-----updating_DNF_distro-sync-----'; dnf distro-sync -y; } >> /tmp/zupd.log 2>&1"
-            : "{ echo '-----updating_DNF-----';             dnf upgrade -y;      } >> /tmp/zupd.log 2>&1";
+        const char* dnf_cmd;
+        if (status.dnf5) {
+            dnf_cmd = fullupdate
+                ? "{ echo '-----updating_DNF5_distro-sync-----'; dnf5 distro-sync -y; } >> /tmp/zupd.log 2>&1"
+                : "{ echo '-----updating_DNF5-----';             dnf5 upgrade -y;      } >> /tmp/zupd.log 2>&1";
+        } else {
+            dnf_cmd = fullupdate
+                ? "{ echo '-----updating_DNF_distro-sync-----'; dnf distro-sync -y; } >> /tmp/zupd.log 2>&1"
+                : "{ echo '-----updating_DNF-----';             dnf upgrade -y;      } >> /tmp/zupd.log 2>&1";
+        }
         if (system(dnf_cmd) != 0) ok = false;
     }
 
@@ -417,8 +423,13 @@ void dnfUpdate(const UpdateStatus& status) {
     }
 
     progressbar_set_state(UiState::CLEANUP, ++step);
-    system("{ echo '----cleaning----';"
-           "  dnf autoremove -y; dnf clean packages; } >> /tmp/zupd.log 2>&1");
+    if (status.dnf5) {
+        system("{ echo '----cleaning----';"
+               "  dnf5 autoremove -y; dnf5 clean packages; } >> /tmp/zupd.log 2>&1");
+    } else {
+        system("{ echo '----cleaning----';"
+               "  dnf autoremove -y; dnf clean packages; } >> /tmp/zupd.log 2>&1");
+    }
     cleanupUniversal(status);
 
     finishAndReport(ok, total, step);
@@ -442,7 +453,6 @@ int main(int argc, char* argv[]) {
         else if (arg == "--yes"      || arg == "-y") yes        = true;
     }
 
-    // Walidacja kombinacji flag
     if ((reboot && shutdown)         ||
         (help    && reboot)          || (help    && shutdown) ||
         (version && yes)             || (help    && yes)      ||
