@@ -522,11 +522,14 @@ void zypperUpdate(const UpdateStatus& status) {
         int zypper_rc = system(zypper_cmd);
         int zypper_exit = WIFEXITED(zypper_rc) ? WEXITSTATUS(zypper_rc) : 127;
 
-        if (zypper_exit == 8) {
+        // POPRAWKA: Obsługujemy kod 103 (wymagany restart po aktualizacji zyppera)
+        if (zypper_exit == 103 || zypper_exit == 8) {
             cout << YELLOW
                  << "[*] Zypper restart required — run zpm upd again.\n"
                  << RESET;
+            // ok pozostaje 'true', żeby przejść do czyszczenia i zamknąć proces sukcesem
         } else if (zypper_exit != 0) {
+            // POPRAWKA: Sprawdzamy wyłuskany kod zypper_exit, a nie surowy status systemowy
             ok = false;
         }
     }
