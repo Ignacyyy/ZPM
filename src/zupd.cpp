@@ -1293,7 +1293,7 @@ bool runUpdateFlow(const Options& options,
     const int total = countSteps(status);
     int step = 0;
     bool ok = true;
-
+    std::cout << "\n";
     progressbar_start(total);
 
     progressbar_set_state(UiState::CHECKING, ++step);
