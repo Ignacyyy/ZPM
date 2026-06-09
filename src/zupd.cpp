@@ -522,14 +522,29 @@ void zypperUpdate(const UpdateStatus& status) {
         int zypper_rc = system(zypper_cmd);
         int zypper_exit = WIFEXITED(zypper_rc) ? WEXITSTATUS(zypper_rc) : 127;
 
-        // POPRAWKA: Obsługujemy kod 103 (wymagany restart po aktualizacji zyppera)
+        // NOWA POPRAWKA: Obsługa wymuszonego restartu Zyppera z przerwaniem i czyszczeniem
         if (zypper_exit == 103 || zypper_exit == 8) {
-            cout << YELLOW
-                 << "[*] Zypper restart required — run zpm upd again.\n"
-                 << RESET;
-            // ok pozostaje 'true', żeby przejść do czyszczenia i zamknąć proces sukcesem
-        } else if (zypper_exit != 0) {
-            // POPRAWKA: Sprawdzamy wyłuskany kod zypper_exit, a nie surowy status systemowy
+            // 1. Kończymy pasek postępu statusem ostrzegawczym (zapobiega rozjechaniu UI)
+            progressbar_finish("RESTART NEEDED");
+            
+            // 2. Informujemy użytkownika o konieczności ponownego uruchomienia w nowej linii
+            cout << "\n" << YELLOW
+                 << "[*] Zypper zaktualizował swój stos menedżera i przerwał dalsze pobieranie.\n"
+                 << "[*] Pozostałe pakiety systemowe NIE zostały jeszcze zaktualizowane.\n"
+                 << "[*] Uruchom komendę ponownie: 'zpm upd' (lub 'sudo zupd'), aby dokończyć.\n"
+                 << RESET << "\n";
+
+            // 3. Wykonujemy czyszczenie, ponieważ sesja Zyppera i tak została zamknięta
+            system(
+                "{ echo '----cleaning----'; zypper clean -a; } "
+                ">> /tmp/zupd.log 2>&1"
+            );
+            cleanupUniversal(status);
+
+            // 4. Wychodzimy z funkcji wcześniej – NIE przechodzimy do Flatpak/Snap i nie piszemy "DONE!"
+            return;
+        } 
+        else if (zypper_exit != 0) {
             ok = false;
         }
     }
