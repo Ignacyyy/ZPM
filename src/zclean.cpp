@@ -1,11 +1,13 @@
 #include "main.h"
 
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstring>
 #include <filesystem>
 #include <limits>
 #include <spawn.h>
+#include <thread>
 #include <sys/file.h>
 #include <sys/wait.h>
 
@@ -14,6 +16,7 @@ extern char** environ;
 namespace {
 
 constexpr const char* kLogPath = "/tmp/zclean.log";
+constexpr std::chrono::milliseconds kDryRunStepDelay{160};
 
 volatile std::sig_atomic_t g_interrupted = 0;
 
@@ -25,6 +28,7 @@ enum class LogMode {
 struct Options {
     bool showHelp = false;
     bool showVersion = false;
+    bool dryRun = false;
 };
 
 struct ProcessResult {
@@ -307,6 +311,29 @@ std::string toLower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value;
+}
+
+void printInfoHeader() {
+    std::cout << CYAN << "[ZPM-INFO]" << RESET << "\n";
+}
+
+void beginCleanStep(float progress,
+                    const std::string& progressText,
+                    int& step,
+                    const std::string& infoText) {
+    std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+
+    if (step > 0) {
+        std::cout << "\r\033[K\033[1A\r\033[K";
+    } else {
+        std::cout << "\r\033[K";
+    }
+
+    std::cout << CYAN << "[>]" << RESET << " " << infoText << "\n\n";
+
+    ++step;
+    progressbar_update(progress, progressText);
+    std::cout << std::flush;
 }
 
 bool startsWith(const std::string& value, const std::string& prefix) {
@@ -1205,6 +1232,8 @@ int runSteps(const std::vector<Step>& steps) {
         return 1;
     }
 
+    int infoStep = 0;
+    printInfoHeader();
     progressbar_start(0.0f, "0/" + std::to_string(total) + " | starting...");
 
     for (int i = 0; i < total; ++i) {
@@ -1220,7 +1249,7 @@ int runSteps(const std::vector<Step>& steps) {
         const std::string prefix = std::to_string(i + 1) + "/" + std::to_string(total) +
                                    " | " + step.label;
 
-        progressbar_update(startPct, prefix);
+        beginCleanStep(startPct, prefix, infoStep, step.label);
         const bool ok = step.action();
 
         if (g_interrupted) {
@@ -1250,6 +1279,7 @@ void printHelp(const char* progName) {
     std::cout << RED << "Usage: " << RESET << progName
               << " [options] or zpm clean [options]\n"
               << RED << "Options:\n" << RESET
+              << "  --dry-run      Simulate cleanup flow; no files are changed\n"
               << "  --version, -v  Show version information\n"
               << "  --help,    -h  Show this help message\n";
 }
@@ -1271,11 +1301,17 @@ bool parseOptions(int argc, char* argv[], Options& options) {
             options.showHelp = true;
         } else if (arg == "--version" || arg == "-v") {
             options.showVersion = true;
+        } else if (arg == "--dry-run") {
+            options.dryRun = true;
         } else if (startsWith(arg, "-")) {
             errors.push_back("Unknown option: " + arg);
         } else {
             errors.push_back("zclean does not accept package arguments: " + arg);
         }
+    }
+
+    if ((options.showHelp || options.showVersion) && options.dryRun) {
+        errors.push_back("--help and --version can only be combined with each other.");
     }
 
     for (const std::string& error : errors) {
@@ -1360,6 +1396,96 @@ void printCleanSummary(const AppContext& context, const CleanStatus& status) {
     std::cout << "\n";
 }
 
+bool dryRunStep() {
+    std::this_thread::sleep_for(kDryRunStepDelay);
+    return !g_interrupted;
+}
+
+AppContext buildDryRunContext() {
+    AppContext context = buildContext();
+    if (context.packageManager == "unknown") {
+        context.packageManager = "apt";
+    }
+    return context;
+}
+
+std::vector<std::string> dryRunLabels(const AppContext& context) {
+    std::vector<std::string> labels;
+
+    labels.push_back("checking cleanup status");
+
+    if (context.packageManager == "zypper") {
+        labels.push_back("RPM: rebuild package database");
+        labels.push_back("Zypper: clean package cache");
+        labels.push_back("Zypper: remove unneeded packages");
+    } else if (context.packageManager == "dnf") {
+        labels.push_back("RPM: rebuild package database");
+        labels.push_back(nativeShortLabel(context) + ": autoremove/clean");
+    } else {
+        labels.push_back("APT: prepare package database");
+        labels.push_back("APT: autoremove/autoclean");
+    }
+
+    if (context.hasFlatpak) {
+        labels.push_back("Flatpak: remove unused/cache");
+    }
+
+    if (context.hasSnap) {
+        labels.push_back("Snap: remove disabled/cache");
+    }
+
+    labels.push_back("cleaning report");
+    return labels;
+}
+
+int runDryRunSteps(const std::vector<std::string>& labels) {
+    const int total = static_cast<int>(labels.size());
+    int infoStep = 0;
+
+    printInfoHeader();
+    progressbar_start(0.0f, "0/" + std::to_string(total) + " | starting dry run...");
+
+    for (int i = 0; i < total; ++i) {
+        if (g_interrupted) {
+            progressbar_finish("Dry run interrupted!");
+            std::cout << "\n" << RED
+                      << "Dry run failed or was interrupted.\n" << RESET;
+            return 130;
+        }
+
+        const float startPct = (100.0f * static_cast<float>(i)) / static_cast<float>(total);
+        const float endPct = (100.0f * static_cast<float>(i + 1)) / static_cast<float>(total);
+        const std::string prefix = std::to_string(i + 1) + "/" + std::to_string(total) +
+                                   " | " + labels[static_cast<size_t>(i)];
+
+        beginCleanStep(startPct, prefix, infoStep, labels[static_cast<size_t>(i)]);
+
+        if (!dryRunStep()) {
+            progressbar_finish("Dry run interrupted!");
+            std::cout << "\n" << RED
+                      << "Dry run failed or was interrupted.\n" << RESET;
+            return 130;
+        }
+
+        progressbar_update(endPct, prefix + " - done");
+    }
+
+    progressbar_finish("Dry run done!");
+    std::cout << GREEN << "Dry run complete! No files were changed.\n" << RESET;
+    return 0;
+}
+
+int handleDryRun() {
+    const AppContext context = buildDryRunContext();
+
+    std::cout << "\n" << RED << "Dry run demo: " << RESET
+              << "no files will be changed.\n";
+    std::cout << YELLOW << "[SYS] " << RESET
+              << "Simulating " << nativeShortLabel(context) << " cleanup flow\n\n";
+
+    return runDryRunSteps(dryRunLabels(context));
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -1387,6 +1513,11 @@ int main(int argc, char* argv[]) {
     if (options.showHelp) {
         printHelp(argv[0]);
         return 0;
+    }
+
+    if (options.dryRun) {
+        SigintGuard sigintGuard;
+        return handleDryRun();
     }
 
     if (geteuid() != 0) {
