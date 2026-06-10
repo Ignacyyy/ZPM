@@ -273,6 +273,29 @@ std::string toLower(std::string value) {
     return value;
 }
 
+void printInfoHeader() {
+    std::cout << "\n" << CYAN << "[ZPM-INFO]" << RESET << "\n";
+}
+
+void beginUpgradeStep(float progress,
+                      const std::string& progressText,
+                      int& step,
+                      const std::string& infoText) {
+    std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+
+    if (step > 0) {
+        std::cout << "\r\033[K\033[1A\r\033[K";
+    } else {
+        std::cout << "\r\033[K";
+    }
+
+    std::cout << CYAN << "[>]" << RESET << " " << infoText << "\n\n";
+
+    ++step;
+    progressbar_update(progress, progressText);
+    std::cout << std::flush;
+}
+
 bool startsWith(const std::string& value, const std::string& prefix) {
     return value.rfind(prefix, 0) == 0;
 }
@@ -1874,32 +1897,49 @@ bool runUpdate(const ReleaseInfo& release, bool prerelease) {
 
     bool ok = true;
     std::optional<std::filesystem::path> sourceDir;
+    int progressStep = 0;
 
+    printInfoHeader();
     progressbar_start(0.0f, "0/6 | Starting update...");
 
     if (ok) {
-        progressbar_update(10.0f, "1/6 | Checking tools...");
+        beginUpgradeStep(10.0f,
+                         "1/6 | Checking tools...",
+                         progressStep,
+                         "checking required tools");
         ok = ensureRequiredCommands();
     }
 
     if (ok && !g_interrupted) {
-        progressbar_update(25.0f, "2/6 | Downloading release...");
+        beginUpgradeStep(25.0f,
+                         "2/6 | Downloading release...",
+                         progressStep,
+                         "downloading ZPM release");
         ok = downloadRelease(release, archivePath);
     }
 
     if (ok && !g_interrupted) {
-        progressbar_update(40.0f, "3/6 | Extracting release...");
+        beginUpgradeStep(40.0f,
+                         "3/6 | Extracting release...",
+                         progressStep,
+                         "extracting release archive");
         sourceDir = extractRelease(archivePath, extractDir);
         ok = sourceDir.has_value();
     }
 
     if (ok && !g_interrupted) {
-        progressbar_update(60.0f, "4/6 | Building ZPM...");
+        beginUpgradeStep(60.0f,
+                         "4/6 | Building ZPM...",
+                         progressStep,
+                         "building ZPM");
         ok = buildRelease(*sourceDir, buildDir);
     }
 
     if (ok && !g_interrupted) {
-        progressbar_update(85.0f, "5/6 | Installing ZPM...");
+        beginUpgradeStep(85.0f,
+                         "5/6 | Installing ZPM...",
+                         progressStep,
+                         "installing ZPM");
         ok = installRelease(*sourceDir, buildDir, release, prerelease);
     }
 
@@ -1908,7 +1948,10 @@ bool runUpdate(const ReleaseInfo& release, bool prerelease) {
         writeLogLine("update: interrupted by user");
     }
 
-    progressbar_update(95.0f, "6/6 | Cleaning up...");
+    beginUpgradeStep(95.0f,
+                     "6/6 | Cleaning up...",
+                     progressStep,
+                     "cleaning");
 
     if (ok) {
         progressbar_finish("6/6 | DONE!");
@@ -1977,7 +2020,7 @@ int handleExperimental(const Options& options,
             return 0;
         }
 
-        std::cout << RED << "Updating ZPM...\n\n" << RESET;
+        std::cout << RED << "Updating ZPM...\n" << RESET;
         return runUpdate(remote.prerelease, true) ? 0 : 1;
     }
 
