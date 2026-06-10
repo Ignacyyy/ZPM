@@ -1090,6 +1090,41 @@ int countSteps(const UpdateStatus& status) {
     return steps;
 }
 
+std::string nativeUpdateTask(UiState state) {
+    switch (state) {
+        case UiState::APT:
+            return "updating APT packages";
+        case UiState::ZYPPER:
+            return "updating Zypper packages";
+        case UiState::DNF:
+            return "updating DNF packages";
+        default:
+            return "updating native packages";
+    }
+}
+
+void printInfoStep(const std::string& text) {
+    std::cout << CYAN << "[>]" << RESET << " " << text << "\n";
+}
+
+void printUpdatePlan(const UpdateStatus& status, UiState nativeState) {
+    std::cout << "\n" << CYAN << "[ZPM INFO]" << RESET << "\n";
+
+    if (status.native) {
+        printInfoStep("checking system consistency");
+        printInfoStep(nativeUpdateTask(nativeState));
+    }
+    if (status.hasFlatpakUpdates()) {
+        printInfoStep("updating Flatpak packages");
+    }
+    if (status.hasSnapUpdates()) {
+        printInfoStep("updating Snap packages");
+    }
+
+    printInfoStep("cleaning");
+    std::cout << "\n";
+}
+
 bool checkInterrupted(bool& ok) {
     if (!g_interrupted) {
         return false;
@@ -1507,6 +1542,7 @@ bool runUpdateFlow(const Options& options,
     int step = 0;
     bool ok = true;
 
+    printUpdatePlan(status, nativeState);
     progressbar_start(total);
 
     if (status.native) {
@@ -1731,7 +1767,7 @@ int handleApt(const Options& options) {
     }
 
     if (options.fullUpdate) {
-        std::cout << YELLOW << "FULL UPDATE MODE" << RESET << "\n";
+        std::cout << YELLOW << "[!] FULL UPDATE MODE" << RESET << "\n";
     }
 
     return aptUpdate(options, status) ? 0 : 1;
@@ -1754,7 +1790,7 @@ int handleZypper(const Options& options) {
     }
 
     if (status.zypperDup) {
-        std::cout << YELLOW << "FULL UPDATE MODE (dup)" << RESET << "\n";
+        std::cout << YELLOW << "[!] FULL UPDATE MODE (dup)" << RESET << "\n";
     }
 
     return zypperUpdate(options, status) ? 0 : 1;
@@ -1776,7 +1812,7 @@ int handleDnf(const Options& options) {
     }
 
     if (options.fullUpdate) {
-        std::cout << YELLOW << "FULL UPDATE MODE (distro-sync)" << RESET << "\n";
+        std::cout << YELLOW << "[!] FULL UPDATE MODE (distro-sync)" << RESET << "\n";
     }
 
     return dnfUpdate(options, status) ? 0 : 1;
