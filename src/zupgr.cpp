@@ -18,6 +18,7 @@ constexpr const char* kRepoApiUrl =
     "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases";
 constexpr const char* kArchiveBaseUrl =
     "https://github.com/Zielina-Konrad-productions/ZPM/archive/refs/tags/";
+constexpr std::chrono::milliseconds kDryRunStepDelay{160};
 
 volatile std::sig_atomic_t g_interrupted = 0;
 
@@ -31,6 +32,7 @@ struct Options {
     bool showVersion = false;
     bool force = false;
     bool experimental = false;
+    bool dryRun = false;
 };
 
 struct ProcessResult {
@@ -658,7 +660,8 @@ void printHelp(const char* progName) {
               << "  -h, --help           Show this help message\n"
               << "  -v, --version        Show version information\n"
               << "  -f, --force          Force reinstall even if already up to date\n"
-              << "  --experimental, -ex  Update ZPM to prerelease versions\n";
+              << "  --experimental, -ex  Update ZPM to prerelease versions\n"
+              << "  --dry-run            Simulate upgrade flow; no files are changed\n";
 }
 
 void printVersion() {
@@ -683,13 +686,15 @@ bool parseOptions(int argc, char* argv[], Options& options) {
             options.force = true;
         } else if (arg == "--experimental" || arg == "-ex") {
             options.experimental = true;
+        } else if (arg == "--dry-run") {
+            options.dryRun = true;
         } else {
             errors.push_back("Unknown option: " + arg);
         }
     }
 
     if ((options.showHelp || options.showVersion) &&
-        (options.force || options.experimental)) {
+        (options.force || options.experimental || options.dryRun)) {
         errors.push_back("--help and --version can only be combined with each other.");
     }
 
@@ -1968,6 +1973,58 @@ bool runUpdate(const ReleaseInfo& release, bool prerelease) {
     return false;
 }
 
+bool dryRunStep() {
+    std::this_thread::sleep_for(kDryRunStepDelay);
+    return !g_interrupted;
+}
+
+int handleDryRun(const Options& options) {
+    const std::string releaseType = options.experimental ? "prerelease" : "stable";
+
+    std::cout << "\n" << RED << "Dry run demo: " << RESET
+              << "no files will be changed.\n";
+    std::cout << YELLOW << "[SYS] " << RESET
+              << "Simulating " << releaseType << " ZPM upgrade flow";
+    if (options.force) {
+        std::cout << " (force)";
+    }
+    std::cout << "\n";
+
+    int progressStep = 0;
+    bool ok = true;
+
+    printInfoHeader();
+    progressbar_start(0.0f, "0/6 | Starting dry run...");
+
+    const auto runStep = [&progressStep, &ok](float progress,
+                                              const std::string& progressText,
+                                              const std::string& infoText) {
+        if (!ok || g_interrupted) {
+            return;
+        }
+
+        beginUpgradeStep(progress, progressText, progressStep, infoText);
+        ok = dryRunStep();
+    };
+
+    runStep(10.0f, "1/6 | Checking tools...", "checking required tools");
+    runStep(25.0f, "2/6 | Downloading release...", "downloading ZPM release");
+    runStep(40.0f, "3/6 | Extracting release...", "extracting release archive");
+    runStep(60.0f, "4/6 | Building ZPM...", "building ZPM");
+    runStep(85.0f, "5/6 | Installing ZPM...", "installing ZPM");
+    runStep(95.0f, "6/6 | Cleaning up...", "cleaning");
+
+    if (!ok || g_interrupted) {
+        progressbar_finish("Dry run interrupted!");
+        std::cout << RED << "Dry run failed or was interrupted.\n" << RESET;
+        return g_interrupted ? 130 : 1;
+    }
+
+    progressbar_finish("Dry run done!");
+    std::cout << GREEN << "Dry run complete! No files were changed.\n" << RESET;
+    return 0;
+}
+
 void printLocalVersions(const LocalVersions& versions) {
     if (!versions.stable.empty()) {
         std::cout << "ZPM installed version:" << YELLOW << " v"
@@ -2088,6 +2145,11 @@ int main(int argc, char* argv[]) {
     if (options.showHelp) {
         printHelp(argv[0]);
         return 0;
+    }
+
+    if (options.dryRun) {
+        SigintGuard sigintGuard;
+        return handleDryRun(options);
     }
 
     if (geteuid() != 0) {
