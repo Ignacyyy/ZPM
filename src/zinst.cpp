@@ -1,10 +1,14 @@
 #include "main.h"
 
+#include <atomic>
 #include <cerrno>
+#include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cctype>
 #include <cstdlib>
 #include <limits>
+#include <thread>
 #include <sys/file.h>
 #include <sys/wait.h>
 
@@ -280,6 +284,29 @@ std::string toLower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value;
+}
+
+void printInfoHeader() {
+    std::cout << CYAN << "[ZPM-INFO]" << RESET << "\n";
+}
+
+void beginInstallStep(float progress,
+                      const std::string& progressText,
+                      int& step,
+                      const std::string& infoText) {
+    std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+
+    if (step > 0) {
+        std::cout << "\r\033[K\033[1A\r\033[K";
+    } else {
+        std::cout << "\r\033[K";
+    }
+
+    std::cout << CYAN << "[>]" << RESET << " " << infoText << "\n\n";
+
+    ++step;
+    progressbar_update(progress, progressText);
+    std::cout << std::flush;
 }
 
 bool startsWith(const std::string& value, const std::string& prefix) {
@@ -1145,6 +1172,13 @@ std::string sourceName(const AppContext& context, InstallSource source) {
     return "Unknown";
 }
 
+std::string installInfoText(const AppContext& context,
+                            const InstallTarget& target,
+                            bool dryRun) {
+    return std::string(dryRun ? "simulating " : "installing ") +
+           sourceName(context, target.source) + " package: " + target.name;
+}
+
 bool targetAlreadyInstalled(const AppContext& context, const InstallTarget& target) {
     switch (target.source) {
         case InstallSource::Native:
@@ -1393,6 +1427,11 @@ int runInstallLoop(AppContext& context,
         writeLogLine("-----zinst_start-----", LogMode::Truncate);
     }
 
+    int infoStep = 0;
+    printInfoHeader();
+    progressbar_start(0.0f, "0/" + std::to_string(total) +
+                             (dryRun ? " | starting dry run..." : " | starting..."));
+
     for (int i = 0; i < total; ++i) {
         if (g_interrupted) {
             progressbar_finish("Cancelled!");
@@ -1403,9 +1442,18 @@ int runInstallLoop(AppContext& context,
         const InstallTarget& target = targets[static_cast<size_t>(i)];
         const float startPct = (100.0f * static_cast<float>(i)) / static_cast<float>(total);
         const float endPct = (100.0f * static_cast<float>(i + 1)) / static_cast<float>(total);
+        const std::string progressText = std::to_string(i + 1) + "/" +
+                                         std::to_string(total) + " | " +
+                                         sourceName(context, target.source) + ": " +
+                                         target.name;
 
         PackageResult result;
         result.name = target.name;
+
+        beginInstallStep(startPct,
+                         progressText,
+                         infoStep,
+                         installInfoText(context, target, dryRun));
 
         const InstallStatus status = installTarget(context,
                                                    target,
@@ -1489,6 +1537,21 @@ AppContext buildContext() {
     return context;
 }
 
+AppContext buildDryRunContext() {
+    AppContext context;
+    context.packageManager = get_package_manager();
+    if (context.packageManager == "unknown") {
+        context.packageManager = "apt";
+    }
+    context.dnfCommand = commandExists("dnf5") ? "dnf5" : "dnf";
+    context.hasFlatpak = commandExists("flatpak");
+    context.hasSnap = commandExists("snap");
+    if (context.hasFlatpak) {
+        context.flatpakFlag = "--system";
+    }
+    return context;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -1523,6 +1586,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    SigintGuard sigintGuard;
+
+    if (options.dryRun) {
+        AppContext context = buildDryRunContext();
+        std::vector<InstallTarget> targets = buildDryRunTargets(context, options.packages);
+
+        std::cout << "\n" << RED << "Dry run demo: " << RESET
+                  << "no packages will be installed or checked.\n\n";
+        return runInstallLoop(context, targets, true);
+    }
+
     if (!options.dryRun && geteuid() != 0) {
         std::cout << RED << "Run with sudo!\n" << RESET;
         return 1;
@@ -1530,18 +1604,15 @@ int main(int argc, char* argv[]) {
 
     zpm_update::checkForUpdates();
 
-    SigintGuard sigintGuard;
     AppContext context = buildContext();
 
-    if (!options.dryRun && context.packageManager == "unknown") {
+    if (context.packageManager == "unknown") {
         std::cout << RED << "Error: Could not detect a supported package manager "
                   << "(apt / zypper / dnf).\n" << RESET;
         return 1;
     }
 
-    std::vector<InstallTarget> targets = options.dryRun
-        ? buildDryRunTargets(context, options.packages)
-        : resolveTargets(context, options.packages);
+    std::vector<InstallTarget> targets = resolveTargets(context, options.packages);
     if (g_interrupted) {
         return 130;
     }
@@ -1549,12 +1620,6 @@ int main(int argc, char* argv[]) {
     if (targets.empty()) {
         std::cout << YELLOW << "No packages selected.\n" << RESET;
         return 0;
-    }
-
-    if (options.dryRun) {
-        std::cout << "\n" << RED << "Dry run demo: " << RESET
-                  << "no packages will be installed or checked.\n\n";
-        return runInstallLoop(context, targets, true);
     }
 
     FileLock lock;
