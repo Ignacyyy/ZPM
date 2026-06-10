@@ -1,385 +1,1016 @@
+// zsearch.cpp - part of ZPM
+// Search native, Flatpak and Snap package catalogs.
+
 #include "main.h"
-using namespace std;
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
-string toLower(string str) {
-    transform(str.begin(), str.end(), str.begin(), ::tolower);
-    return str;
-}
+#include <cerrno>
+#include <cctype>
+#include <exception>
 
-string highlight(const string& text, const string& query) {
-    string lowerText  = toLower(text);
-    string lowerQuery = toLower(query);
-    size_t pos = lowerText.find(lowerQuery);
-    if (pos == string::npos) return text;
-    return text.substr(0, pos) +
-    YELLOW + text.substr(pos, query.length()) + RESET +
-    text.substr(pos + query.length());
-}
+namespace {
 
-// ─── komunikaty ───────────────────────────────────────────────────────────────
-void helpmessage(const char* progName) {
-    cout << RED << "Usage: " << RESET << progName
-    << " <query> [options] or zpm search <query> [options]\n";
-    cout << RED << "Options:\n" << RESET;
-    cout << "  -h, --help     Show help\n";
-    cout << "  -v, --version  Show version\n";
-}
+constexpr std::size_t kMaxQueryLength = 1024;
+constexpr std::size_t kMaxCapturedOutput = 64 * 1024 * 1024;
 
-void versionmessage() {
-    cout << RED << "zsearch component version: v" << zpm_version::version() << " of ZPM\n" << RESET;
-    cout << "https://github.com/Zielina-Konrad-productions/ZPM\n";
-    cout << "Copyright (c) 2026 Ignacyyy & Ry3ball\nLicense: MIT\n";
-}
+enum class PackageManager {
+    Apt,
+    Zypper,
+    Dnf,
+    Unknown
+};
 
-// ─── sekcje wyszukiwania ──────────────────────────────────────────────────────
+enum class SourceFilter {
+    All,
+    Native,
+    Flatpak,
+    Snap
+};
 
-void searchApt(const string& query, const string& queryTrimmed) {
-    string command = "apt-cache search " + query;
-    FILE* pipe = popen(command.c_str(), "r");
-    if (!pipe) { cerr << RED << "Error running apt-cache\n" << RESET; return; }
-
-    char buffer[512];
-    int  count = 0;
-    bool headerPrinted = false;
-
-    while (fgets(buffer, sizeof(buffer), pipe)) {
-        string line(buffer);
-        size_t dash = line.find(" - ");
-        if (dash != string::npos) {
-            if (!headerPrinted) {
-                cout << YELLOW << "=== APT results ===\n" << RESET;
-                headerPrinted = true;
-            }
-            string name = highlight(line.substr(0, dash), queryTrimmed);
-            string desc = highlight(line.substr(dash + 3), queryTrimmed);
-            cout << GREEN << "[APT]" << RESET << " " << name << "\n";
-            cout << "    " << desc;
-            count++;
-        }
-    }
-    pclose(pipe);
-
-    if (count == 0)
-        cout << YELLOW << "=== APT: no results ===\n" << RESET;
-    else
-        cout << "\n" << GREEN << " APT found: " << count << " packages\n" << RESET;
-}
-
-void searchZypper(const string& query, const string& queryTrimmed) {
-    // zypper search zwraca tabelę: S | Name | Summary | Type
-    string command = "zypper --no-refresh search " + query + " 2>/dev/null";
-    FILE* pipe = popen(command.c_str(), "r");
-    if (!pipe) { cerr << RED << "Error running zypper\n" << RESET; return; }
-
-    char buffer[512];
-    int  count = 0;
-    bool headerPrinted = false;
-    bool pastHeader    = false; // pomijamy linie nagłówka tabeli
-
-    while (fgets(buffer, sizeof(buffer), pipe)) {
-        string line(buffer);
-        line.erase(line.find_last_not_of(" \n\r\t") + 1);
-
-        // Linie separatora (--+--+--) i nagłówek (S | Name | ...)
-        if (line.find("-+-") != string::npos) { pastHeader = true; continue; }
-        if (!pastHeader) continue;
-        if (line.empty()) continue;
-
-        // Format: "i | vim | Vi IMproved | package"
-        // lub:    "  | vim | Vi IMproved | package"
-        auto splitPipe = [](const string& s) {
-            vector<string> parts;
-            size_t start = 0, pos;
-            while ((pos = s.find('|', start)) != string::npos) {
-                string part = s.substr(start, pos - start);
-                part.erase(0, part.find_first_not_of(" \t"));
-                part.erase(part.find_last_not_of(" \t") + 1);
-                parts.push_back(part);
-                start = pos + 1;
-            }
-            string last = s.substr(start);
-            last.erase(0, last.find_first_not_of(" \t"));
-            last.erase(last.find_last_not_of(" \t") + 1);
-            parts.push_back(last);
-            return parts;
-        };
-
-        vector<string> cols = splitPipe(line);
-        if (cols.size() < 3) continue;
-
-        string name    = cols[1];
-        string summary = cols[2];
-        if (name.empty()) continue;
-
-        if (!headerPrinted) {
-            cout << YELLOW << "=== Zypper results ===\n" << RESET;
-            headerPrinted = true;
-        }
-
-        cout << GREEN << "[ZYPPER]" << RESET << " "
-        << highlight(name, queryTrimmed) << "\n";
-        if (!summary.empty())
-            cout << "    " << highlight(summary, queryTrimmed) << "\n";
-        count++;
-    }
-    pclose(pipe);
-
-    if (count == 0)
-        cout << YELLOW << "=== Zypper: no results ===\n" << RESET;
-    else
-        cout << "\n" << GREEN << " Zypper found: " << count << " packages\n" << RESET;
-}
-
-void searchDnf(const string& query, const string& queryTrimmed) {
-    // Parser dostosowany do Fedory z polskimi locale i dnf5 (wypluwającym wiodące spacje)
-    string command = "dnf search " + query + " 2>/dev/null";
-    FILE* pipe = popen(command.c_str(), "r");
-    if (!pipe) { cerr << RED << "Error running dnf\n" << RESET; return; }
-
-    char buffer[512];
-    int  count = 0;
-    bool headerPrinted = false;
-
-    while (fgets(buffer, sizeof(buffer), pipe)) {
-        string line(buffer);
-        line.erase(line.find_last_not_of(" \n\r\t") + 1);
-        if (line.empty()) continue;
-
-        // Szybki odsiew linii dekoracyjnych
-        if (line.find("====") != string::npos) continue;
-        if (line.rfind("Last", 0) == 0) continue;
-
-        // 1. Znajdź prawdziwy początek nazwy pakietu (pomiń wiodące spacje DNF-a)
-        size_t nameStart = line.find_first_not_of(" \t");
-        if (nameStart == string::npos) continue;
-
-        // 2. Sprawdź, czy w linii występuje jawny separator (starsze wersje DNF)
-        size_t sep = line.find_first_of(":|", nameStart);
-
-        string nameArch, summary;
-        if (sep != string::npos) {
-            // Format z dwukropkiem lub kreską pionową
-            nameArch = line.substr(nameStart, sep - nameStart);
-            summary = line.substr(sep + 1);
-        } else {
-            // Format czysto kolumnowy (rozdzielony spacjami)
-            size_t nameEnd = line.find_first_of(" \t", nameStart);
-            if (nameEnd == string::npos) {
-                nameArch = line.substr(nameStart);
-                summary = "";
-            } else {
-                nameArch = line.substr(nameStart, nameEnd - nameStart);
-                summary = line.substr(nameEnd);
-            }
-        }
-
-        // 3. Obustronne czyszczenie (Trim)
-        size_t f = nameArch.find_first_not_of(" \t");
-        size_t l = nameArch.find_last_not_of(" \t");
-        if (f == string::npos) continue;
-        nameArch = nameArch.substr(f, l - f + 1);
-
-        size_t sf = summary.find_first_not_of(" \t");
-        summary = (sf != string::npos) ? summary.substr(sf) : "";
-
-        // Jeśli opis zaczyna się od zbędnego znaku separatora, odetnij go
-        if (!summary.empty() && (summary[0] == ':' || summary[0] == '|')) {
-            summary = summary.substr(1);
-            size_t sf2 = summary.find_first_not_of(" \t");
-            summary = (sf2 != string::npos) ? summary.substr(sf2) : "";
-        }
-
-        // 4. Filtrowanie śmieci i logów systemowych (paczka w Linuxie nigdy nie ma spacji w nazwie)
-        if (nameArch.find(' ') != string::npos) continue;
-
-        string nameLower = toLower(nameArch);
-        if (nameLower == "package" || nameLower == "name" || nameLower == "pakiet" ||
-            nameLower == "nazwa" || nameLower == "updating" || nameLower == "loading" ||
-            nameLower == "repositories" || nameLower == "matched" || nameLower == "for" ||
-            nameLower == "wyszukano" || nameLower == "ostatnio" || nameLower == "summary" ||
-            nameLower == "aktualizowanie" || nameLower == "załadowano" || nameLower == "dopasowane") {
-            continue;
-            }
-
-            // Wycinanie architektury (.x86_64, .noarch itp.) dla estetyki ZPM
-            string name = nameArch;
-        size_t dot = nameArch.rfind('.');
-        if (dot != string::npos && dot > 0) name = nameArch.substr(0, dot);
-
-        if (!headerPrinted) {
-            cout << YELLOW << "=== DNF results ===\n" << RESET;
-            headerPrinted = true;
-        }
-
-        cout << GREEN << "[DNF]" << RESET << " "
-        << highlight(name, queryTrimmed) << "\n";
-        if (!summary.empty())
-            cout << "    " << highlight(summary, queryTrimmed) << "\n";
-        count++;
-    }
-    pclose(pipe);
-
-    if (count == 0)
-        cout << YELLOW << "=== DNF: no results ===\n" << RESET;
-    else
-        cout << "\n" << GREEN << " DNF found: " << count << " packages\n" << RESET;
-}
-
-void searchFlatpak(const string& query, const string& queryTrimmed) {
-    bool hasFlatpak = (access("/usr/bin/flatpak", X_OK) == 0 ||
-    access("/bin/flatpak",     X_OK) == 0);
-    if (!hasFlatpak) return;
-
-    string command = "flatpak search --columns=application,name,description "
-    + query + " 2>/dev/null";
-    FILE* pipe = popen(command.c_str(), "r");
-    if (!pipe) return;
-
-    char buffer[512];
-    int  count = 0;
-    bool headerPrinted = false;
-
-    while (fgets(buffer, sizeof(buffer), pipe)) {
-        string line(buffer);
-        line.erase(line.find_last_not_of(" \n\r\t") + 1);
-
-        size_t t1 = line.find('\t');
-        size_t t2 = line.find('\t', t1 + 1);
-        if (t1 == string::npos) continue;
-
-        string appId = line.substr(0, t1);
-        string name  = (t2 != string::npos) ? line.substr(t1+1, t2-t1-1) : line.substr(t1+1);
-        string desc  = (t2 != string::npos) ? line.substr(t2+1) : "";
-
-        if (!headerPrinted) {
-            cout << "\n" << YELLOW << "=== Flatpak results ===\n" << RESET;
-            headerPrinted = true;
-        }
-
-        cout << GREEN << "[FLATPAK]" << RESET << " "
-        << highlight(appId, queryTrimmed) << " - "
-        << highlight(name,  queryTrimmed) << "\n";
-        if (!desc.empty())
-            cout << "    " << highlight(desc, queryTrimmed) << "\n";
-        count++;
-    }
-    pclose(pipe);
-
-    if (count == 0)
-        cout << "\n" << YELLOW << "=== Flatpak: no results ===\n" << RESET;
-    else
-        cout << "\n" << GREEN << " Flatpak found: " << count << " packages\n" << RESET;
-}
-
-void searchSnap(const string& query, const string& queryTrimmed) {
-    bool hasSnap = (access("/usr/bin/snap", X_OK) == 0 ||
-    access("/bin/snap",     X_OK) == 0 ||
-    access("/snap/bin/snap",X_OK) == 0);
-    if (!hasSnap) return;
-
-    string command = "snap find " + query + " 2>/dev/null";
-    FILE* pipe = popen(command.c_str(), "r");
-    if (!pipe) return;
-
-    char buffer[512];
-    int  count = 0;
-    bool headerPrinted = false;
-
-    // Pierwsza linia to nagłówek — pomijamy
-    fgets(buffer, sizeof(buffer), pipe);
-
-    while (fgets(buffer, sizeof(buffer), pipe)) {
-        string line(buffer);
-        line.erase(line.find_last_not_of(" \n\r\t") + 1);
-        if (line.empty()) continue;
-
-        istringstream iss(line);
-        string name, version, publisher, notes, summary;
-        iss >> name >> version >> publisher >> notes;
-        getline(iss, summary);
-        if (!summary.empty())
-            summary.erase(0, summary.find_first_not_of(" \t"));
-
-        if (!headerPrinted) {
-            cout << "\n" << YELLOW << "=== Snap results ===\n" << RESET;
-            headerPrinted = true;
-        }
-
-        cout << GREEN << "[SNAP]" << RESET << " "
-        << highlight(name, queryTrimmed) << "\n";
-        if (!summary.empty())
-            cout << "    " << highlight(summary, queryTrimmed) << "\n";
-        count++;
-    }
-    pclose(pipe);
-
-    if (count == 0)
-        cout << "\n" << YELLOW << "=== Snap: no results ===\n" << RESET;
-    else
-        cout << "\n" << GREEN << " Snap found: " << count << " packages\n" << RESET;
-}
-
-// ─── main ─────────────────────────────────────────────────────────────────────
-int main(int argc, char* argv[]) {
-    zpm_update::checkForUpdates();
-
-    bool showHelp    = false;
+struct Options {
+    bool showHelp = false;
     bool showVersion = false;
-    string query;
+    SourceFilter filter = SourceFilter::All;
+    std::vector<std::string> queryTerms;
+};
+
+struct ParseResult {
+    Options options;
+    std::string error;
+};
+
+struct ProcessResult {
+    int exitCode = 127;
+    std::string output;
+    bool truncated = false;
+};
+
+struct SearchResult {
+    std::string title;
+    std::string summary;
+};
+
+struct SearchSection {
+    std::string title;
+    std::string label;
+    std::vector<SearchResult> results;
+    bool ok = true;
+    std::string error;
+};
+
+struct AppContext {
+    PackageManager packageManager = PackageManager::Unknown;
+    std::string dnfCommand;
+    bool hasFlatpak = false;
+    bool hasSnap = false;
+};
+
+class FileDescriptor {
+public:
+    FileDescriptor() = default;
+    explicit FileDescriptor(int fd) : fd_(fd) {}
+
+    FileDescriptor(const FileDescriptor&) = delete;
+    FileDescriptor& operator=(const FileDescriptor&) = delete;
+
+    FileDescriptor(FileDescriptor&& other) noexcept : fd_(other.fd_) {
+        other.fd_ = -1;
+    }
+
+    FileDescriptor& operator=(FileDescriptor&& other) noexcept {
+        if (this != &other) {
+            reset();
+            fd_ = other.fd_;
+            other.fd_ = -1;
+        }
+        return *this;
+    }
+
+    ~FileDescriptor() {
+        reset();
+    }
+
+    bool valid() const {
+        return fd_ >= 0;
+    }
+
+    int get() const {
+        return fd_;
+    }
+
+    void reset(int fd = -1) {
+        if (fd_ >= 0) {
+            close(fd_);
+        }
+        fd_ = fd;
+    }
+
+private:
+    int fd_ = -1;
+};
+
+std::string ltrim(const std::string& input) {
+    const auto begin = input.find_first_not_of(" \t\r\n");
+    return begin == std::string::npos ? std::string {} : input.substr(begin);
+}
+
+std::string rtrim(const std::string& input) {
+    const auto end = input.find_last_not_of(" \t\r\n");
+    return end == std::string::npos ? std::string {} : input.substr(0, end + 1);
+}
+
+std::string trim(const std::string& input) {
+    return rtrim(ltrim(input));
+}
+
+std::string toLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+bool startsWith(const std::string& value, const std::string& prefix) {
+    return value.rfind(prefix, 0) == 0;
+}
+
+std::vector<std::string> splitLines(const std::string& text) {
+    std::vector<std::string> lines;
+    std::stringstream stream(text);
+    std::string line;
+
+    while (std::getline(stream, line)) {
+        lines.push_back(rtrim(line));
+    }
+
+    return lines;
+}
+
+std::vector<std::string> splitAndTrim(const std::string& text, char delimiter) {
+    std::vector<std::string> parts;
+    std::size_t start = 0;
+
+    for (;;) {
+        const std::size_t pos = text.find(delimiter, start);
+        if (pos == std::string::npos) {
+            parts.push_back(trim(text.substr(start)));
+            break;
+        }
+
+        parts.push_back(trim(text.substr(start, pos - start)));
+        start = pos + 1;
+    }
+
+    return parts;
+}
+
+std::string joinTerms(const std::vector<std::string>& terms) {
+    std::string joined;
+
+    for (const std::string& term : terms) {
+        if (!joined.empty()) {
+            joined += ' ';
+        }
+        joined += term;
+    }
+
+    return joined;
+}
+
+bool executableAt(const std::string& path) {
+    return !path.empty() && access(path.c_str(), X_OK) == 0;
+}
+
+bool commandExists(const std::string& command) {
+    if (command.find('/') != std::string::npos) {
+        return executableAt(command);
+    }
+
+    const char* pathEnv = getenv("PATH");
+    const std::string path = pathEnv != nullptr
+        ? pathEnv
+        : "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+    std::stringstream stream(path);
+    std::string directory;
+    while (std::getline(stream, directory, ':')) {
+        if (directory.empty()) {
+            directory = ".";
+        }
+        if (executableAt(directory + "/" + command)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool setCloseOnExec(int fd) {
+    const int flags = fcntl(fd, F_GETFD);
+    return flags >= 0 && fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == 0;
+}
+
+int decodeExitStatus(int status) {
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return 127;
+}
+
+int waitForChild(pid_t pid) {
+    int status = 0;
+
+    for (;;) {
+        const pid_t result = waitpid(pid, &status, 0);
+        if (result == pid) {
+            return decodeExitStatus(status);
+        }
+        if (result < 0 && errno == EINTR) {
+            continue;
+        }
+        return 127;
+    }
+}
+
+void redirectToDevNull(int targetFd) {
+    FileDescriptor nullFd(open("/dev/null", O_RDWR | O_CLOEXEC));
+    if (nullFd.valid()) {
+        dup2(nullFd.get(), targetFd);
+    }
+}
+
+void appendCaptured(ProcessResult& result, const char* data, std::size_t size) {
+    if (result.output.size() >= kMaxCapturedOutput) {
+        result.truncated = true;
+        return;
+    }
+
+    const std::size_t remaining = kMaxCapturedOutput - result.output.size();
+    const std::size_t accepted = std::min(size, remaining);
+    result.output.append(data, accepted);
+    result.truncated = result.truncated || accepted < size;
+}
+
+ProcessResult captureProcess(const std::vector<std::string>& args) {
+    if (args.empty() || args.front().empty()) {
+        return {};
+    }
+
+    int pipeFd[2] = {-1, -1};
+    if (pipe(pipeFd) != 0) {
+        return {};
+    }
+
+    FileDescriptor readEnd(pipeFd[0]);
+    FileDescriptor writeEnd(pipeFd[1]);
+    setCloseOnExec(readEnd.get());
+    setCloseOnExec(writeEnd.get());
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        return {};
+    }
+
+    if (pid == 0) {
+        readEnd.reset();
+        if (dup2(writeEnd.get(), STDOUT_FILENO) < 0) {
+            _exit(127);
+        }
+        redirectToDevNull(STDERR_FILENO);
+
+        setenv("LC_ALL", "C", 1);
+        setenv("LANG", "C", 1);
+        setenv("LANGUAGE", "C", 1);
+
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (const std::string& arg : args) {
+            argv.push_back(const_cast<char*>(arg.c_str()));
+        }
+        argv.push_back(nullptr);
+
+        execvp(argv[0], argv.data());
+        _exit(errno == ENOENT ? 127 : 126);
+    }
+
+    writeEnd.reset();
+
+    ProcessResult result;
+    std::array<char, 4096> buffer {};
+
+    for (;;) {
+        const ssize_t count = read(readEnd.get(), buffer.data(), buffer.size());
+        if (count > 0) {
+            appendCaptured(result, buffer.data(), static_cast<std::size_t>(count));
+            continue;
+        }
+        if (count == 0) {
+            break;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        break;
+    }
+
+    result.exitCode = waitForChild(pid);
+    return result;
+}
+
+std::vector<std::string> withTerms(std::vector<std::string> args,
+                                   const std::vector<std::string>& terms) {
+    args.insert(args.end(), terms.begin(), terms.end());
+    return args;
+}
+
+PackageManager parsePackageManager(const std::string& value) {
+    if (value == "apt") {
+        return PackageManager::Apt;
+    }
+    if (value == "zypper") {
+        return PackageManager::Zypper;
+    }
+    if (value == "dnf") {
+        return PackageManager::Dnf;
+    }
+    return PackageManager::Unknown;
+}
+
+std::string dnfCommand() {
+    if (commandExists("dnf")) {
+        return "dnf";
+    }
+    return commandExists("dnf5") ? "dnf5" : std::string {};
+}
+
+bool nativeSearchToolAvailable(const AppContext& context) {
+    switch (context.packageManager) {
+        case PackageManager::Apt:
+            return commandExists("apt-cache");
+        case PackageManager::Zypper:
+            return commandExists("zypper");
+        case PackageManager::Dnf:
+            return !context.dnfCommand.empty();
+        case PackageManager::Unknown:
+            return false;
+    }
+
+    return false;
+}
+
+std::string nativeToolLabel(PackageManager packageManager) {
+    switch (packageManager) {
+        case PackageManager::Apt:
+            return "APT";
+        case PackageManager::Zypper:
+            return "Zypper";
+        case PackageManager::Dnf:
+            return "DNF";
+        case PackageManager::Unknown:
+            return "Native";
+    }
+
+    return "Native";
+}
+
+bool validQueryTerm(const std::string& term) {
+    return !term.empty() &&
+           std::none_of(term.begin(), term.end(), [](unsigned char c) {
+               return std::iscntrl(c);
+           });
+}
+
+bool validQuery(const std::vector<std::string>& terms) {
+    if (terms.empty()) {
+        return false;
+    }
+
+    std::size_t length = 0;
+    for (const std::string& term : terms) {
+        if (!validQueryTerm(term)) {
+            return false;
+        }
+        length += term.size();
+        if (length > kMaxQueryLength) {
+            return false;
+        }
+        ++length;
+    }
+
+    return true;
+}
+
+std::vector<std::string> makeHighlightNeedles(const std::vector<std::string>& queryTerms) {
+    std::vector<std::string> needles;
+
+    for (const std::string& term : queryTerms) {
+        const std::string cleaned = toLower(trim(term));
+        if (!cleaned.empty() &&
+            std::find(needles.begin(), needles.end(), cleaned) == needles.end()) {
+            needles.push_back(cleaned);
+        }
+    }
+
+    std::sort(needles.begin(), needles.end(), [](const std::string& lhs,
+                                                 const std::string& rhs) {
+        return lhs.size() > rhs.size();
+    });
+
+    return needles;
+}
+
+std::string highlight(const std::string& text, const std::vector<std::string>& needles) {
+    if (text.empty() || needles.empty()) {
+        return text;
+    }
+
+    const std::string lowerText = toLower(text);
+    std::vector<bool> highlighted(text.size(), false);
+
+    for (const std::string& needle : needles) {
+        std::size_t pos = lowerText.find(needle);
+        while (pos != std::string::npos) {
+            for (std::size_t index = pos; index < pos + needle.size() &&
+                                             index < highlighted.size(); ++index) {
+                highlighted[index] = true;
+            }
+            pos = lowerText.find(needle, pos + needle.size());
+        }
+    }
+
+    std::string output;
+    output.reserve(text.size() + 16);
+    bool active = false;
+
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        if (highlighted[index] && !active) {
+            output += YELLOW;
+            active = true;
+        } else if (!highlighted[index] && active) {
+            output += RESET;
+            active = false;
+        }
+        output += text[index];
+    }
+
+    if (active) {
+        output += RESET;
+    }
+
+    return output;
+}
+
+bool commandFailedToExecute(const ProcessResult& result) {
+    return result.exitCode == 126 || result.exitCode == 127;
+}
+
+SearchSection failedSection(std::string title, std::string label, std::string error) {
+    SearchSection section;
+    section.title = std::move(title);
+    section.label = std::move(label);
+    section.ok = false;
+    section.error = std::move(error);
+    return section;
+}
+
+SearchSection parseAptResults(const ProcessResult& result) {
+    SearchSection section;
+    section.title = "APT";
+    section.label = "APT";
+
+    for (const std::string& line : splitLines(result.output)) {
+        const std::size_t dash = line.find(" - ");
+        if (dash == std::string::npos) {
+            continue;
+        }
+
+        const std::string name = trim(line.substr(0, dash));
+        if (name.empty()) {
+            continue;
+        }
+
+        section.results.push_back({name, trim(line.substr(dash + 3))});
+    }
+
+    return section;
+}
+
+SearchSection parseZypperResults(const ProcessResult& result) {
+    SearchSection section;
+    section.title = "Zypper";
+    section.label = "ZYPPER";
+
+    bool pastHeader = false;
+    for (const std::string& line : splitLines(result.output)) {
+        if (line.find("-+-") != std::string::npos) {
+            pastHeader = true;
+            continue;
+        }
+        if (!pastHeader || trim(line).empty()) {
+            continue;
+        }
+
+        const std::vector<std::string> columns = splitAndTrim(line, '|');
+        if (columns.size() < 3 || columns[1].empty()) {
+            continue;
+        }
+
+        section.results.push_back({columns[1], columns[2]});
+    }
+
+    return section;
+}
+
+bool isDnfMetadataLine(const std::string& line) {
+    const std::string lower = toLower(trim(line));
+    if (lower.empty() || lower.find("====") != std::string::npos) {
+        return true;
+    }
+
+    return startsWith(lower, "last metadata expiration check") ||
+           startsWith(lower, "updating and loading repositories") ||
+           startsWith(lower, "repositories loaded") ||
+           startsWith(lower, "loading repositories") ||
+           startsWith(lower, "matched fields") ||
+           startsWith(lower, "name ") ||
+           startsWith(lower, "package ") ||
+           startsWith(lower, "summary ") ||
+           lower == "no matches found.";
+}
+
+bool isKnownRpmArch(const std::string& value) {
+    static constexpr std::array<const char*, 12> kKnownArch {
+        "x86_64", "aarch64", "noarch", "i686", "i586", "i386",
+        "ppc64le", "s390x", "armv7hl", "armhfp", "riscv64", "src"
+    };
+
+    return std::any_of(kKnownArch.begin(), kKnownArch.end(), [&](const char* arch) {
+        return value == arch;
+    });
+}
+
+std::string stripRpmArch(const std::string& package) {
+    const std::size_t dot = package.rfind('.');
+    if (dot == std::string::npos || dot == 0 || dot + 1 >= package.size()) {
+        return package;
+    }
+
+    const std::string suffix = package.substr(dot + 1);
+    return isKnownRpmArch(suffix) ? package.substr(0, dot) : package;
+}
+
+bool looksLikePackageToken(const std::string& value) {
+    bool hasVisibleCharacter = false;
+
+    for (unsigned char c : value) {
+        if (std::iscntrl(c) || std::isspace(c)) {
+            return false;
+        }
+        if (!std::ispunct(c)) {
+            hasVisibleCharacter = true;
+        }
+    }
+
+    return hasVisibleCharacter;
+}
+
+SearchSection parseDnfResults(const ProcessResult& result) {
+    SearchSection section;
+    section.title = "DNF";
+    section.label = "DNF";
+
+    for (const std::string& rawLine : splitLines(result.output)) {
+        const std::string line = trim(rawLine);
+        if (isDnfMetadataLine(line)) {
+            continue;
+        }
+
+        const std::size_t nameStart = line.find_first_not_of(" \t");
+        if (nameStart == std::string::npos) {
+            continue;
+        }
+
+        const std::size_t separator = line.find_first_of(":|", nameStart);
+        std::string package;
+        std::string summary;
+
+        if (separator != std::string::npos) {
+            package = trim(line.substr(nameStart, separator - nameStart));
+            summary = trim(line.substr(separator + 1));
+        } else {
+            std::istringstream stream(line.substr(nameStart));
+            stream >> package;
+            std::getline(stream, summary);
+            summary = trim(summary);
+        }
+
+        if (!looksLikePackageToken(package)) {
+            continue;
+        }
+
+        const std::string name = stripRpmArch(package);
+        if (!name.empty()) {
+            section.results.push_back({name, summary});
+        }
+    }
+
+    return section;
+}
+
+SearchSection parseFlatpakResults(const ProcessResult& result) {
+    SearchSection section;
+    section.title = "Flatpak";
+    section.label = "FLATPAK";
+
+    for (const std::string& rawLine : splitLines(result.output)) {
+        const std::string line = trim(rawLine);
+        if (line.empty()) {
+            continue;
+        }
+
+        const std::vector<std::string> columns = splitAndTrim(line, '\t');
+        if (columns.size() < 2 || columns[0].empty()) {
+            continue;
+        }
+
+        if (toLower(columns[0]) == "application") {
+            continue;
+        }
+
+        std::string title = columns[0];
+        if (!columns[1].empty()) {
+            title += " - " + columns[1];
+        }
+
+        const std::string summary = columns.size() >= 3 ? columns[2] : std::string {};
+        section.results.push_back({title, summary});
+    }
+
+    return section;
+}
+
+SearchSection parseSnapResults(const ProcessResult& result) {
+    SearchSection section;
+    section.title = "Snap";
+    section.label = "SNAP";
+
+    for (const std::string& rawLine : splitLines(result.output)) {
+        const std::string line = trim(rawLine);
+        if (line.empty()) {
+            continue;
+        }
+
+        const std::string lower = toLower(line);
+        if (startsWith(lower, "name ") || startsWith(lower, "no matching snaps")) {
+            continue;
+        }
+
+        std::istringstream stream(line);
+        std::string name;
+        std::string version;
+        std::string publisher;
+        std::string notes;
+        std::string summary;
+
+        if (!(stream >> name)) {
+            continue;
+        }
+        stream >> version >> publisher >> notes;
+        std::getline(stream, summary);
+
+        section.results.push_back({name, trim(summary)});
+    }
+
+    return section;
+}
+
+SearchSection runSearchCommand(const std::vector<std::string>& args,
+                               SearchSection (*parser)(const ProcessResult&),
+                               const std::string& title,
+                               const std::string& label) {
+    const ProcessResult result = captureProcess(args);
+    if (result.truncated) {
+        return failedSection(title, label, title + " search output was too large.");
+    }
+    if (commandFailedToExecute(result)) {
+        return failedSection(title, label, "Could not run " + title + " search command.");
+    }
+
+    return parser(result);
+}
+
+SearchSection searchApt(const std::vector<std::string>& queryTerms) {
+    if (!commandExists("apt-cache")) {
+        return failedSection("APT", "APT", "apt-cache is not installed or not in PATH.");
+    }
+
+    return runSearchCommand(withTerms({"apt-cache", "search"}, queryTerms),
+                            parseAptResults,
+                            "APT",
+                            "APT");
+}
+
+SearchSection searchZypper(const std::vector<std::string>& queryTerms) {
+    if (!commandExists("zypper")) {
+        return failedSection("Zypper", "ZYPPER", "zypper is not installed or not in PATH.");
+    }
+
+    return runSearchCommand(withTerms({"zypper", "--no-refresh", "search"}, queryTerms),
+                            parseZypperResults,
+                            "Zypper",
+                            "ZYPPER");
+}
+
+SearchSection searchDnf(const AppContext& context,
+                        const std::vector<std::string>& queryTerms) {
+    if (context.dnfCommand.empty()) {
+        return failedSection("DNF", "DNF", "dnf or dnf5 is not installed or not in PATH.");
+    }
+
+    return runSearchCommand(withTerms({context.dnfCommand, "search"}, queryTerms),
+                            parseDnfResults,
+                            "DNF",
+                            "DNF");
+}
+
+SearchSection searchFlatpak(const std::vector<std::string>& queryTerms) {
+    return runSearchCommand(withTerms({"flatpak",
+                                       "search",
+                                       "--columns=application,name,description"},
+                                      queryTerms),
+                            parseFlatpakResults,
+                            "Flatpak",
+                            "FLATPAK");
+}
+
+SearchSection searchSnap(const std::vector<std::string>& queryTerms) {
+    return runSearchCommand(withTerms({"snap", "find"}, queryTerms),
+                            parseSnapResults,
+                            "Snap",
+                            "SNAP");
+}
+
+SearchSection searchNative(const AppContext& context,
+                           const std::vector<std::string>& queryTerms) {
+    switch (context.packageManager) {
+        case PackageManager::Apt:
+            return searchApt(queryTerms);
+        case PackageManager::Zypper:
+            return searchZypper(queryTerms);
+        case PackageManager::Dnf:
+            return searchDnf(context, queryTerms);
+        case PackageManager::Unknown:
+            return failedSection("Native",
+                                 "NATIVE",
+                                 "Could not detect a supported package manager (apt / zypper / dnf).");
+    }
+
+    return failedSection("Native", "NATIVE", "Could not search native packages.");
+}
+
+void printSection(const SearchSection& section,
+                  const std::vector<std::string>& highlightTerms,
+                  bool leadingBlank,
+                  std::ostream& output) {
+    if (leadingBlank) {
+        output << "\n";
+    }
+
+    if (!section.ok) {
+        output << RED << "Error: " << section.error << "\n" << RESET;
+        return;
+    }
+
+    if (section.results.empty()) {
+        output << YELLOW << "=== " << section.title << ": no results ===\n" << RESET;
+        return;
+    }
+
+    output << YELLOW << "=== " << section.title << " results ===\n" << RESET;
+    for (const SearchResult& result : section.results) {
+        output << GREEN << "[" << section.label << "]" << RESET << " "
+               << highlight(result.title, highlightTerms) << "\n";
+        if (!result.summary.empty()) {
+            output << "    " << highlight(result.summary, highlightTerms) << "\n";
+        }
+    }
+
+    output << "\n" << GREEN << " " << section.title
+           << " found: " << section.results.size() << " packages\n" << RESET;
+}
+
+void printHelp(const char* programName) {
+    std::cout << RED << "Usage: " << RESET << programName
+              << " <query> [options] or zpm search <query> [options]\n";
+    std::cout << RED << "Options:\n" << RESET;
+    std::cout << "  --version,  -v  Show version information\n";
+    std::cout << "  --help,     -h  Show this help message\n";
+    std::cout << "  --native,   -n  Search only native PM packages (apt/zypper/dnf)\n";
+    std::cout << "  --flatpak,  -f  Search only Flatpak packages\n";
+    std::cout << "  --snap,     -s  Search only Snap packages\n";
+}
+
+void printVersion() {
+    std::cout << RED << "zsearch component version: v"
+              << zpm_version::version() << " of ZPM\n"
+              << RESET;
+    std::cout << "https://github.com/Zielina-Konrad-productions/ZPM\n";
+    std::cout << "Copyright (c) 2026 Ignacyyy & Ry3ball\nLicense: MIT\n";
+}
+
+ParseResult parseArgs(int argc, char* argv[]) {
+    ParseResult result;
+    bool optionsEnded = false;
+    int sourceFilters = 0;
 
     for (int i = 1; i < argc; ++i) {
-        string arg = argv[i];
+        const std::string arg = argv[i];
 
-        if      (arg == "--help"    || arg == "-h") { showHelp    = true; continue; }
-        else if (arg == "--version" || arg == "-v") { showVersion = true; continue; }
+        if (!optionsEnded && arg == "--") {
+            optionsEnded = true;
+            continue;
+        }
+        if (!optionsEnded && (arg == "--help" || arg == "-h")) {
+            result.options.showHelp = true;
+            continue;
+        }
+        if (!optionsEnded && (arg == "--version" || arg == "-v")) {
+            result.options.showVersion = true;
+            continue;
+        }
+        if (!optionsEnded && (arg == "--native" || arg == "-n")) {
+            result.options.filter = SourceFilter::Native;
+            ++sourceFilters;
+            continue;
+        }
+        if (!optionsEnded && (arg == "--flatpak" || arg == "-f")) {
+            result.options.filter = SourceFilter::Flatpak;
+            ++sourceFilters;
+            continue;
+        }
+        if (!optionsEnded && (arg == "--snap" || arg == "-s")) {
+            result.options.filter = SourceFilter::Snap;
+            ++sourceFilters;
+            continue;
+        }
+        if (!optionsEnded && startsWith(arg, "-")) {
+            result.error = "Unknown option: " + arg;
+            return result;
+        }
 
-        // Walidacja — blokuj shell injection
-        if (arg.find(';') != string::npos ||
-            arg.find('&') != string::npos ||
-            arg.find('|') != string::npos) {
-            cerr << RED << "Invalid characters in query!\n" << RESET;
-        return 1;
+        result.options.queryTerms.push_back(arg);
+    }
+
+    if (sourceFilters > 1) {
+        result.error = "Choose only one package source filter.";
+        return result;
+    }
+
+    if ((result.options.showHelp || result.options.showVersion) &&
+        result.options.filter != SourceFilter::All) {
+        result.error = "--help and --version cannot be combined with package source filters.";
+        return result;
+    }
+
+    if (!result.options.queryTerms.empty() && !validQuery(result.options.queryTerms)) {
+        result.error = "Search query is empty, too long, or contains control characters.";
+    }
+
+    return result;
+}
+
+AppContext makeContext() {
+    AppContext context;
+    context.packageManager = parsePackageManager(get_package_manager());
+    context.dnfCommand = dnfCommand();
+    context.hasFlatpak = commandExists("flatpak");
+    context.hasSnap = commandExists("snap");
+    return context;
+}
+
+bool runSearch(const Options& options, const AppContext& context) {
+    const std::string queryText = joinTerms(options.queryTerms);
+    const std::vector<std::string> highlightTerms = makeHighlightNeedles(options.queryTerms);
+    std::cout << GREEN << " Searching: " << RESET << queryText << "\n\n";
+
+    switch (options.filter) {
+        case SourceFilter::Native: {
+            if (context.packageManager == PackageManager::Unknown) {
+                const SearchSection section = searchNative(context, options.queryTerms);
+                printSection(section, highlightTerms, false, std::cout);
+                return false;
             }
 
-            if (arg[0] != '-') query += arg + " ";
+            if (!nativeSearchToolAvailable(context)) {
+                std::cerr << RED << "Error: " << nativeToolLabel(context.packageManager)
+                          << " search tools are not available.\n" << RESET;
+                return false;
+            }
+
+            const SearchSection section = searchNative(context, options.queryTerms);
+            printSection(section, highlightTerms, false, std::cout);
+            return section.ok;
+        }
+        case SourceFilter::Flatpak: {
+            if (!context.hasFlatpak) {
+                std::cerr << RED << "Error: Flatpak is not installed or not in PATH.\n" << RESET;
+                return false;
+            }
+
+            const SearchSection section = searchFlatpak(options.queryTerms);
+            printSection(section, highlightTerms, false, std::cout);
+            return section.ok;
+        }
+        case SourceFilter::Snap: {
+            if (!context.hasSnap) {
+                std::cerr << RED << "Error: Snap is not installed or not in PATH.\n" << RESET;
+                return false;
+            }
+
+            const SearchSection section = searchSnap(options.queryTerms);
+            printSection(section, highlightTerms, false, std::cout);
+            return section.ok;
+        }
+        case SourceFilter::All:
+            break;
     }
 
-    if (showVersion && showHelp) {
-        cout << YELLOW << "--version\n" << RESET; versionmessage();
-        cout << "\n" << YELLOW << "--help\n"    << RESET; helpmessage(argv[0]);
-        return 0;
+    if (context.packageManager == PackageManager::Unknown) {
+        const SearchSection section = searchNative(context, options.queryTerms);
+        printSection(section, highlightTerms, false, std::cout);
+        return false;
     }
-    if (showVersion) { versionmessage();     return 0; }
-    if (showHelp)    { helpmessage(argv[0]); return 0; }
 
-    // Usuń trailing space
-    string queryTrimmed = query;
-    if (!queryTrimmed.empty() && queryTrimmed.back() == ' ')
-        queryTrimmed.pop_back();
+    if (!nativeSearchToolAvailable(context)) {
+        std::cerr << RED << "Error: " << nativeToolLabel(context.packageManager)
+                  << " search tools are not available.\n" << RESET;
+        return false;
+    }
 
-    if (queryTrimmed.empty()) {
-        cerr << YELLOW << "No search query specified!\n" << RESET;
+    bool ok = true;
+    const SearchSection nativeSection = searchNative(context, options.queryTerms);
+    printSection(nativeSection, highlightTerms, false, std::cout);
+    ok = nativeSection.ok && ok;
+
+    if (context.hasFlatpak) {
+        const SearchSection flatpakSection = searchFlatpak(options.queryTerms);
+        printSection(flatpakSection, highlightTerms, true, std::cout);
+        ok = flatpakSection.ok && ok;
+    }
+
+    if (context.hasSnap) {
+        const SearchSection snapSection = searchSnap(options.queryTerms);
+        printSection(snapSection, highlightTerms, true, std::cout);
+        ok = snapSection.ok && ok;
+    }
+
+    return ok;
+}
+
+} // namespace
+
+int main(int argc, char* argv[]) {
+    try {
+        const ParseResult parsed = parseArgs(argc, argv);
+        if (!parsed.error.empty()) {
+            std::cerr << RED << "Error: " << parsed.error << "\n" << RESET;
+            return 1;
+        }
+
+        const Options& options = parsed.options;
+
+        if (options.showVersion && options.showHelp) {
+            std::cout << YELLOW << "--version\n" << RESET;
+            printVersion();
+            std::cout << "\n" << YELLOW << "--help\n" << RESET;
+            printHelp(argv[0]);
+            return 0;
+        }
+        if (options.showVersion) {
+            printVersion();
+            return 0;
+        }
+        if (options.showHelp) {
+            printHelp(argv[0]);
+            return 0;
+        }
+
+        if (options.queryTerms.empty()) {
+            std::cerr << YELLOW << "No search query specified!\n" << RESET;
+            return 1;
+        }
+
+        zpm_update::checkForUpdates();
+
+        const AppContext context = makeContext();
+        return runSearch(options, context) ? 0 : 1;
+    } catch (const std::exception& error) {
+        std::cerr << RED << "Error: " << error.what() << "\n" << RESET;
+        return 1;
+    } catch (...) {
+        std::cerr << RED << "Error: Unexpected failure.\n" << RESET;
         return 1;
     }
-
-    string pm = get_package_manager();
-
-    cout << GREEN << " Searching: " << RESET << queryTrimmed << "\n\n";
-
-    // Natywny PM
-    if      (pm == "apt")    searchApt(query, queryTrimmed);
-    else if (pm == "zypper") searchZypper(query, queryTrimmed);
-    else if (pm == "dnf")    searchDnf(query, queryTrimmed);
-    else {
-        cerr << RED << "Error: Could not detect a supported package manager "
-        << "(apt / zypper / dnf).\n" << RESET;
-        return 1;
-    }
-
-    // Zawsze: Flatpak i Snap
-    searchFlatpak(query, queryTrimmed);
-    searchSnap(query, queryTrimmed);
-
-    return 0;
 }
