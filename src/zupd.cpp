@@ -46,6 +46,7 @@ struct ProcessConfig {
     bool mirrorCapturedStdoutToLog = false;
     bool logStdout = false;
     bool logStderr = false;
+    bool discardStdin = true;
     bool discardStdout = true;
     bool discardStderr = true;
     LogMode logMode = LogMode::Append;
@@ -410,7 +411,8 @@ int waitForChild(pid_t pid) {
 }
 
 void redirectToDevNull(int targetFd) {
-    const int nullFd = open("/dev/null", O_WRONLY | O_CLOEXEC);
+    const int flags = (targetFd == STDIN_FILENO) ? O_RDONLY : O_WRONLY;
+    const int nullFd = open("/dev/null", flags | O_CLOEXEC);
     if (nullFd >= 0) {
         dup2(nullFd, targetFd);
         close(nullFd);
@@ -459,6 +461,10 @@ CommandResult runProcess(const std::vector<std::string>& args, const ProcessConf
 
     if (pid == 0) {
         setpgid(0, 0);
+
+        if (config.discardStdin) {
+            redirectToDevNull(STDIN_FILENO);
+        }
 
         if (config.captureStdout) {
             readEnd.reset();
@@ -595,6 +601,7 @@ int runCommandSplitLogs(const std::vector<std::string>& args,
 
     if (pid == 0) {
         setpgid(0, 0);
+        redirectToDevNull(STDIN_FILENO);
         dup2(stdoutLog.get(), STDOUT_FILENO);
         dup2(stderrLog.get(), STDERR_FILENO);
 
@@ -629,7 +636,25 @@ std::vector<std::pair<std::string, std::string>> cLocaleEnv() {
 }
 
 std::vector<std::pair<std::string, std::string>> aptEnv() {
-    return {{"LC_ALL", "C"}, {"DEBIAN_FRONTEND", "noninteractive"}};
+    return {
+        {"LC_ALL", "C"},
+        {"DEBIAN_FRONTEND", "noninteractive"},
+        {"DEBCONF_NONINTERACTIVE_SEEN", "true"},
+        {"APT_LISTCHANGES_FRONTEND", "none"},
+        {"NEEDRESTART_MODE", "a"},
+        {"UCF_FORCE_CONFOLD", "1"}
+    };
+}
+
+std::vector<std::string> aptGet(std::initializer_list<std::string> args) {
+    std::vector<std::string> command = {
+        "apt-get",
+        "-o", "Dpkg::Lock::Timeout=120",
+        "-o", "APT::Get::Assume-Yes=true",
+        "-o", "Dpkg::Use-Pty=0"
+    };
+    command.insert(command.end(), args.begin(), args.end());
+    return command;
 }
 
 bool executableAt(const std::string& path) {
@@ -1328,7 +1353,7 @@ UpdateStatus aptCheckUpdates(const Options& options) {
 
     std::cout << "\n" << YELLOW << "[*] Refreshing package cache..." << RESET << "\n";
 
-    if (!runCommandOk({"apt-get", "update", "-qq"},
+    if (!runCommandOk(aptGet({"update", "-qq"}),
                       "-----apt_update-----",
                       LogMode::Truncate,
                       aptEnv())) {
@@ -1338,8 +1363,8 @@ UpdateStatus aptCheckUpdates(const Options& options) {
     }
 
     const std::vector<std::string> simulateCommand = options.fullUpdate
-        ? std::vector<std::string>{"apt-get", "dist-upgrade", "-s"}
-        : std::vector<std::string>{"apt-get", "upgrade", "-s"};
+        ? aptGet({"dist-upgrade", "-s"})
+        : aptGet({"upgrade", "-s"});
     const CommandResult simulation = captureCommand(
         simulateCommand,
         kLogFile,
@@ -1566,19 +1591,18 @@ bool aptUpdate(const Options& options, const UpdateStatus& status) {
         status,
         UiState::APT,
         [] {
-            return runCommandOk({"dpkg", "--configure", "-a"},
+            return runCommandOk({"dpkg", "--configure", "-a", "--force-confdef", "--force-confold"},
                                 "-----checking_system_consistency-----",
                                 LogMode::Append,
                                 aptEnv());
         },
         [&options] {
-            std::vector<std::string> command = {
-                "apt-get",
+            std::vector<std::string> command = aptGet({
                 options.fullUpdate ? "dist-upgrade" : "upgrade",
                 "-y",
                 "-o", "Dpkg::Options::=--force-confdef",
                 "-o", "Dpkg::Options::=--force-confold"
-            };
+            });
             return runCommandOk(command,
                                 options.fullUpdate ? "-----updating_APT_dist_upgrade-----" : "-----updating_APT_upgrade-----",
                                 LogMode::Append,
@@ -1587,11 +1611,11 @@ bool aptUpdate(const Options& options, const UpdateStatus& status) {
                 : NativeUpdateResult::Failed;
         },
         [] {
-            const bool autoremove = runCommandOk({"apt-get", "autoremove", "-y"},
+            const bool autoremove = runCommandOk(aptGet({"autoremove", "-y"}),
                                                  "----cleaning_APT_autoremove----",
                                                  LogMode::Append,
                                                  aptEnv());
-            const bool autoclean = runCommandOk({"apt-get", "autoclean"},
+            const bool autoclean = runCommandOk(aptGet({"autoclean"}),
                                                 "----cleaning_APT_autoclean----",
                                                 LogMode::Append,
                                                 aptEnv());
