@@ -11,6 +11,10 @@
 namespace {
 
 constexpr const char* kLogPath = "/tmp/zinst.log";
+constexpr std::chrono::milliseconds kCommandProgressInterval{350};
+constexpr std::chrono::milliseconds kDryRunStepDelay{120};
+constexpr float kCommandProgressInitialFraction = 0.08f;
+constexpr float kCommandProgressMaxFraction = 0.94f;
 
 volatile std::sig_atomic_t g_interrupted = 0;
 
@@ -584,6 +588,84 @@ int runLogged(const std::vector<std::string>& args,
     return runProcess(args, config).exitCode;
 }
 
+float progressBetween(float startPct, float endPct, float fraction) {
+    const float safeFraction = std::clamp(fraction, 0.0f, 1.0f);
+    return startPct + ((endPct - startPct) * safeFraction);
+}
+
+class CommandProgress {
+public:
+    CommandProgress(float startPct, float endPct, const std::string& label, const std::string& activity)
+        : startPct_(startPct),
+          endPct_(endPct),
+          task_(label + " - " + activity + "...") {
+        if (endPct_ <= startPct_) {
+            return;
+        }
+
+        running_ = true;
+        try {
+            worker_ = std::thread(&CommandProgress::run, this);
+        } catch (...) {
+            running_ = false;
+        }
+    }
+
+    CommandProgress(const CommandProgress&) = delete;
+    CommandProgress& operator=(const CommandProgress&) = delete;
+
+    ~CommandProgress() {
+        stop();
+    }
+
+    void stop() {
+        if (!running_.exchange(false)) {
+            return;
+        }
+
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+    }
+
+private:
+    void run() {
+        int tick = 0;
+        while (running_) {
+            std::this_thread::sleep_for(kCommandProgressInterval);
+            if (!running_) {
+                return;
+            }
+
+            ++tick;
+            const float eased = kCommandProgressInitialFraction +
+                                ((kCommandProgressMaxFraction - kCommandProgressInitialFraction) *
+                                 (1.0f - std::exp(-static_cast<float>(tick) / 8.0f)));
+            progressbar_update(progressBetween(startPct_, endPct_, eased), task_);
+        }
+    }
+
+    float startPct_ = 0.0f;
+    float endPct_ = 0.0f;
+    std::string task_;
+    std::atomic_bool running_ = false;
+    std::thread worker_;
+};
+
+int runLoggedWithProgress(const std::vector<std::string>& args,
+                          const std::string& header,
+                          float startPct,
+                          float endPct,
+                          const std::string& label,
+                          const std::string& activity,
+                          const std::vector<std::pair<std::string, std::string>>& environment = {}) {
+    progressbar_update(startPct, label + " - " + activity + "...");
+    CommandProgress progress(startPct, endPct, label, activity);
+    const int exitCode = runLogged(args, header, environment);
+    progress.stop();
+    return exitCode;
+}
+
 bool executableAt(const std::string& path) {
     return access(path.c_str(), X_OK) == 0;
 }
@@ -619,6 +701,9 @@ std::string nativeLabel(const AppContext& context) {
     if (context.packageManager == "dnf") {
         return context.dnfCommand == "dnf5" ? "DNF5:   " : "DNF:    ";
     }
+    if (context.packageManager == "unknown") {
+        return "Native: ";
+    }
     return "APT:    ";
 }
 
@@ -628,6 +713,9 @@ std::string nativeShortLabel(const AppContext& context) {
     }
     if (context.packageManager == "dnf") {
         return context.dnfCommand == "dnf5" ? "DNF5" : "DNF";
+    }
+    if (context.packageManager == "unknown") {
+        return "Native";
     }
     return "APT";
 }
@@ -791,7 +879,7 @@ void printHelp(const char* progName) {
               << " or zpm inst/install [options] [packages...]\n"
               << RED << "Options:\n" << RESET
               << "  (auto)         Picks native PM / Flatpak / Snap per package\n"
-              << "  --dry-run      Resolve packages and show what would be installed\n"
+              << "  --dry-run      Simulate program flow; fake packages are allowed\n"
               << "  --version, -v  Show version information\n"
               << "  --help,    -h  Show this help message\n";
 }
@@ -1011,6 +1099,39 @@ std::vector<InstallTarget> resolveTargets(const AppContext& context,
     return targets;
 }
 
+std::vector<std::string> dryRunPackages(const std::vector<std::string>& packages) {
+    if (!packages.empty()) {
+        return packages;
+    }
+
+    return {
+        "fake-editor",
+        "fake-browser",
+        "fake-toolkit"
+    };
+}
+
+std::vector<InstallTarget> buildDryRunTargets(const AppContext& context,
+                                              const std::vector<std::string>& packages) {
+    std::vector<InstallSource> sources = {InstallSource::Native};
+    if (context.hasFlatpak) {
+        sources.push_back(InstallSource::Flatpak);
+    }
+    if (context.hasSnap) {
+        sources.push_back(InstallSource::Snap);
+    }
+
+    std::vector<InstallTarget> targets;
+    const std::vector<std::string> names = dryRunPackages(packages);
+    targets.reserve(names.size());
+
+    for (size_t i = 0; i < names.size(); ++i) {
+        targets.push_back({names[i], sources[i % sources.size()]});
+    }
+
+    return targets;
+}
+
 std::string sourceName(const AppContext& context, InstallSource source) {
     switch (source) {
         case InstallSource::Native:
@@ -1037,20 +1158,33 @@ bool targetAlreadyInstalled(const AppContext& context, const InstallTarget& targ
     return false;
 }
 
-bool ensureNativeConsistency(AppContext& context, float startPct, const std::string& label) {
+bool ensureNativeConsistency(AppContext& context,
+                             float startPct,
+                             float endPct,
+                             const std::string& label) {
     if (context.nativeConsistencyChecked) {
         return true;
     }
 
-    progressbar_start(startPct, label + " - checking system...");
+    const float checkStartPct = progressBetween(startPct, endPct, 0.05f);
+    const float checkEndPct = progressBetween(startPct, endPct, 0.20f);
 
     int exitCode = 0;
     if (context.packageManager == "apt") {
-        exitCode = runLogged({"dpkg", "--configure", "-a"},
-                             "-----checking_system_consistency-----",
-                             {{"DEBIAN_FRONTEND", "noninteractive"}});
+        exitCode = runLoggedWithProgress({"dpkg", "--configure", "-a"},
+                                         "-----checking_system_consistency-----",
+                                         checkStartPct,
+                                         checkEndPct,
+                                         label,
+                                         "checking system",
+                                         {{"DEBIAN_FRONTEND", "noninteractive"}});
     } else if (context.packageManager == "zypper" || context.packageManager == "dnf") {
-        exitCode = runLogged({"rpm", "--rebuilddb"}, "-----checking_system_consistency-----");
+        exitCode = runLoggedWithProgress({"rpm", "--rebuilddb"},
+                                         "-----checking_system_consistency-----",
+                                         checkStartPct,
+                                         checkEndPct,
+                                         label,
+                                         "checking system");
     }
 
     if (g_interrupted) {
@@ -1062,6 +1196,7 @@ bool ensureNativeConsistency(AppContext& context, float startPct, const std::str
     }
 
     context.nativeConsistencyChecked = true;
+    progressbar_update(checkEndPct, label + " - system ready");
     return true;
 }
 
@@ -1074,7 +1209,9 @@ InstallStatus installNative(AppContext& context,
     const std::string label = std::to_string(index) + "/" + std::to_string(total) +
                               " | " + nativeShortLabel(context) + ": " + package;
 
-    if (!ensureNativeConsistency(context, startPct, label)) {
+    progressbar_start(startPct, label + " - preparing...");
+
+    if (!ensureNativeConsistency(context, startPct, endPct, label)) {
         if (g_interrupted) {
             return InstallStatus::Interrupted;
         }
@@ -1083,8 +1220,14 @@ InstallStatus installNative(AppContext& context,
     }
 
     if (context.packageManager == "apt" && !context.aptCacheRefreshed) {
-        progressbar_start(startPct, label + " - refreshing cache...");
-        const int updateExit = runLogged({"apt-get", "update", "-qq"}, "-----apt_update-----");
+        const float cacheStartPct = progressBetween(startPct, endPct, 0.22f);
+        const float cacheEndPct = progressBetween(startPct, endPct, 0.40f);
+        const int updateExit = runLoggedWithProgress({"apt-get", "update", "-qq"},
+                                                     "-----apt_update-----",
+                                                     cacheStartPct,
+                                                     cacheEndPct,
+                                                     label,
+                                                     "refreshing cache");
         if (g_interrupted) {
             return InstallStatus::Interrupted;
         }
@@ -1092,30 +1235,46 @@ InstallStatus installNative(AppContext& context,
             progressbar_update(endPct, label + " - failed");
             return InstallStatus::Failed;
         }
+        progressbar_update(cacheEndPct, label + " - cache ready");
         context.aptCacheRefreshed = true;
     } else {
-        progressbar_start(startPct, label + " - installing...");
+        progressbar_update(progressBetween(startPct, endPct, 0.30f),
+                           label + " - package cache ready");
     }
 
-    progressbar_update(startPct + (endPct - startPct) * 0.3f, label + " - installing...");
+    const float installStartPct = progressBetween(startPct, endPct, 0.45f);
+    const float installEndPct = progressBetween(startPct, endPct, 0.92f);
 
     int exitCode = 1;
     if (context.packageManager == "apt") {
-        exitCode = runLogged({"apt-get", "install", "-y", package},
-                             "-----apt_install_" + package + "-----",
-                             {{"DEBIAN_FRONTEND", "noninteractive"}});
+        exitCode = runLoggedWithProgress({"apt-get", "install", "-y", package},
+                                         "-----apt_install_" + package + "-----",
+                                         installStartPct,
+                                         installEndPct,
+                                         label,
+                                         "installing",
+                                         {{"DEBIAN_FRONTEND", "noninteractive"}});
     } else if (context.packageManager == "zypper") {
-        exitCode = runLogged({"zypper", "--non-interactive", "install", "-y", package},
-                             "-----zypper_install_" + package + "-----");
+        exitCode = runLoggedWithProgress({"zypper", "--non-interactive", "install", "-y", package},
+                                         "-----zypper_install_" + package + "-----",
+                                         installStartPct,
+                                         installEndPct,
+                                         label,
+                                         "installing");
     } else if (context.packageManager == "dnf") {
-        exitCode = runLogged({context.dnfCommand, "install", "-y", package},
-                             "-----" + context.dnfCommand + "_install_" + package + "-----");
+        exitCode = runLoggedWithProgress({context.dnfCommand, "install", "-y", package},
+                                         "-----" + context.dnfCommand + "_install_" + package + "-----",
+                                         installStartPct,
+                                         installEndPct,
+                                         label,
+                                         "installing");
     }
 
     if (g_interrupted) {
         return InstallStatus::Interrupted;
     }
 
+    progressbar_update(progressBetween(startPct, endPct, 0.96f), label + " - finalizing...");
     progressbar_update(endPct, label + (exitCode == 0 ? " - done" : " - failed"));
     return exitCode == 0 ? InstallStatus::Installed : InstallStatus::Failed;
 }
@@ -1129,7 +1288,7 @@ InstallStatus installFlatpak(const AppContext& context,
     const std::string label = std::to_string(index) + "/" + std::to_string(total) +
                               " | Flatpak: " + package;
 
-    progressbar_start(startPct, label + " - installing...");
+    progressbar_start(startPct, label + " - preparing...");
 
     std::vector<std::string> args = {"flatpak", "install"};
     if (!context.flatpakFlag.empty()) {
@@ -1140,11 +1299,17 @@ InstallStatus installFlatpak(const AppContext& context,
     args.push_back("flathub");
     args.push_back(package);
 
-    const int exitCode = runLogged(args, "-----flatpak_install_" + package + "-----");
+    const int exitCode = runLoggedWithProgress(args,
+                                               "-----flatpak_install_" + package + "-----",
+                                               progressBetween(startPct, endPct, 0.15f),
+                                               progressBetween(startPct, endPct, 0.92f),
+                                               label,
+                                               "installing");
     if (g_interrupted) {
         return InstallStatus::Interrupted;
     }
 
+    progressbar_update(progressBetween(startPct, endPct, 0.96f), label + " - finalizing...");
     progressbar_update(endPct, label + (exitCode == 0 ? " - done" : " - failed"));
     return exitCode == 0 ? InstallStatus::Installed : InstallStatus::Failed;
 }
@@ -1157,14 +1322,19 @@ InstallStatus installSnap(const std::string& package,
     const std::string label = std::to_string(index) + "/" + std::to_string(total) +
                               " | Snap: " + package;
 
-    progressbar_start(startPct, label + " - installing...");
+    progressbar_start(startPct, label + " - preparing...");
 
-    const int exitCode = runLogged({"snap", "install", package},
-                                   "-----snap_install_" + package + "-----");
+    const int exitCode = runLoggedWithProgress({"snap", "install", package},
+                                               "-----snap_install_" + package + "-----",
+                                               progressBetween(startPct, endPct, 0.15f),
+                                               progressBetween(startPct, endPct, 0.92f),
+                                               label,
+                                               "installing");
     if (g_interrupted) {
         return InstallStatus::Interrupted;
     }
 
+    progressbar_update(progressBetween(startPct, endPct, 0.96f), label + " - finalizing...");
     progressbar_update(endPct, label + (exitCode == 0 ? " - done" : " - failed"));
     return exitCode == 0 ? InstallStatus::Installed : InstallStatus::Failed;
 }
@@ -1179,16 +1349,25 @@ InstallStatus installTarget(AppContext& context,
     const std::string label = std::to_string(index) + "/" + std::to_string(total) +
                               " | " + sourceName(context, target.source) + ": " + target.name;
 
-    if (targetAlreadyInstalled(context, target)) {
-        progressbar_start(startPct, label + " - already installed");
-        progressbar_update(endPct, label + " - already installed");
-        return InstallStatus::AlreadyInstalled;
-    }
-
     if (dryRun) {
-        progressbar_start(startPct, label + " - dry run");
+        progressbar_start(startPct, label + " - demo start");
+        std::this_thread::sleep_for(kDryRunStepDelay);
+        progressbar_update(progressBetween(startPct, endPct, 0.25f), label + " - checking plan");
+        std::this_thread::sleep_for(kDryRunStepDelay);
+        progressbar_update(progressBetween(startPct, endPct, 0.50f), label + " - selecting source");
+        std::this_thread::sleep_for(kDryRunStepDelay);
+        progressbar_update(progressBetween(startPct, endPct, 0.75f), label + " - simulating install");
+        std::this_thread::sleep_for(kDryRunStepDelay);
         progressbar_update(endPct, label + " - would install");
         return InstallStatus::WouldInstall;
+    }
+
+    if (targetAlreadyInstalled(context, target)) {
+        progressbar_start(startPct, label + " - already installed");
+        progressbar_update(progressBetween(startPct, endPct, 0.50f),
+                           label + " - already installed");
+        progressbar_update(endPct, label + " - already installed");
+        return InstallStatus::AlreadyInstalled;
     }
 
     switch (target.source) {
@@ -1201,25 +1380,6 @@ InstallStatus installTarget(AppContext& context,
     }
 
     return InstallStatus::Failed;
-}
-
-int runDryRunReport(AppContext& context, const std::vector<InstallTarget>& targets) {
-    std::cout << "\n" << RED << "Dry run plan:\n" << RESET;
-
-    for (const InstallTarget& target : targets) {
-        const std::string source = sourceName(context, target.source);
-
-        if (targetAlreadyInstalled(context, target)) {
-            std::cout << YELLOW << "[=] " << RESET
-                      << target.name << " already installed from " << source << "\n";
-        } else {
-            std::cout << CYAN << "[>] " << RESET
-                      << target.name << " would be installed from " << source << "\n";
-        }
-    }
-
-    std::cout << GREEN << "\nDry run complete. No changes were made.\n" << RESET;
-    return 0;
 }
 
 int runInstallLoop(AppContext& context,
@@ -1358,7 +1518,7 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (options.packages.empty()) {
+    if (options.packages.empty() && !options.dryRun) {
         std::cout << YELLOW << "No package specified!\n" << RESET;
         return 1;
     }
@@ -1373,13 +1533,15 @@ int main(int argc, char* argv[]) {
     SigintGuard sigintGuard;
     AppContext context = buildContext();
 
-    if (context.packageManager == "unknown") {
+    if (!options.dryRun && context.packageManager == "unknown") {
         std::cout << RED << "Error: Could not detect a supported package manager "
                   << "(apt / zypper / dnf).\n" << RESET;
         return 1;
     }
 
-    std::vector<InstallTarget> targets = resolveTargets(context, options.packages);
+    std::vector<InstallTarget> targets = options.dryRun
+        ? buildDryRunTargets(context, options.packages)
+        : resolveTargets(context, options.packages);
     if (g_interrupted) {
         return 130;
     }
@@ -1390,7 +1552,9 @@ int main(int argc, char* argv[]) {
     }
 
     if (options.dryRun) {
-        return runDryRunReport(context, targets);
+        std::cout << "\n" << RED << "Dry run demo: " << RESET
+                  << "no packages will be installed or checked.\n\n";
+        return runInstallLoop(context, targets, true);
     }
 
     FileLock lock;
