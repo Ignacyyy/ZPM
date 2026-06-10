@@ -1,209 +1,435 @@
 #pragma once
-#include "main.h"
-#include <atomic>
-#include <thread>
-#include <chrono>
-#include <mutex>
-#include <sys/ioctl.h>
 
-// ============================================================
-//  UiState — stan aktualizacji, ustawiany przez logikę zupd.
-//  Dodaj nowe wartości gdy dodasz nowe systemy pakietów.
-// ============================================================
+#include "colors.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <condition_variable>
+#include <cstddef>
+#include <iomanip>
+#include <iostream>
+#include <mutex>
+#include <string>
+#include <sys/ioctl.h>
+#include <thread>
+#include <unistd.h>
+
 enum class UiState {
-    IDLE,       // przed startem
-    CHECKING,   // dpkg fix / rpm --rebuilddb
-    APT,        // aktualizacja APT    (Debian/Ubuntu)
-    ZYPPER,     // aktualizacja Zypper (openSUSE/SLES)
-    DNF,        // aktualizacja DNF    (Fedora/RHEL/Rocky/Alma)
-    FLATPAK,    // aktualizacja Flatpak
-    SNAP,       // aktualizacja Snap
-    CLEANUP,    // czyszczenie
-    DONE,       // sukces
-    ERROR,      // błąd
-    CUSTOM      // etykieta ręczna — stare API (zclean, zinst, zrm)
-    // Nowe systemy: dopisz tutaj, np. PACMAN, HOMEBREW, itp.
+    IDLE,
+    CHECKING,
+    APT,
+    ZYPPER,
+    DNF,
+    FLATPAK,
+    SNAP,
+    CLEANUP,
+    DONE,
+    ERROR,
+    CUSTOM
 };
 
-// ── stan współdzielony ────────────────────────────────────────────────────────
-static std::atomic<float>    g_progress{0.0f};
-static std::atomic<bool>     g_spinnerRunning{false};
-static std::atomic<UiState>  g_uiState{UiState::IDLE};
-static std::atomic<int>      g_step{0};
-static std::atomic<int>      g_totalSteps{1};
-static std::thread           g_spinnerThread;
+namespace zpm::progressbar_detail {
 
-static std::mutex            g_taskMutex;
-static std::string           g_task;
+constexpr std::chrono::milliseconds kFrameInterval{80};
+constexpr int kDefaultTerminalWidth = 80;
+constexpr int kMinFullBarWidth = 3;
+constexpr int kMaxBarWidth = 40;
+constexpr int kFullColumnsWithoutBar = 21;
+constexpr int kTaskSeparatorColumns = 3;
+constexpr char kSpinnerFrames[] = {'|', '/', '-', '\\'};
 
-// ── mapowanie UiState → etykieta ─────────────────────────────────────────────
-static std::string uiStateLabel(UiState s) {
-    switch (s) {
-        case UiState::IDLE:     return "Idle";
-        case UiState::CHECKING: return "Checking system consistency";
-        case UiState::APT:      return "Updating APT packages";
-        case UiState::ZYPPER:   return "Updating Zypper packages";
-        case UiState::DNF:      return "Updating DNF packages";
-        case UiState::FLATPAK:  return "Updating Flatpak packages";
-        case UiState::SNAP:     return "Updating Snap packages";
-        case UiState::CLEANUP:  return "Cleaning up";
-        case UiState::DONE:     return "Done";
-        case UiState::ERROR:    return "Error";
-        case UiState::CUSTOM: {
-            std::lock_guard<std::mutex> lock(g_taskMutex);
-            return g_task;
+struct Snapshot {
+    UiState state = UiState::IDLE;
+    float progress = 0.0f;
+    int step = 0;
+    int totalSteps = 1;
+    std::string task;
+};
+
+inline float clampProgress(float value) noexcept {
+    if (!std::isfinite(value)) {
+        return 0.0f;
+    }
+
+    return std::clamp(value, 0.0f, 100.0f);
+}
+
+inline int normalizeTotalSteps(int total) noexcept {
+    return std::max(total, 1);
+}
+
+inline int terminalWidth() noexcept {
+    winsize size {};
+    if (::ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 && size.ws_col > 0) {
+        return static_cast<int>(size.ws_col);
+    }
+
+    return kDefaultTerminalWidth;
+}
+
+inline std::string stateLabel(UiState state) {
+    switch (state) {
+        case UiState::IDLE:
+            return "Idle";
+        case UiState::CHECKING:
+            return "Checking system consistency";
+        case UiState::APT:
+            return "Updating APT packages";
+        case UiState::ZYPPER:
+            return "Updating Zypper packages";
+        case UiState::DNF:
+            return "Updating DNF packages";
+        case UiState::FLATPAK:
+            return "Updating Flatpak packages";
+        case UiState::SNAP:
+            return "Updating Snap packages";
+        case UiState::CLEANUP:
+            return "Cleaning up";
+        case UiState::DONE:
+            return "Done";
+        case UiState::ERROR:
+            return "Error";
+        case UiState::CUSTOM:
+            return {};
+    }
+
+    return "Working...";
+}
+
+inline std::string sanitizeTask(std::string task, int maxLength) {
+    task.erase(std::remove_if(task.begin(),
+                              task.end(),
+                              [](unsigned char ch) {
+                                  return ch < 32 || ch == 127;
+                              }),
+               task.end());
+
+    if (maxLength <= 0 || task.empty()) {
+        return {};
+    }
+
+    const auto limit = static_cast<std::size_t>(maxLength);
+    if (task.size() <= limit) {
+        return task;
+    }
+
+    if (limit == 1) {
+        return "~";
+    }
+
+    task.resize(limit - 1);
+    task += '~';
+    return task;
+}
+
+inline float snapshotProgress(const Snapshot& snapshot) noexcept {
+    if (snapshot.state == UiState::CUSTOM) {
+        return clampProgress(snapshot.progress);
+    }
+
+    const int total = normalizeTotalSteps(snapshot.totalSteps);
+    const int step = std::clamp(snapshot.step, 0, total);
+    return clampProgress((static_cast<float>(step) / static_cast<float>(total)) * 100.0f);
+}
+
+inline std::string snapshotTask(const Snapshot& snapshot) {
+    if (snapshot.state == UiState::CUSTOM) {
+        return snapshot.task;
+    }
+
+    const int total = normalizeTotalSteps(snapshot.totalSteps);
+    const int step = std::clamp(snapshot.step, 0, total);
+    return std::to_string(step) + "/" + std::to_string(total) + " | " +
+           stateLabel(snapshot.state);
+}
+
+inline std::mutex& outputMutex() {
+    static auto* mutex = new std::mutex;
+    return *mutex;
+}
+
+inline void writeStatusIcon(int percent, char spinnerChar) {
+    if (percent >= 100) {
+        std::cout << GREEN << "[+]" << RESET;
+    } else {
+        std::cout << YELLOW << '[' << spinnerChar << ']' << RESET;
+    }
+}
+
+inline void drawCompactBar(const Snapshot& snapshot,
+                           int percent,
+                           int terminalColumns,
+                           char spinnerChar) {
+    std::lock_guard<std::mutex> outputLock(outputMutex());
+    std::cout << "\r\033[K";
+
+    if (terminalColumns < 4) {
+        std::cout << (percent >= 100 ? GREEN : YELLOW)
+                  << (percent >= 100 ? '+' : spinnerChar)
+                  << RESET << "\033[K" << std::flush;
+        return;
+    }
+
+    const std::string percentText = std::to_string(percent) + "%";
+    if (terminalColumns < 8) {
+        std::cout << YELLOW << percentText << RESET << "\033[K" << std::flush;
+        return;
+    }
+
+    const int baseColumns = static_cast<int>(percentText.size()) + 4;
+    const int taskMaxLength =
+        std::max(0, terminalColumns - baseColumns - kTaskSeparatorColumns);
+    const std::string task = sanitizeTask(snapshotTask(snapshot), taskMaxLength);
+
+    std::cout << YELLOW << percentText << ' ' << RESET;
+    writeStatusIcon(percent, spinnerChar);
+
+    if (!task.empty()) {
+        std::cout << " | " << task;
+    }
+
+    std::cout << "\033[K" << std::flush;
+}
+
+inline void drawBar(const Snapshot& snapshot, char spinnerChar) {
+    const float progress = snapshotProgress(snapshot);
+    const int percent = static_cast<int>(progress);
+    const int termWidth = terminalWidth();
+
+    if (termWidth < kFullColumnsWithoutBar + kMinFullBarWidth) {
+        drawCompactBar(snapshot, percent, termWidth, spinnerChar);
+        return;
+    }
+
+    const int maxBarWidth = std::min(kMaxBarWidth, termWidth - kFullColumnsWithoutBar);
+    const int barWidth = std::clamp(termWidth / 3, kMinFullBarWidth, maxBarWidth);
+    const int filledWidth = std::clamp(static_cast<int>((progress / 100.0f) * barWidth),
+                                       0,
+                                       barWidth);
+    const int emptyWidth = barWidth - filledWidth;
+
+    const int taskMaxLength =
+        std::max(0, termWidth - barWidth - kFullColumnsWithoutBar - kTaskSeparatorColumns);
+    const std::string task = sanitizeTask(snapshotTask(snapshot), taskMaxLength);
+
+    std::lock_guard<std::mutex> outputLock(outputMutex());
+    std::cout << "\r\033[K" << YELLOW << "Progress: [" << RESET
+              << GREEN << std::string(static_cast<std::size_t>(filledWidth), '#') << RESET
+              << std::string(static_cast<std::size_t>(emptyWidth), ' ')
+              << YELLOW << "] " << std::setw(3) << percent << "% " << RESET;
+
+    writeStatusIcon(percent, spinnerChar);
+
+    if (!task.empty()) {
+        std::cout << " | " << task;
+    }
+
+    std::cout << "\033[K" << std::flush;
+}
+
+class ProgressBarController {
+public:
+    ProgressBarController() = default;
+
+    ProgressBarController(const ProgressBarController&) = delete;
+    ProgressBarController& operator=(const ProgressBarController&) = delete;
+
+    ~ProgressBarController() {
+        stopThread();
+    }
+
+    void start(int totalSteps) {
+        Snapshot fallback;
+        bool renderFallback = false;
+
+        {
+            std::lock_guard<std::mutex> lock(stateMutex_);
+            state_ = UiState::IDLE;
+            progress_ = 0.0f;
+            step_ = 0;
+            totalSteps_ = normalizeTotalSteps(totalSteps);
+            task_.clear();
+            dirty_ = true;
+
+            if (!startThreadLocked()) {
+                fallback = snapshotLocked();
+                renderFallback = true;
+            }
         }
-        default: return "Working...";
+
+        stateChanged_.notify_all();
+        if (renderFallback) {
+            drawBar(fallback, ' ');
+        }
     }
-}
 
-// ── wewnętrzna funkcja rysująca jeden kadr ────────────────────────────────────
-static void drawBar(float totalProgress, const std::string& task, char spinnerChar)
-{
-    struct winsize w;
-    int termWidth = 80;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
-        termWidth = w.ws_col;
-
-    const int barWidth        = std::max(10, std::min(40, termWidth / 3));
-    const int visualPrefixLen = 27 + barWidth + 4;
-    const int taskMaxLen      = std::max(1, termWidth - visualPrefixLen);
-
-    std::string taskTrimmed = task;
-    taskTrimmed.erase(std::remove(taskTrimmed.begin(), taskTrimmed.end(), '\n'),
-                      taskTrimmed.end());
-    if ((int)taskTrimmed.size() > taskMaxLen)
-        taskTrimmed = taskTrimmed.substr(0, taskMaxLen - 1) + "~";
-
-    int pos     = barWidth * (totalProgress / 100.0f);
-    int percent = std::max(0, std::min(100, (int)totalProgress));
-
-    std::string spinnerDisplay;
-    if (percent >= 100)
-        spinnerDisplay = GREEN + std::string("[✓]") + RESET;
-    else
-        spinnerDisplay = YELLOW + std::string("[") + spinnerChar + std::string("]") + RESET;
-
-    std::cout << "\r\033[K" << YELLOW << "Progress: [" << RESET;
-    for (int i = 0; i < barWidth; ++i)
-        std::cout << (i < pos ? GREEN + std::string("#") + RESET : std::string(" "));
-
-    std::cout << YELLOW << "] " << std::setw(3) << percent << "% " << RESET
-              << spinnerDisplay << " | " << taskTrimmed << "\033[K" << std::flush;
-}
-
-// ── pętla spinnera (osobny wątek) ─────────────────────────────────────────────
-static void spinnerLoop()
-{
-    static const char frames[] = { '|', '/', '-', '\\' };
-    int idx = 0;
-    while (g_spinnerRunning.load()) {
-        UiState state = g_uiState.load();
-
-        float pct;
-        std::string label;
-
-        if (state == UiState::CUSTOM) {
-            // Tryb stary (zinst/zrm/zclean): procent i etykieta ustawiane ręcznie
-            pct = g_progress.load();
-            std::lock_guard<std::mutex> lock(g_taskMutex);
-            label = g_task;
-        } else {
-            // Tryb nowy (zupd): procent wyliczany z kroku
-            int step  = g_step.load();
-            int total = g_totalSteps.load();
-            pct = (total > 0)
-                ? static_cast<float>(step) / static_cast<float>(total) * 100.0f
-                : 0.0f;
-            if (pct > 100.0f) pct = 100.0f;
-            label = std::to_string(step) + "/" +
-                    std::to_string(total) + " | " +
-                    uiStateLabel(state);
+    void setState(UiState state, int step) {
+        {
+            std::lock_guard<std::mutex> lock(stateMutex_);
+            state_ = state;
+            step_ = step;
+            dirty_ = true;
         }
 
-        drawBar(pct, label, frames[idx++ % 4]);
-        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        stateChanged_.notify_all();
     }
+
+    void start(float progress, const std::string& task) {
+        Snapshot fallback;
+        bool renderFallback = false;
+
+        {
+            std::lock_guard<std::mutex> lock(stateMutex_);
+            setCustomStateLocked(progress, task);
+            dirty_ = true;
+
+            if (!startThreadLocked()) {
+                fallback = snapshotLocked();
+                renderFallback = true;
+            }
+        }
+
+        stateChanged_.notify_all();
+        if (renderFallback) {
+            drawBar(fallback, ' ');
+        }
+    }
+
+    void update(float progress, const std::string& task) {
+        {
+            std::lock_guard<std::mutex> lock(stateMutex_);
+            setCustomStateLocked(progress, task);
+            dirty_ = true;
+        }
+
+        stateChanged_.notify_all();
+    }
+
+    void finish(const std::string& task) {
+        {
+            std::lock_guard<std::mutex> lock(stateMutex_);
+            setCustomStateLocked(100.0f, task);
+            dirty_ = true;
+        }
+
+        stopThread();
+        drawBar(Snapshot{UiState::CUSTOM, 100.0f, 0, 1, task}, ' ');
+
+        std::lock_guard<std::mutex> outputLock(outputMutex());
+        std::cout << '\n';
+    }
+
+private:
+    Snapshot snapshotLocked() const {
+        return Snapshot{state_, progress_, step_, totalSteps_, task_};
+    }
+
+    void setCustomStateLocked(float progress, const std::string& task) {
+        state_ = UiState::CUSTOM;
+        progress_ = clampProgress(progress);
+        task_ = task;
+    }
+
+    bool startThreadLocked() {
+        if (running_) {
+            return true;
+        }
+
+        running_ = true;
+        try {
+            worker_ = std::thread(&ProgressBarController::run, this);
+            return true;
+        } catch (...) {
+            running_ = false;
+            return false;
+        }
+    }
+
+    void stopThread() {
+        std::thread workerToJoin;
+
+        {
+            std::lock_guard<std::mutex> lock(stateMutex_);
+            if (!running_ && !worker_.joinable()) {
+                return;
+            }
+
+            running_ = false;
+            if (worker_.joinable()) {
+                workerToJoin = std::move(worker_);
+            }
+        }
+
+        stateChanged_.notify_all();
+        if (workerToJoin.joinable()) {
+            workerToJoin.join();
+        }
+    }
+
+    void run() {
+        std::size_t frame = 0;
+        std::unique_lock<std::mutex> lock(stateMutex_);
+
+        while (running_) {
+            const Snapshot snapshot = snapshotLocked();
+            const char spinnerChar =
+                kSpinnerFrames[frame++ % (sizeof(kSpinnerFrames) / sizeof(kSpinnerFrames[0]))];
+            dirty_ = false;
+
+            lock.unlock();
+            drawBar(snapshot, spinnerChar);
+            lock.lock();
+
+            stateChanged_.wait_for(lock, kFrameInterval, [this] {
+                return !running_ || dirty_;
+            });
+        }
+    }
+
+    std::mutex stateMutex_;
+    std::condition_variable stateChanged_;
+    std::thread worker_;
+    bool running_ = false;
+    bool dirty_ = false;
+    UiState state_ = UiState::IDLE;
+    float progress_ = 0.0f;
+    int step_ = 0;
+    int totalSteps_ = 1;
+    std::string task_;
+};
+
+inline ProgressBarController& controller() {
+    static ProgressBarController instance;
+    return instance;
 }
 
-// ── pomocnicza: uruchom wątek jeśli jeszcze nie działa ───────────────────────
-static void ensureSpinnerRunning() {
-    if (!g_spinnerRunning.load()) {
-        g_spinnerRunning.store(true);
-        g_spinnerThread = std::thread(spinnerLoop);
-    }
-}
+} // namespace zpm::progressbar_detail
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  PUBLICZNE API — NOWE  (zupd z UiState)
-// ═════════════════════════════════════════════════════════════════════════════
-
-/** Wystartuj pasek. total = łączna liczba kroków. */
 inline void progressbar_start(int total) {
-    g_totalSteps.store(total);
-    g_step.store(0);
-    g_uiState.store(UiState::IDLE);
-    g_progress.store(0.0f);
-    ensureSpinnerRunning();
+    zpm::progressbar_detail::controller().start(total);
 }
 
-/** Zaktualizuj stan przed każdym krokiem. */
 inline void progressbar_set_state(UiState state, int step) {
-    g_uiState.store(state);
-    g_step.store(step);
+    zpm::progressbar_detail::controller().setState(state, step);
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  PUBLICZNE API — STARE  (zinst, zrm, zclean)
-//
-//  zinst/zrm wywołują progressbar_start() WIELOKROTNIE (raz na pakiet) —
-//  dlatego przy kolejnych wywołaniach tylko aktualizujemy stan,
-//  nie restartujemy wątku.
-// ═════════════════════════════════════════════════════════════════════════════
-
-/** Uruchamia pasek (lub aktualizuje jeśli już działa). */
 inline void progressbar_start(float totalProgress, const std::string& task) {
-    g_uiState.store(UiState::CUSTOM);
-    g_progress.store(totalProgress);
-    {
-        std::lock_guard<std::mutex> lock(g_taskMutex);
-        g_task = task;
-    }
-    ensureSpinnerRunning(); // startuje tylko raz — przy kolejnych pakietach nic nie robi
+    zpm::progressbar_detail::controller().start(totalProgress, task);
 }
 
-/** Uruchamia pasek bez argumentów (fallback). */
 inline void progressbar_start() {
     progressbar_start(0.0f, "Starting...");
 }
 
-/** Aktualizuje procent i opis w locie. */
 inline void progressbar_update(float totalProgress, const std::string& task) {
-    g_uiState.store(UiState::CUSTOM);
-    {
-        std::lock_guard<std::mutex> lock(g_taskMutex);
-        g_task = task;
-    }
-    g_progress.store(totalProgress);
+    zpm::progressbar_detail::controller().update(totalProgress, task);
 }
 
-/** Zatrzymuje wątek, rysuje końcowy stan (100% + ✓). */
 inline void progressbar_finish(const std::string& task) {
-    g_uiState.store(UiState::CUSTOM);
-    g_progress.store(100.0f);
-    {
-        std::lock_guard<std::mutex> lock(g_taskMutex);
-        g_task = task;
-    }
-    g_spinnerRunning.store(false);
-    if (g_spinnerThread.joinable())
-        g_spinnerThread.join();
-
-    drawBar(100.0f, task, ' ');
-    std::cout << std::endl;
+    zpm::progressbar_detail::controller().finish(task);
 }
 
-// ── alias wstecznej kompatybilności ──────────────────────────────────────────
-inline void progressbar(float p, const std::string& task) {
-    progressbar_start(p, task);
+inline void progressbar(float progress, const std::string& task) {
+    progressbar_start(progress, task);
 }
