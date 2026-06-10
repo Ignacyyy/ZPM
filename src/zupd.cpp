@@ -41,6 +41,19 @@ struct CommandResult {
     std::string output;
 };
 
+struct ProcessConfig {
+    bool captureStdout = false;
+    bool mirrorCapturedStdoutToLog = false;
+    bool logStdout = false;
+    bool logStderr = false;
+    bool discardStdout = true;
+    bool discardStderr = true;
+    LogMode logMode = LogMode::Append;
+    const char* logPath = kLogFile;
+    std::string header;
+    std::vector<std::pair<std::string, std::string>> environment;
+};
+
 struct ReportAccess {
     bool valid = false;
     gid_t gid = 0;
@@ -385,6 +398,7 @@ int waitForChild(pid_t pid) {
 
         if (result < 0 && errno == EINTR) {
             if (g_interrupted && !signalSent) {
+                kill(-pid, SIGINT);
                 kill(pid, SIGINT);
                 signalSent = true;
             }
@@ -403,59 +417,38 @@ void redirectToDevNull(int targetFd) {
     }
 }
 
-int runShellLogged(const std::string& command,
-                   const std::string& header,
-                   LogMode mode = LogMode::Append,
-                   const char* logPath = kLogFile) {
-    FileDescriptor log = openLogFile(logPath, mode);
-    if (!log.valid()) {
-        return 127;
-    }
-
-    if (!header.empty()) {
-        writeAll(log.get(), header + "\n");
-    }
-
-    const pid_t pid = fork();
-    if (pid < 0) {
-        return 127;
-    }
-
-    if (pid == 0) {
-        dup2(log.get(), STDOUT_FILENO);
-        dup2(log.get(), STDERR_FILENO);
-        execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
-        _exit(127);
-    }
-
-    return waitForChild(pid);
-}
-
-CommandResult runShellCapture(const std::string& command,
-                              const char* logPath = nullptr,
-                              const std::string& header = {},
-                              LogMode mode = LogMode::Append,
-                              bool mirrorStdoutToLog = false,
-                              bool stderrToLog = false) {
-    int pipeFd[2] = {-1, -1};
-    if (pipe(pipeFd) != 0) {
+CommandResult runProcess(const std::vector<std::string>& args, const ProcessConfig& config = {}) {
+    if (args.empty() || args.front().empty()) {
         return {};
     }
 
-    fcntl(pipeFd[0], F_SETFD, FD_CLOEXEC);
-    fcntl(pipeFd[1], F_SETFD, FD_CLOEXEC);
+    int pipeFd[2] = {-1, -1};
+    FileDescriptor readEnd;
+    FileDescriptor writeEnd;
 
-    FileDescriptor readEnd(pipeFd[0]);
-    FileDescriptor writeEnd(pipeFd[1]);
+    if (config.captureStdout) {
+        if (pipe(pipeFd) != 0) {
+            return {};
+        }
+        fcntl(pipeFd[0], F_SETFD, FD_CLOEXEC);
+        fcntl(pipeFd[1], F_SETFD, FD_CLOEXEC);
+        readEnd.reset(pipeFd[0]);
+        writeEnd.reset(pipeFd[1]);
+    }
+
+    const bool needsLog = config.logStdout ||
+                          config.logStderr ||
+                          config.mirrorCapturedStdoutToLog ||
+                          !config.header.empty();
     FileDescriptor log;
 
-    if (logPath != nullptr && (!header.empty() || mirrorStdoutToLog || stderrToLog)) {
-        log = openLogFile(logPath, mode);
+    if (needsLog) {
+        log = openLogFile(config.logPath, config.logMode);
         if (!log.valid()) {
             return {};
         }
-        if (!header.empty()) {
-            writeAll(log.get(), header + "\n");
+        if (!config.header.empty()) {
+            writeAll(log.get(), config.header + "\n");
         }
     }
 
@@ -465,57 +458,124 @@ CommandResult runShellCapture(const std::string& command,
     }
 
     if (pid == 0) {
-        readEnd.reset();
-        dup2(writeEnd.get(), STDOUT_FILENO);
+        setpgid(0, 0);
 
-        if (stderrToLog && log.valid()) {
+        if (config.captureStdout) {
+            readEnd.reset();
+            dup2(writeEnd.get(), STDOUT_FILENO);
+        } else if (config.logStdout && log.valid()) {
+            dup2(log.get(), STDOUT_FILENO);
+        } else if (config.discardStdout) {
+            redirectToDevNull(STDOUT_FILENO);
+        }
+
+        if (config.logStderr && log.valid()) {
             dup2(log.get(), STDERR_FILENO);
-        } else {
+        } else if (config.discardStderr) {
             redirectToDevNull(STDERR_FILENO);
         }
 
-        execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
+        for (const auto& [key, value] : config.environment) {
+            setenv(key.c_str(), value.c_str(), 1);
+        }
+
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (const std::string& arg : args) {
+            argv.push_back(const_cast<char*>(arg.c_str()));
+        }
+        argv.push_back(nullptr);
+
+        execvp(argv[0], argv.data());
         _exit(127);
     }
 
-    writeEnd.reset();
+    setpgid(pid, pid);
+
+    if (config.captureStdout) {
+        writeEnd.reset();
+    }
 
     CommandResult result;
-    std::array<char, 4096> buffer {};
+    if (config.captureStdout) {
+        std::array<char, 4096> buffer {};
 
-    for (;;) {
-        const ssize_t count = read(readEnd.get(), buffer.data(), buffer.size());
-        if (count > 0) {
-            result.output.append(buffer.data(), static_cast<size_t>(count));
-            if (mirrorStdoutToLog && log.valid()) {
-                writeAll(log.get(), buffer.data(), static_cast<size_t>(count));
+        for (;;) {
+            const ssize_t count = read(readEnd.get(), buffer.data(), buffer.size());
+            if (count > 0) {
+                result.output.append(buffer.data(), static_cast<size_t>(count));
+                if (config.mirrorCapturedStdoutToLog && log.valid()) {
+                    writeAll(log.get(), buffer.data(), static_cast<size_t>(count));
+                }
+                continue;
             }
-            continue;
-        }
 
-        if (count == 0) {
+            if (count == 0) {
+                break;
+            }
+
+            if (errno == EINTR) {
+                if (g_interrupted) {
+                    kill(-pid, SIGINT);
+                    kill(pid, SIGINT);
+                }
+                continue;
+            }
+
             break;
         }
-
-        if (errno == EINTR) {
-            if (g_interrupted) {
-                kill(pid, SIGINT);
-            }
-            continue;
-        }
-
-        break;
     }
 
     result.exitCode = waitForChild(pid);
+    result.output = trim(result.output);
     return result;
 }
 
-int runShellSplitLogs(const std::string& command,
-                      const char* stdoutLogPath,
-                      const std::string& stdoutHeader,
-                      LogMode stdoutMode,
-                      const char* stderrLogPath) {
+int runCommandLogged(const std::vector<std::string>& args,
+                     const std::string& header,
+                     LogMode mode = LogMode::Append,
+                     const char* logPath = kLogFile,
+                     const std::vector<std::pair<std::string, std::string>>& environment = {}) {
+    ProcessConfig config;
+    config.logStdout = true;
+    config.logStderr = true;
+    config.header = header;
+    config.logMode = mode;
+    config.logPath = logPath;
+    config.environment = environment;
+    return runProcess(args, config).exitCode;
+}
+
+CommandResult captureCommand(const std::vector<std::string>& args,
+                             const char* logPath = nullptr,
+                             const std::string& header = {},
+                             LogMode mode = LogMode::Append,
+                             bool mirrorStdoutToLog = false,
+                             bool stderrToLog = false,
+                             const std::vector<std::pair<std::string, std::string>>& environment = {}) {
+    ProcessConfig config;
+    config.captureStdout = true;
+    config.mirrorCapturedStdoutToLog = mirrorStdoutToLog;
+    config.logStderr = stderrToLog;
+    config.header = header;
+    config.logMode = mode;
+    config.environment = environment;
+    if (logPath != nullptr) {
+        config.logPath = logPath;
+    }
+    return runProcess(args, config);
+}
+
+int runCommandSplitLogs(const std::vector<std::string>& args,
+                        const char* stdoutLogPath,
+                        const std::string& stdoutHeader,
+                        LogMode stdoutMode,
+                        const char* stderrLogPath,
+                        const std::vector<std::pair<std::string, std::string>>& environment = {}) {
+    if (args.empty() || args.front().empty()) {
+        return 127;
+    }
+
     FileDescriptor stdoutLog = openLogFile(stdoutLogPath, stdoutMode);
     FileDescriptor stderrLog = openLogFile(stderrLogPath, LogMode::Append);
 
@@ -534,32 +594,42 @@ int runShellSplitLogs(const std::string& command,
     }
 
     if (pid == 0) {
+        setpgid(0, 0);
         dup2(stdoutLog.get(), STDOUT_FILENO);
         dup2(stderrLog.get(), STDERR_FILENO);
-        execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
+
+        for (const auto& [key, value] : environment) {
+            setenv(key.c_str(), value.c_str(), 1);
+        }
+
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (const std::string& arg : args) {
+            argv.push_back(const_cast<char*>(arg.c_str()));
+        }
+        argv.push_back(nullptr);
+
+        execvp(argv[0], argv.data());
         _exit(127);
     }
 
+    setpgid(pid, pid);
     return waitForChild(pid);
 }
 
-bool runShellOk(const std::string& command,
-                const std::string& header,
-                LogMode mode = LogMode::Append) {
-    return runShellLogged(command, header, mode) == 0;
+bool runCommandOk(const std::vector<std::string>& args,
+                  const std::string& header,
+                  LogMode mode = LogMode::Append,
+                  const std::vector<std::pair<std::string, std::string>>& environment = {}) {
+    return runCommandLogged(args, header, mode, kLogFile, environment) == 0;
 }
 
-std::string shellQuote(const std::string& value) {
-    std::string quoted = "'";
-    for (const char c : value) {
-        if (c == '\'') {
-            quoted += "'\\''";
-        } else {
-            quoted += c;
-        }
-    }
-    quoted += "'";
-    return quoted;
+std::vector<std::pair<std::string, std::string>> cLocaleEnv() {
+    return {{"LC_ALL", "C"}};
+}
+
+std::vector<std::pair<std::string, std::string>> aptEnv() {
+    return {{"LC_ALL", "C"}, {"DEBIAN_FRONTEND", "noninteractive"}};
 }
 
 bool executableAt(const std::string& path) {
@@ -636,12 +706,109 @@ bool isTumbleweedLike() {
            combined.find("slowroll") != std::string::npos;
 }
 
-void printCommandLines(const std::string& command, const std::string& prefix) {
-    const CommandResult result = runShellCapture(command);
+void printCommandLines(const std::vector<std::string>& command,
+                       const std::string& prefix,
+                       const std::vector<std::pair<std::string, std::string>>& environment = {}) {
+    const CommandResult result = captureCommand(command, nullptr, {}, LogMode::Append, false, false, environment);
     for (const std::string& rawLine : splitLines(result.output)) {
         const std::string line = trim(rawLine);
         if (!line.empty()) {
             std::cout << prefix << line << "\n";
+        }
+    }
+}
+
+void collectAptRepositoriesFromFile(const std::filesystem::path& path,
+                                    std::set<std::string>& repositories) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        return;
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        line = trim(line);
+        if (line.empty() || line.front() == '#') {
+            continue;
+        }
+
+        if (startsWith(line, "deb ")) {
+            repositories.insert(line);
+        } else if (startsWith(line, "URIs:")) {
+            const std::string uri = trim(line.substr(5));
+            if (!uri.empty()) {
+                repositories.insert("deb " + uri);
+            }
+        }
+    }
+}
+
+void printAptRepositories(const std::string& prefix) {
+    std::set<std::string> repositories;
+    collectAptRepositoriesFromFile("/etc/apt/sources.list", repositories);
+
+    std::error_code ec;
+    if (std::filesystem::is_directory("/etc/apt/sources.list.d", ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator("/etc/apt/sources.list.d", ec)) {
+            if (ec) {
+                break;
+            }
+            if (!entry.is_regular_file(ec)) {
+                continue;
+            }
+            if (entry.path().extension() == ".list" || entry.path().extension() == ".sources") {
+                collectAptRepositoriesFromFile(entry.path(), repositories);
+            }
+        }
+    }
+
+    for (const std::string& repository : repositories) {
+        std::cout << prefix << repository << "\n";
+    }
+}
+
+void printZypperRepositories(const std::string& prefix) {
+    const CommandResult result = captureCommand({"zypper", "lr"});
+    for (const std::string& rawLine : splitLines(result.output)) {
+        const std::string line = trim(rawLine);
+        if (line.empty() || !std::isdigit(static_cast<unsigned char>(line.front()))) {
+            continue;
+        }
+
+        const std::vector<std::string> columns = split(line, '|');
+        if (columns.size() >= 2) {
+            const std::string name = trim(columns[1]);
+            if (!name.empty()) {
+                std::cout << prefix << name << "\n";
+            }
+        }
+    }
+}
+
+void printDnfRepositories(const std::string& prefix) {
+    const std::vector<std::string> command = commandExists("dnf5")
+        ? std::vector<std::string>{"dnf5", "repolist", "-q"}
+        : std::vector<std::string>{"dnf", "repolist", "-q"};
+    const CommandResult result = captureCommand(command);
+    bool first = true;
+
+    for (const std::string& rawLine : splitLines(result.output)) {
+        const std::string line = trim(rawLine);
+        if (line.empty()) {
+            continue;
+        }
+        if (first) {
+            first = false;
+            const std::string lower = toLower(line);
+            if (lower.find("repo") != std::string::npos) {
+                continue;
+            }
+        }
+
+        std::istringstream stream(line);
+        std::string repo;
+        if (stream >> repo) {
+            std::cout << prefix << repo << "\n";
         }
     }
 }
@@ -805,6 +972,16 @@ std::vector<std::pair<std::string, std::string>> parseDisabledSnapRevisions(cons
     return revisions;
 }
 
+bool isRootOwnedRemovableEntry(const std::filesystem::path& path) {
+    struct stat st {};
+    if (lstat(path.c_str(), &st) != 0) {
+        return false;
+    }
+
+    return st.st_uid == 0 &&
+           (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode));
+}
+
 bool removeDirectoryEntries(const std::filesystem::path& directory) {
     std::error_code ec;
     if (!std::filesystem::exists(directory, ec)) {
@@ -819,6 +996,12 @@ bool removeDirectoryEntries(const std::filesystem::path& directory) {
 
     bool ok = true;
     for (const auto& entry : entries) {
+        if (!isRootOwnedRemovableEntry(entry.path())) {
+            writeLogLine(kLogFile, "cleanup: skipped unsafe entry " + entry.path().string());
+            ok = false;
+            continue;
+        }
+
         std::error_code removeError;
         std::filesystem::remove_all(entry.path(), removeError);
         if (removeError) {
@@ -849,6 +1032,12 @@ bool removeEntriesWithPrefix(const std::filesystem::path& directory, const std::
             continue;
         }
 
+        if (!isRootOwnedRemovableEntry(entry.path())) {
+            writeLogLine(kLogFile, "cleanup: skipped unsafe entry " + entry.path().string());
+            ok = false;
+            continue;
+        }
+
         std::error_code removeError;
         std::filesystem::remove_all(entry.path(), removeError);
         if (removeError) {
@@ -861,10 +1050,10 @@ bool removeEntriesWithPrefix(const std::filesystem::path& directory, const std::
 }
 
 int countSteps(const UpdateStatus& status) {
-    int steps = 2; // consistency check + cleanup
+    int steps = 1; // cleanup
 
     if (status.native) {
-        ++steps;
+        steps += 2; // consistency check + native update
     }
     if (status.hasFlatpakUpdates()) {
         ++steps;
@@ -934,12 +1123,12 @@ void checkUniversalManagers(UpdateStatus& status) {
     status.hasSnap = commandExists("snap") || commandExists("/usr/bin/snap");
 
     if (status.hasFlatpak) {
-        const CommandResult result = runShellCapture("flatpak remote-ls --updates --columns=name");
+        const CommandResult result = captureCommand({"flatpak", "remote-ls", "--updates", "--columns=name"});
         status.flatpakPackages = nonEmptyLines(result.output);
     }
 
     if (status.hasSnap) {
-        const CommandResult result = runShellCapture("snap refresh --list");
+        const CommandResult result = captureCommand({"snap", "refresh", "--list"});
         status.snapPackages = parseSnapRefreshList(result.output);
     }
 }
@@ -950,7 +1139,7 @@ void logOptionalCleanupFailure(const std::string& action) {
 
 bool cleanupUniversal(const UpdateStatus& status) {
     if (status.hasFlatpak) {
-        if (!runShellOk("flatpak uninstall --unused -y", "----cleaning_flatpak----")) {
+        if (!runCommandOk({"flatpak", "uninstall", "--unused", "-y"}, "----cleaning_flatpak----")) {
             if (g_interrupted) {
                 return false;
             }
@@ -964,12 +1153,12 @@ bool cleanupUniversal(const UpdateStatus& status) {
     }
 
     if (status.hasSnap) {
-        const CommandResult list = runShellCapture("snap list --all",
-                                                   kLogFile,
-                                                   "----checking_disabled_snap_revisions----",
-                                                   LogMode::Append,
-                                                   true,
-                                                   true);
+        const CommandResult list = captureCommand({"snap", "list", "--all"},
+                                                  kLogFile,
+                                                  "----checking_disabled_snap_revisions----",
+                                                  LogMode::Append,
+                                                  true,
+                                                  true);
 
         if (list.exitCode != 0) {
             if (g_interrupted) {
@@ -978,9 +1167,8 @@ bool cleanupUniversal(const UpdateStatus& status) {
             logOptionalCleanupFailure("snap list --all");
         } else {
             for (const auto& [name, revision] : parseDisabledSnapRevisions(list.output)) {
-                const std::string command = "snap remove " + shellQuote(name) +
-                                            " --revision=" + shellQuote(revision);
-                if (!runShellOk(command, "----removing_snap_revision_" + name + "_" + revision + "----")) {
+                if (!runCommandOk({"snap", "remove", name, "--revision=" + revision},
+                                  "----removing_snap_revision_" + name + "_" + revision + "----")) {
                     if (g_interrupted) {
                         return false;
                     }
@@ -1020,11 +1208,11 @@ bool finishAndReport(const Options& options, bool ok, int total, int step) {
     if (options.reboot) {
         std::cout << YELLOW << "[*] Rebooting in 3s..." << RESET << "\n";
         std::this_thread::sleep_for(std::chrono::seconds(3));
-        runShellLogged("reboot", "-----reboot-----");
+        runCommandLogged({"reboot"}, "-----reboot-----");
     } else if (options.shutdown) {
         std::cout << YELLOW << "[*] Shutting down in 3s..." << RESET << "\n";
         std::this_thread::sleep_for(std::chrono::seconds(3));
-        runShellLogged("shutdown -h now", "-----shutdown-----");
+        runCommandLogged({"shutdown", "-h", "now"}, "-----shutdown-----");
     }
 
     return true;
@@ -1107,32 +1295,17 @@ void printRepositorySummary(const std::string& packageManager) {
         std::cout << "\n" << YELLOW << "[D]" << RESET
                   << GREEN << " APT Repositories:\n" << RESET;
 
-        printCommandLines(
-            "{ grep -rhE '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null;"
-            "  grep -rhE '^URIs:' /etc/apt/sources.list.d/*.sources 2>/dev/null"
-            "    | sed 's/^URIs:[[:space:]]*/deb /'; } | sort -u",
-            prefix
-        );
+        printAptRepositories(prefix);
     } else if (packageManager == "zypper") {
         std::cout << "\n" << YELLOW << "[Z]" << RESET
                   << GREEN << " Zypper Repositories:\n" << RESET;
 
-        printCommandLines(
-            "zypper lr 2>/dev/null"
-            " | awk -F'|' '/^[[:space:]]*[0-9]+/{"
-            "gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $2); print $2}'",
-            prefix
-        );
+        printZypperRepositories(prefix);
     } else if (packageManager == "dnf") {
         std::cout << "\n" << YELLOW << "[R]" << RESET
                   << GREEN << " DNF Repositories:\n" << RESET;
 
-        printCommandLines(
-            commandExists("dnf5")
-                ? "dnf5 repolist -q 2>/dev/null | awk 'NR>1 && NF{print $1}'"
-                : "dnf repolist -q 2>/dev/null | awk 'NR>1 && NF{print $1}'",
-            prefix
-        );
+        printDnfRepositories(prefix);
     }
 
     if (commandExists("flatpak") ||
@@ -1141,7 +1314,7 @@ void printRepositorySummary(const std::string& packageManager) {
         std::cout << "\n" << YELLOW << "[F]" << RESET
                   << GREEN << " Flatpak Remotes:\n" << RESET;
 
-        printCommandLines("flatpak remotes --columns=name 2>/dev/null", prefix);
+        printCommandLines({"flatpak", "remotes", "--columns=name"}, prefix);
     }
 
     if (commandExists("snap") || commandExists("/usr/bin/snap")) {
@@ -1150,24 +1323,31 @@ void printRepositorySummary(const std::string& packageManager) {
     }
 }
 
-UpdateStatus aptCheckUpdates() {
+UpdateStatus aptCheckUpdates(const Options& options) {
     UpdateStatus status;
 
     std::cout << "\n" << YELLOW << "[*] Refreshing package cache..." << RESET << "\n";
 
-    if (!runShellOk("apt-get update -qq", "-----apt_update-----", LogMode::Truncate)) {
+    if (!runCommandOk({"apt-get", "update", "-qq"},
+                      "-----apt_update-----",
+                      LogMode::Truncate,
+                      aptEnv())) {
         status.checkError = true;
         checkUniversalManagers(status);
         return status;
     }
 
-    const CommandResult simulation = runShellCapture(
-        "LC_ALL=C apt-get dist-upgrade -s",
+    const std::vector<std::string> simulateCommand = options.fullUpdate
+        ? std::vector<std::string>{"apt-get", "dist-upgrade", "-s"}
+        : std::vector<std::string>{"apt-get", "upgrade", "-s"};
+    const CommandResult simulation = captureCommand(
+        simulateCommand,
         kLogFile,
-        "-----apt_simulate_dist_upgrade-----",
+        options.fullUpdate ? "-----apt_simulate_dist_upgrade-----" : "-----apt_simulate_upgrade-----",
         LogMode::Append,
         true,
-        true
+        true,
+        aptEnv()
     );
 
     if (simulation.exitCode != 0) {
@@ -1190,25 +1370,30 @@ UpdateStatus zypperCheckUpdates(const Options& options) {
 
     status.zypperDup = options.fullUpdate || isTumbleweedLike();
 
-    if (!runShellOk("zypper --non-interactive refresh",
-                    "-----zypper_refresh-----",
-                    LogMode::Truncate)) {
+    if (!runCommandOk({"zypper", "--non-interactive", "refresh"},
+                      "-----zypper_refresh-----",
+                      LogMode::Truncate,
+                      cLocaleEnv())) {
         status.checkError = true;
         checkUniversalManagers(status);
         return status;
     }
 
-    const std::string updateCommand = status.zypperDup
-        ? "LC_ALL=C zypper --no-refresh list-updates --all -t package"
-        : "LC_ALL=C zypper --no-refresh list-updates -t package";
+    std::vector<std::string> updateCommand = {"zypper", "--no-refresh", "list-updates"};
+    if (status.zypperDup) {
+        updateCommand.push_back("--all");
+    }
+    updateCommand.push_back("-t");
+    updateCommand.push_back("package");
 
-    const CommandResult updates = runShellCapture(
+    const CommandResult updates = captureCommand(
         updateCommand,
         kLogFile,
         "-----zypper_list_updates-----",
         LogMode::Append,
         true,
-        true
+        true,
+        cLocaleEnv()
     );
 
     if (updates.exitCode != 0) {
@@ -1219,12 +1404,13 @@ UpdateStatus zypperCheckUpdates(const Options& options) {
 
     status.nativePackages = parseZypperListUpdates(updates.output);
 
-    const int patchExit = runShellSplitLogs(
-        "LC_ALL=C zypper --no-refresh patch-check",
+    const int patchExit = runCommandSplitLogs(
+        {"zypper", "--no-refresh", "patch-check"},
         kPatchLogFile,
         "-----zypper_patch_check-----",
         LogMode::Truncate,
-        kLogFile
+        kLogFile,
+        cLocaleEnv()
     );
 
     const bool hasPatches = (patchExit == 100 || patchExit == 101);
@@ -1233,13 +1419,14 @@ UpdateStatus zypperCheckUpdates(const Options& options) {
     }
 
     if (!status.zypperDup) {
-        const CommandResult patches = runShellCapture(
-            "LC_ALL=C zypper --no-refresh list-patches",
+        const CommandResult patches = captureCommand(
+            {"zypper", "--no-refresh", "list-patches"},
             kLogFile,
             "-----zypper_list_patches-----",
             LogMode::Append,
             true,
-            true
+            true,
+            cLocaleEnv()
         );
 
         if (patches.exitCode == 0) {
@@ -1260,17 +1447,18 @@ UpdateStatus dnfCheckUpdates() {
 
     status.dnf5 = commandExists("dnf5") || commandExists("/usr/bin/dnf5");
 
-    const std::string command = status.dnf5
-        ? "LC_ALL=C dnf5 check-upgrade -q"
-        : "LC_ALL=C dnf check-update -q --refresh";
+    const std::vector<std::string> command = status.dnf5
+        ? std::vector<std::string>{"dnf5", "check-upgrade", "-q"}
+        : std::vector<std::string>{"dnf", "check-update", "-q", "--refresh"};
 
-    const CommandResult result = runShellCapture(
+    const CommandResult result = captureCommand(
         command,
         kLogFile,
         status.dnf5 ? "-----dnf5_check_upgrade-----" : "-----dnf_check_update-----",
         LogMode::Truncate,
         true,
-        true
+        true,
+        cLocaleEnv()
     );
 
     if (result.exitCode == 100) {
@@ -1293,15 +1481,17 @@ bool runUpdateFlow(const Options& options,
     const int total = countSteps(status);
     int step = 0;
     bool ok = true;
-    std::cout << "\n";
+
     progressbar_start(total);
 
-    progressbar_set_state(UiState::CHECKING, ++step);
-    if (!checkConsistency()) {
-        ok = false;
-    }
-    if (checkInterrupted(ok)) {
-        return finishAndReport(options, ok, total, step);
+    if (status.native) {
+        progressbar_set_state(UiState::CHECKING, ++step);
+        if (!checkConsistency()) {
+            ok = false;
+        }
+        if (checkInterrupted(ok)) {
+            return finishAndReport(options, ok, total, step);
+        }
     }
 
     if (status.native && ok) {
@@ -1332,7 +1522,7 @@ bool runUpdateFlow(const Options& options,
 
     if (status.hasFlatpakUpdates() && ok) {
         progressbar_set_state(UiState::FLATPAK, ++step);
-        if (!runShellOk("flatpak update -y", "----updating_flatpak----")) {
+        if (!runCommandOk({"flatpak", "update", "-y"}, "----updating_flatpak----")) {
             ok = false;
         }
     }
@@ -1342,7 +1532,7 @@ bool runUpdateFlow(const Options& options,
 
     if (status.hasSnapUpdates() && ok) {
         progressbar_set_state(UiState::SNAP, ++step);
-        if (!runShellOk("snap refresh", "----updating_snap----")) {
+        if (!runCommandOk({"snap", "refresh"}, "----updating_snap----")) {
             ok = false;
         }
     }
@@ -1376,24 +1566,36 @@ bool aptUpdate(const Options& options, const UpdateStatus& status) {
         status,
         UiState::APT,
         [] {
-            return runShellOk(
-                "DEBIAN_FRONTEND=noninteractive dpkg --configure -a",
-                "-----checking_system_consistency-----"
-            );
+            return runCommandOk({"dpkg", "--configure", "-a"},
+                                "-----checking_system_consistency-----",
+                                LogMode::Append,
+                                aptEnv());
+        },
+        [&options] {
+            std::vector<std::string> command = {
+                "apt-get",
+                options.fullUpdate ? "dist-upgrade" : "upgrade",
+                "-y",
+                "-o", "Dpkg::Options::=--force-confdef",
+                "-o", "Dpkg::Options::=--force-confold"
+            };
+            return runCommandOk(command,
+                                options.fullUpdate ? "-----updating_APT_dist_upgrade-----" : "-----updating_APT_upgrade-----",
+                                LogMode::Append,
+                                aptEnv())
+                ? NativeUpdateResult::Ok
+                : NativeUpdateResult::Failed;
         },
         [] {
-            return runShellOk(
-                "DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y "
-                "-o Dpkg::Options::=--force-confdef "
-                "-o Dpkg::Options::=--force-confold",
-                "-----updating_APT-----"
-            ) ? NativeUpdateResult::Ok : NativeUpdateResult::Failed;
-        },
-        [] {
-            return runShellOk(
-                "DEBIAN_FRONTEND=noninteractive apt-get autoremove -y && apt-get autoclean",
-                "----cleaning_APT----"
-            );
+            const bool autoremove = runCommandOk({"apt-get", "autoremove", "-y"},
+                                                 "----cleaning_APT_autoremove----",
+                                                 LogMode::Append,
+                                                 aptEnv());
+            const bool autoclean = runCommandOk({"apt-get", "autoclean"},
+                                                "----cleaning_APT_autoclean----",
+                                                LogMode::Append,
+                                                aptEnv());
+            return autoremove && autoclean;
         }
     );
 }
@@ -1415,14 +1617,14 @@ bool zypperUpdate(const Options& options, const UpdateStatus& status) {
         status,
         UiState::ZYPPER,
         [] {
-            return runShellOk("rpm --rebuilddb", "-----checking_system_consistency-----");
+            return runCommandOk({"rpm", "--rebuilddb"}, "-----checking_system_consistency-----");
         },
         [&status] {
-            const std::string command = status.zypperDup
-                ? "zypper --non-interactive dup -y --auto-agree-with-licenses"
-                : "zypper --non-interactive patch --with-update -y --auto-agree-with-licenses";
+            const std::vector<std::string> command = status.zypperDup
+                ? std::vector<std::string>{"zypper", "--non-interactive", "dup", "-y", "--auto-agree-with-licenses"}
+                : std::vector<std::string>{"zypper", "--non-interactive", "patch", "--with-update", "-y", "--auto-agree-with-licenses"};
 
-            const int exitCode = runShellLogged(
+            const int exitCode = runCommandLogged(
                 command,
                 status.zypperDup
                     ? "-----updating_zypper_DUP-----"
@@ -1436,7 +1638,7 @@ bool zypperUpdate(const Options& options, const UpdateStatus& status) {
             return exitCode == 0 ? NativeUpdateResult::Ok : NativeUpdateResult::Failed;
         },
         [] {
-            return runShellOk("zypper clean -a", "----cleaning_zypper----");
+            return runCommandOk({"zypper", "clean", "-a"}, "----cleaning_zypper----");
         }
     );
 }
@@ -1455,32 +1657,42 @@ bool dnfUpdate(const Options& options, const UpdateStatus& status) {
         status,
         UiState::DNF,
         [] {
-            return runShellOk("rpm --rebuilddb", "-----checking_system_consistency-----");
+            return runCommandOk({"rpm", "--rebuilddb"}, "-----checking_system_consistency-----");
         },
         [&options, &status] {
-            std::string command;
+            std::vector<std::string> command;
             std::string header;
 
             if (status.dnf5) {
-                command = options.fullUpdate ? "dnf5 distro-sync -y" : "dnf5 upgrade -y";
+                command = options.fullUpdate
+                    ? std::vector<std::string>{"dnf5", "distro-sync", "-y"}
+                    : std::vector<std::string>{"dnf5", "upgrade", "-y"};
                 header = options.fullUpdate ? "-----updating_DNF5_distro-sync-----" : "-----updating_DNF5-----";
             } else {
-                command = options.fullUpdate ? "dnf distro-sync -y" : "dnf upgrade -y";
+                command = options.fullUpdate
+                    ? std::vector<std::string>{"dnf", "distro-sync", "-y"}
+                    : std::vector<std::string>{"dnf", "upgrade", "-y"};
                 header = options.fullUpdate ? "-----updating_DNF_distro-sync-----" : "-----updating_DNF-----";
             }
 
-            return runShellOk(command, header) ? NativeUpdateResult::Ok : NativeUpdateResult::Failed;
+            return runCommandOk(command, header) ? NativeUpdateResult::Ok : NativeUpdateResult::Failed;
         },
         [&status] {
-            return status.dnf5
-                ? runShellOk("dnf5 autoremove -y && dnf5 clean packages", "----cleaning_DNF5----")
-                : runShellOk("dnf autoremove -y && dnf clean packages", "----cleaning_DNF----");
+            if (status.dnf5) {
+                const bool autoremove = runCommandOk({"dnf5", "autoremove", "-y"}, "----cleaning_DNF5_autoremove----");
+                const bool clean = runCommandOk({"dnf5", "clean", "packages"}, "----cleaning_DNF5_packages----");
+                return autoremove && clean;
+            }
+
+            const bool autoremove = runCommandOk({"dnf", "autoremove", "-y"}, "----cleaning_DNF_autoremove----");
+            const bool clean = runCommandOk({"dnf", "clean", "packages"}, "----cleaning_DNF_packages----");
+            return autoremove && clean;
         }
     );
 }
 
 int handleApt(const Options& options) {
-    UpdateStatus status = aptCheckUpdates();
+    UpdateStatus status = aptCheckUpdates(options);
 
     if (status.checkError) {
         std::cerr << RED

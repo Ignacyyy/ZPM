@@ -1688,31 +1688,55 @@ bool prepareInstallTree(const std::filesystem::path& sourceDir,
            writeVersionFiles(newInstallDir, release, prerelease);
 }
 
-bool removeExistingSymlinkTarget(const std::filesystem::path& target) {
+bool replaceSymlinkTarget(const std::filesystem::path& target,
+                          const std::filesystem::path& newTarget) {
     std::error_code ec;
     const auto status = std::filesystem::symlink_status(target, ec);
+    std::filesystem::path oldTarget;
+
     if (ec) {
         if (ec == std::errc::no_such_file_or_directory) {
-            return true;
+            ec.clear();
+        } else {
+            writeLogLine("symlink: cannot inspect " + target.string() + ": " + ec.message());
+            return false;
         }
-        writeLogLine("symlink: cannot inspect " + target.string() + ": " + ec.message());
-        return false;
-    }
+    } else if (std::filesystem::exists(status)) {
+        if (!std::filesystem::is_symlink(status)) {
+            writeLogLine("symlink: refusing to overwrite non-symlink " + target.string());
+            return false;
+        }
 
-    if (!std::filesystem::exists(status)) {
-        return true;
-    }
+        oldTarget = std::filesystem::read_symlink(target, ec);
+        if (ec) {
+            writeLogLine("symlink: cannot read " + target.string() + ": " + ec.message());
+            return false;
+        }
 
-    if (!std::filesystem::is_symlink(status)) {
+        std::filesystem::remove(target, ec);
+        if (ec) {
+            writeLogLine("symlink: cannot remove " + target.string() + ": " + ec.message());
+            return false;
+        }
+    } else if (!std::filesystem::is_symlink(status)) {
         writeLogLine("symlink: refusing to overwrite non-symlink " + target.string());
         return false;
     }
 
-    std::filesystem::remove(target, ec);
+    std::filesystem::create_symlink(newTarget, target, ec);
     if (ec) {
-        writeLogLine("symlink: cannot remove " + target.string() + ": " + ec.message());
+        writeLogLine("symlink: cannot create " + target.string() + ": " + ec.message());
+        if (!oldTarget.empty()) {
+            std::error_code restoreError;
+            std::filesystem::create_symlink(oldTarget, target, restoreError);
+            if (restoreError) {
+                writeLogLine("symlink: cannot restore old " + target.string() + ": " +
+                             restoreError.message());
+            }
+        }
         return false;
     }
+
     return true;
 }
 
@@ -1736,13 +1760,7 @@ bool updateSymlinks(const std::filesystem::path& installBinDir) {
         }
 
         const std::filesystem::path target = std::filesystem::path("/usr/bin") / name;
-        if (!removeExistingSymlinkTarget(target)) {
-            return false;
-        }
-
-        std::filesystem::create_symlink(entry.path(), target, ec);
-        if (ec) {
-            writeLogLine("symlink: cannot create " + target.string() + ": " + ec.message());
+        if (!replaceSymlinkTarget(target, entry.path())) {
             return false;
         }
     }

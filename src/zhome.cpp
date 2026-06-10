@@ -13,7 +13,7 @@ void PAGE1() {
     std::cout << BOLD << RED << "ZPM Configuration:" << RESET << std::endl;
     std::cout << "  Config file: /opt/ZPM/zielina.conf" << std::endl;
     std::cout << "  Used for runtime behavior and update settings" << std::endl;
-    std::cout << "  Config editing:" << std::endl;
+    std::cout << "Config editing:" << std::endl;
     std::cout << "  zhome" << std::endl;
     std::cout << "  zpm home" << std::endl;
     std::cout << "  --edit-config, -ed" << std::endl;
@@ -80,7 +80,7 @@ void PAGE1_PAGE2(){
     std::cout << BOLD << RED << "ZPM Configuration:" << RESET << std::endl;
     std::cout << "  Config file: /opt/ZPM/zielina.conf" << std::endl;
     std::cout << "  Used for runtime behavior and update settings" << std::endl;
-    std::cout << "  Config editing:" << std::endl;
+    std::cout << "Config editing:" << std::endl;
     std::cout << "  zhome" << std::endl;
     std::cout << "  zpm home" << std::endl;
     std::cout << "  --edit-config, -ed" << std::endl;
@@ -123,6 +123,34 @@ void PAGE1_PAGE2(){
     std::cout << "  " << BOLD << "zpm" << RESET << " <command> [options]   (e.g., zpm install firefox)" << std::endl;
     std::cout << "  Run " << BOLD << "zpm --help" << RESET << " for more details." << std::endl;
     std::cout << "" << std::endl;
+	}
+
+bool executableAt(const std::string& path) {
+    return access(path.c_str(), X_OK) == 0;
+}
+
+bool commandExists(const std::string& command) {
+    if (command.find('/') != std::string::npos) {
+        return executableAt(command);
+    }
+
+    const char* pathEnv = getenv("PATH");
+    const std::string path = pathEnv != nullptr
+        ? pathEnv
+        : "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+    std::stringstream stream(path);
+    std::string directory;
+    while (std::getline(stream, directory, ':')) {
+        if (directory.empty()) {
+            directory = ".";
+        }
+        if (executableAt(directory + "/" + command)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 int main(int argc, char* argv[]) {
@@ -148,8 +176,7 @@ int main(int argc, char* argv[]) {
 
     if (config) {
 
-        bool exists = (system("command -v nano > /dev/null 2>&1") == 0);
-        if (!exists){
+        if (!commandExists("nano")){
          std::cerr << RED << "Error: install nano!\n" << RESET;
             return 1;
         }

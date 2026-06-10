@@ -845,6 +845,16 @@ bool directoryHasRegularFile(const std::filesystem::path& directory,
     return false;
 }
 
+bool isRootOwnedRemovableEntry(const std::filesystem::path& path) {
+    struct stat st {};
+    if (lstat(path.c_str(), &st) != 0) {
+        return false;
+    }
+
+    return st.st_uid == 0 &&
+           (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode));
+}
+
 bool removeDirectoryEntries(const std::filesystem::path& directory) {
     std::error_code ec;
     if (!std::filesystem::exists(directory, ec)) {
@@ -859,6 +869,12 @@ bool removeDirectoryEntries(const std::filesystem::path& directory) {
 
     bool ok = true;
     for (const auto& entry : iterator) {
+        if (!isRootOwnedRemovableEntry(entry.path())) {
+            writeLogLine("cleanup: skipped unsafe entry " + entry.path().string());
+            ok = false;
+            continue;
+        }
+
         std::error_code removeError;
         std::filesystem::remove_all(entry.path(), removeError);
         if (removeError) {
@@ -890,6 +906,12 @@ bool removeEntriesWithPrefix(const std::filesystem::path& directory,
     for (const auto& entry : iterator) {
         const std::string filename = entry.path().filename().string();
         if (!startsWith(filename, prefix)) {
+            continue;
+        }
+
+        if (!isRootOwnedRemovableEntry(entry.path())) {
+            writeLogLine("cleanup: skipped unsafe entry " + entry.path().string());
+            ok = false;
             continue;
         }
 
