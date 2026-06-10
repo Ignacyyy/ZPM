@@ -13,6 +13,7 @@ namespace {
 
 constexpr const char* kLogFile = "/tmp/zupd.log";
 constexpr const char* kPatchLogFile = "/tmp/zupd_patchcheck.log";
+constexpr std::chrono::milliseconds kDryRunStepDelay{160};
 
 volatile std::sig_atomic_t g_interrupted = 0;
 
@@ -34,6 +35,7 @@ struct Options {
     bool version = false;
     bool yes = false;
     bool fullUpdate = false;
+    bool dryRun = false;
 };
 
 struct CommandResult {
@@ -1103,26 +1105,97 @@ std::string nativeUpdateTask(UiState state) {
     }
 }
 
-void printInfoStep(const std::string& text) {
-    std::cout << CYAN << "[>]" << RESET << " " << text << "\n";
+void beginProgressStep(UiState state,
+                       int& step,
+                       const std::string& text) {
+    std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+
+    if (step > 0) {
+        std::cout << "\r\033[K\033[1A\r\033[K";
+    } else {
+        std::cout << "\r\033[K";
+    }
+
+    std::cout << CYAN << "[>]" << RESET << " " << text << "\n\n";
+
+    progressbar_set_state(state, ++step);
+    std::cout << std::flush;
 }
 
-void printUpdatePlan(const UpdateStatus& status, UiState nativeState) {
-    std::cout << "\n" << CYAN << "[ZPM INFO]" << RESET << "\n";
+void printInfoHeader() {
+    std::cout << "\n" << CYAN << "[ZPM-INFO]" << RESET << "\n";
+}
 
-    if (status.native) {
-        printInfoStep("checking system consistency");
-        printInfoStep(nativeUpdateTask(nativeState));
+UiState nativeStateForPackageManager(const std::string& packageManager) {
+    if (packageManager == "zypper") {
+        return UiState::ZYPPER;
     }
-    if (status.hasFlatpakUpdates()) {
-        printInfoStep("updating Flatpak packages");
+    if (packageManager == "dnf") {
+        return UiState::DNF;
     }
-    if (status.hasSnapUpdates()) {
-        printInfoStep("updating Snap packages");
+    return UiState::APT;
+}
+
+std::string nativeTitleForPackageManager(const std::string& packageManager, bool dnf5 = false) {
+    if (packageManager == "zypper") {
+        return "Zypper";
+    }
+    if (packageManager == "dnf") {
+        return dnf5 ? "DNF5" : "DNF";
+    }
+    return "APT";
+}
+
+std::string dryRunPackageManager() {
+    const std::string packageManager = get_package_manager();
+    return packageManager == "unknown" ? "apt" : packageManager;
+}
+
+std::vector<std::string> dryRunNativePackages(const std::string& packageManager,
+                                              const Options& options) {
+    if (packageManager == "zypper") {
+        return options.fullUpdate
+            ? std::vector<std::string>{"fake-distribution-release", "fake-kernel-default"}
+            : std::vector<std::string>{"fake-zypper-lib", "fake-desktop-patch"};
+    }
+    if (packageManager == "dnf") {
+        return options.fullUpdate
+            ? std::vector<std::string>{"fake-system-release", "fake-kernel-core"}
+            : std::vector<std::string>{"fake-dnf-lib", "fake-security-update"};
     }
 
-    printInfoStep("cleaning");
-    std::cout << "\n";
+    return options.fullUpdate
+        ? std::vector<std::string>{"fake-linux-image", "fake-linux-image-meta"}
+        : std::vector<std::string>{"fake-openssl", "fake-desktop-library"};
+}
+
+UpdateStatus buildDryRunStatus(const std::string& packageManager, const Options& options) {
+    UpdateStatus status;
+    status.native = true;
+    status.dnf5 = packageManager == "dnf" && commandExists("dnf5");
+    status.zypperDup = packageManager == "zypper" && (options.fullUpdate || isTumbleweedLike());
+    status.nativePackages = dryRunNativePackages(packageManager, options);
+
+    status.hasFlatpak = commandExists("flatpak");
+    if (status.hasFlatpak) {
+        status.flatpakPackages = {"fake.flatpak.App"};
+    }
+
+    status.hasSnap = commandExists("snap");
+    if (status.hasSnap) {
+        status.snapPackages = {"fake-snap-app"};
+    }
+
+    return status;
+}
+
+bool dryRunStep() {
+    std::this_thread::sleep_for(kDryRunStepDelay);
+    return !g_interrupted;
+}
+
+NativeUpdateResult dryRunNativeUpdate() {
+    return dryRunStep() ? NativeUpdateResult::Ok : NativeUpdateResult::Failed;
 }
 
 bool checkInterrupted(bool& ok) {
@@ -1253,14 +1326,23 @@ bool finishAndReport(const Options& options, bool ok, int total, int step) {
 
     if (ok) {
         progressbar_set_state(UiState::DONE, total);
-        progressbar_finish("DONE!");
+        progressbar_finish(options.dryRun ? "Dry run done!" : "DONE!");
     } else {
         progressbar_set_state(UiState::ERROR, step);
         progressbar_finish("ERROR!");
 
-        std::cout << RED << "ERROR," << RESET
-                  << " check " << kLogFile << " for details.\n";
+        if (options.dryRun) {
+            std::cout << RED << "Dry run failed or was interrupted.\n" << RESET;
+        } else {
+            std::cout << RED << "ERROR," << RESET
+                      << " check " << kLogFile << " for details.\n";
+        }
         return false;
+    }
+
+    if (options.dryRun) {
+        std::cout << GREEN << "Dry run complete! No packages were changed.\n" << RESET;
+        return true;
     }
 
     std::cout << YELLOW << "[RAPORT]" << RESET << " " << kLogFile << "\n";
@@ -1286,6 +1368,7 @@ void printHelp(const char* progName) {
               << "  --reboot, -r     Reboot the system after update\n"
               << "  --shutdown, -s   Shutdown the system after update\n"
               << "  --yes, -y        Automatic system update\n"
+              << "  --dry-run        Simulate update flow; no packages are changed\n"
               << "  --help, -h       Show this help message\n"
               << "  --version, -v    Show version information\n";
 }
@@ -1316,6 +1399,8 @@ bool parseOptions(int argc, char* argv[], Options& options) {
             options.version = true;
         } else if (arg == "--yes" || arg == "-y") {
             options.yes = true;
+        } else if (arg == "--dry-run") {
+            options.dryRun = true;
         } else {
             errors.push_back("Unknown option: " + arg);
         }
@@ -1325,8 +1410,12 @@ bool parseOptions(int argc, char* argv[], Options& options) {
         errors.push_back("-r/--reboot and -s/--shutdown are mutually exclusive.");
     }
 
+    if (options.dryRun && (options.reboot || options.shutdown)) {
+        errors.push_back("--dry-run cannot be combined with --reboot or --shutdown.");
+    }
+
     if ((options.help || options.version) &&
-        (options.reboot || options.shutdown || options.yes || options.fullUpdate)) {
+        (options.reboot || options.shutdown || options.yes || options.fullUpdate || options.dryRun)) {
         errors.push_back("--help and --version can only be combined with each other.");
     }
 
@@ -1542,11 +1631,11 @@ bool runUpdateFlow(const Options& options,
     int step = 0;
     bool ok = true;
 
-    printUpdatePlan(status, nativeState);
+    printInfoHeader();
     progressbar_start(total);
 
     if (status.native) {
-        progressbar_set_state(UiState::CHECKING, ++step);
+        beginProgressStep(UiState::CHECKING, step, "checking system consistency");
         if (!checkConsistency()) {
             ok = false;
         }
@@ -1556,7 +1645,7 @@ bool runUpdateFlow(const Options& options,
     }
 
     if (status.native && ok) {
-        progressbar_set_state(nativeState, ++step);
+        beginProgressStep(nativeState, step, nativeUpdateTask(nativeState));
         const NativeUpdateResult result = updateNative();
 
         if (result == NativeUpdateResult::RestartRequired) {
@@ -1582,8 +1671,10 @@ bool runUpdateFlow(const Options& options,
     }
 
     if (status.hasFlatpakUpdates() && ok) {
-        progressbar_set_state(UiState::FLATPAK, ++step);
-        if (!runCommandOk({"flatpak", "update", "-y"}, "----updating_flatpak----")) {
+        beginProgressStep(UiState::FLATPAK, step, "updating Flatpak packages");
+        if (options.dryRun) {
+            ok = dryRunStep() && ok;
+        } else if (!runCommandOk({"flatpak", "update", "-y"}, "----updating_flatpak----")) {
             ok = false;
         }
     }
@@ -1592,8 +1683,10 @@ bool runUpdateFlow(const Options& options,
     }
 
     if (status.hasSnapUpdates() && ok) {
-        progressbar_set_state(UiState::SNAP, ++step);
-        if (!runCommandOk({"snap", "refresh"}, "----updating_snap----")) {
+        beginProgressStep(UiState::SNAP, step, "updating Snap packages");
+        if (options.dryRun) {
+            ok = dryRunStep() && ok;
+        } else if (!runCommandOk({"snap", "refresh"}, "----updating_snap----")) {
             ok = false;
         }
     }
@@ -1601,11 +1694,11 @@ bool runUpdateFlow(const Options& options,
         return finishAndReport(options, ok, total, step);
     }
 
-    progressbar_set_state(UiState::CLEANUP, ++step);
+    beginProgressStep(UiState::CLEANUP, step, "cleaning");
     if (!cleanupNative()) {
         ok = false;
     }
-    if (!cleanupUniversal(status)) {
+    if (!options.dryRun && !cleanupUniversal(status)) {
         ok = false;
     }
 
@@ -1751,6 +1844,48 @@ bool dnfUpdate(const Options& options, const UpdateStatus& status) {
     );
 }
 
+int handleDryRun(const Options& options) {
+    const std::string packageManager = dryRunPackageManager();
+    const UiState nativeState = nativeStateForPackageManager(packageManager);
+    const UpdateStatus status = buildDryRunStatus(packageManager, options);
+
+    std::cout << "\n" << RED << "Dry run demo: " << RESET
+              << "no packages will be changed.\n";
+    std::cout << YELLOW << "[SYS] " << RESET
+              << "Simulating " << nativeTitleForPackageManager(packageManager, status.dnf5)
+              << " update flow\n";
+
+    if (options.fullUpdate || status.zypperDup) {
+        if (status.zypperDup) {
+            std::cout << YELLOW << "[!] FULL UPDATE MODE (dup)" << RESET << "\n";
+        } else if (packageManager == "dnf") {
+            std::cout << YELLOW << "[!] FULL UPDATE MODE (distro-sync)" << RESET << "\n";
+        } else {
+            std::cout << YELLOW << "[!] FULL UPDATE MODE" << RESET << "\n";
+        }
+    }
+
+    printPackageList(nativeTitleForPackageManager(packageManager, status.dnf5),
+                     status.nativePackages,
+                     status.native);
+    printUniversalUpdateLists(status);
+
+    return runUpdateFlow(
+        options,
+        status,
+        nativeState,
+        [] {
+            return dryRunStep();
+        },
+        [] {
+            return dryRunNativeUpdate();
+        },
+        [] {
+            return dryRunStep();
+        }
+    ) ? 0 : 1;
+}
+
 int handleApt(const Options& options) {
     UpdateStatus status = aptCheckUpdates(options);
 
@@ -1844,6 +1979,11 @@ int main(int argc, char* argv[]) {
     if (options.help) {
         printHelp(argv[0]);
         return 0;
+    }
+
+    if (options.dryRun) {
+        SigintGuard sigintGuard;
+        return handleDryRun(options);
     }
 
     if (geteuid() != 0) {
