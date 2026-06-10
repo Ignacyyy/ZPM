@@ -38,7 +38,7 @@ namespace zhelp {
         std::ifstream conf("/opt/ZPM/zielina.conf");
         if (!conf.is_open()) return false;
 
-        std::string key = "zhelp-default-page-" + std::to_string(page) + "=true";
+        std::string key = "zhome-default-page-" + std::to_string(page) + "=true";
         std::string line;
 
         while (std::getline(conf, line)) {
@@ -70,7 +70,7 @@ namespace zhelp {
             );
 
             if (line.empty() || line[0] == '#') continue;
-            if (line.find("zhelp-show-all-pages=true") != std::string::npos) return true;
+            if (line.find("zhome-show-all-pages=true") != std::string::npos) return true;
         }
         return false;
     }
