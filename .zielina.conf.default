@@ -10,20 +10,20 @@
 # false = silent mode, no update prompts
 update-info=true
 
-[UI-zhelp]
+[UI-zhome]
 # ── Default page ──────────────────────────────────────────────────────────────
-# Controls which page is shown when running "zhelp" with no arguments.
+# Controls which page is shown when running "zhome" with no arguments.
 # RULES:
-#   - Exactly ONE of the zhelp-default-page-N options must be set to true
+#   - Exactly ONE of the zhome-default-page-N options must be set to true
 #   - All others must be false
-#   - If zhelp-show-all-pages=true, both below must be false
+#   - If zhome-show-all-pages=true, both below must be false
 #
 # PAGE 1 — ARM support and config information
-zhelp-default-page-1=true
+zhome-default-page-1=true
 # PAGE 2 — Commands, options and zpm wrapper info
-zhelp-default-page-2=false
+zhome-default-page-2=false
 
 # ── Show all pages ────────────────────────────────────────────────────────────
-# Displays all pages at once when running "zhelp"
-# If set to true, zhelp-default-page-1 and zhelp-default-page-2 MUST be false
-zhelp-show-all-pages=false
+# Displays all pages at once when running "zhome"
+# If set to true, zhome-default-page-1 and zhome-default-page-2 MUST be false
+zhome-show-all-pages=false
