@@ -622,30 +622,36 @@ private:
         return lines;
     }
 
-    void draw() const {
+    void draw() {
         const std::vector<std::string> lines = displayLines();
         const int textColumns = std::max(0,
                                          zpm::progressbar_detail::terminalWidth() -
                                              kLiveLogPrefixColumns);
 
         std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+
+        if (!rowsReserved_) {
+            std::cout << "\033[s";
+            for (int i = 0; i < kLiveLogRowsBelowBar; ++i) {
+                std::cout << "\n\033[K";
+            }
+            std::cout << "\033[u";
+            rowsReserved_ = true;
+        }
+
         std::cout << "\033[s";
 
-        for (int i = 0; i < kLiveLogTopPaddingLines; ++i) {
-            std::cout << "\n\033[K";
-        }
+        for (int row = 1; row <= kLiveLogRowsBelowBar; ++row) {
+            std::cout << "\033[u\033[" << row << "B\r\033[K";
 
-        for (int i = 0; i < kLiveLogLines; ++i) {
-            std::cout << "\n\033[K";
-            if (i < static_cast<int>(lines.size())) {
+            const int logIndex = row - kLiveLogTopPaddingLines - 1;
+            if (logIndex >= 0 &&
+                logIndex < kLiveLogLines &&
+                logIndex < static_cast<int>(lines.size())) {
                 std::cout << CYAN << "  log> " << RESET
-                          << zpm::progressbar_detail::sanitizeTask(lines[static_cast<std::size_t>(i)],
+                          << zpm::progressbar_detail::sanitizeTask(lines[static_cast<std::size_t>(logIndex)],
                                                                    textColumns);
             }
-        }
-
-        for (int i = 0; i < kLiveLogBottomPaddingLines; ++i) {
-            std::cout << "\n\033[K";
         }
 
         std::cout << "\033[u" << std::flush;
@@ -665,6 +671,7 @@ private:
     bool enabled_ = false;
     bool started_ = false;
     bool stopped_ = true;
+    bool rowsReserved_ = false;
     std::atomic<bool> running_{false};
     std::thread worker_;
     off_t offset_ = 0;
