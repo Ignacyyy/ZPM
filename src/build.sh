@@ -43,7 +43,7 @@ for file in *.cpp; do
     out="/tmp/$out_name"
     echo "Compiling $file -> $out_name"
     
-    $CXX_CMD "$file" -std=c++20 -O2 -I /opt/ZPM/src/common -o "$out"
+    $CXX_CMD "$file" -std=c++20 -O2 -I /opt/ZPM/src/common -o "$out" -pthread 
     
     mv -f "$out" /opt/ZPM/bin/
     echo "Installed $out_name"
