@@ -29,6 +29,7 @@ enum class RemoveSource {
 
 enum class RemoveStatus {
     Removed,
+    WouldRemove,
     Failed,
     Interrupted
 };
@@ -37,6 +38,7 @@ struct Options {
     bool showHelp = false;
     bool showVersion = false;
     bool purge = false;
+    bool dryRun = false;
     std::vector<std::string> packages;
 };
 
@@ -83,7 +85,9 @@ struct AppContext {
     bool hasSnap = false;
     bool nativeConsistencyChecked = false;
     UserIdentity invokingUser;
+    std::vector<std::string> installedNativePackages;
     std::vector<FlatpakPackage> installedFlatpaks;
+    std::vector<std::string> installedSnaps;
 };
 
 struct PackageResult {
@@ -97,6 +101,13 @@ struct RemoveTarget {
     RemoveSource source = RemoveSource::Native;
     bool purge = false;
     std::string flatpakFlag;
+};
+
+struct RemoveProgress {
+    float startPct = 0.0f;
+    float endPct = 100.0f;
+    int totalSteps = 1;
+    std::string label;
 };
 
 class FileDescriptor {
@@ -287,6 +298,29 @@ std::string toLower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value;
+}
+
+void printInfoHeader() {
+    std::cout << CYAN << "[ZPM-INFO]" << RESET << "\n";
+}
+
+void beginRemoveStep(float progress,
+                     const std::string& progressText,
+                     int& step,
+                     const std::string& infoText) {
+    std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+
+    if (step > 0) {
+        std::cout << "\r\033[K\033[1A\r\033[K";
+    } else {
+        std::cout << "\r\033[K";
+    }
+
+    std::cout << CYAN << "[>]" << RESET << " " << infoText << "\n\n";
+
+    ++step;
+    progressbar_update(progress, progressText);
+    std::cout << std::flush;
 }
 
 bool startsWith(const std::string& value, const std::string& prefix) {
@@ -604,6 +638,63 @@ int runLogged(const std::vector<std::string>& args,
     return runProcess(args, config).exitCode;
 }
 
+float progressBetween(float startPct, float endPct, float fraction) {
+    const float safeFraction = std::clamp(fraction, 0.0f, 1.0f);
+    return startPct + ((endPct - startPct) * safeFraction);
+}
+
+int removeStepCount(RemoveSource source) {
+    switch (source) {
+        case RemoveSource::Native:
+            return 7;
+        case RemoveSource::Flatpak:
+        case RemoveSource::Snap:
+            return 6;
+    }
+
+    return 6;
+}
+
+float stepFraction(const RemoveProgress& progress, int step) {
+    const int safeTotal = std::max(progress.totalSteps, 1);
+    const int safeStep = std::clamp(step, 0, safeTotal);
+    return static_cast<float>(safeStep) / static_cast<float>(safeTotal);
+}
+
+std::string removeStepLabel(const RemoveProgress& progress,
+                            int step,
+                            const std::string& activity) {
+    const int safeTotal = std::max(progress.totalSteps, 1);
+    const int safeStep = std::clamp(step, 0, safeTotal);
+    return std::to_string(safeStep) + "/" + std::to_string(safeTotal) +
+           " | " + progress.label + " - " + activity;
+}
+
+void showRemoveStep(const RemoveProgress& progress,
+                    int step,
+                    const std::string& activity) {
+    progressbar_update(progressBetween(progress.startPct,
+                                       progress.endPct,
+                                       stepFraction(progress, step)),
+                       removeStepLabel(progress, step, activity));
+}
+
+void finishRemoveStep(const RemoveProgress& progress, const std::string& activity) {
+    progressbar_update(progress.endPct,
+                       removeStepLabel(progress, progress.totalSteps, activity));
+}
+
+int runLoggedStep(const std::vector<std::string>& args,
+                  const std::string& header,
+                  const RemoveProgress& progress,
+                  int step,
+                  const std::string& activity,
+                  const std::vector<std::pair<std::string, std::string>>& environment = {},
+                  const UserIdentity* runAsUser = nullptr) {
+    showRemoveStep(progress, step, activity + "...");
+    return runLogged(args, header, environment, runAsUser);
+}
+
 bool executableAt(const std::string& path) {
     return access(path.c_str(), X_OK) == 0;
 }
@@ -751,6 +842,58 @@ std::vector<std::string> parseFlatpakApplications(const std::string& output) {
     return apps;
 }
 
+void addUniqueString(std::vector<std::string>& values, const std::string& value) {
+    const std::string cleaned = trim(value);
+    if (cleaned.empty()) {
+        return;
+    }
+
+    if (std::find(values.begin(), values.end(), cleaned) == values.end()) {
+        values.push_back(cleaned);
+    }
+}
+
+bool startsWithInsensitive(const std::string& value, const std::string& prefix) {
+    const std::string lowerValue = toLower(value);
+    const std::string lowerPrefix = toLower(prefix);
+    return !lowerPrefix.empty() && lowerValue.rfind(lowerPrefix, 0) == 0;
+}
+
+std::vector<std::string> prefixMatches(const std::vector<std::string>& installed,
+                                       const std::string& query,
+                                       bool exactInstalled) {
+    std::vector<std::string> matches;
+    if (exactInstalled) {
+        addUniqueString(matches, query);
+    }
+
+    for (const std::string& package : installed) {
+        if (startsWithInsensitive(package, query)) {
+            addUniqueString(matches, package);
+        }
+    }
+
+    std::vector<std::string> sorted;
+    for (const std::string& package : matches) {
+        if (toLower(package) != toLower(query)) {
+            sorted.push_back(package);
+        }
+    }
+    std::sort(sorted.begin(), sorted.end());
+
+    std::vector<std::string> ordered;
+    for (const std::string& package : matches) {
+        if (toLower(package) == toLower(query)) {
+            addUniqueString(ordered, package);
+        }
+    }
+    for (const std::string& package : sorted) {
+        addUniqueString(ordered, package);
+    }
+
+    return ordered;
+}
+
 std::vector<FlatpakPackage> listInstalledFlatpaks(const std::string& flag,
                                                   const UserIdentity* runAsUser) {
     std::vector<std::string> args = {"flatpak", "list"};
@@ -774,34 +917,33 @@ std::vector<FlatpakPackage> listInstalledFlatpaks(const std::string& flag,
 
 std::vector<FlatpakPackage> findFlatpakMatches(const AppContext& context,
                                                const std::string& package) {
-    std::vector<FlatpakPackage> exact;
+    std::vector<FlatpakPackage> matches;
     for (const FlatpakPackage& app : context.installedFlatpaks) {
-        if (app.name == package) {
-            addUniqueFlatpak(exact, app);
+        if (toLower(app.name) == toLower(package)) {
+            addUniqueFlatpak(matches, app);
         }
     }
 
-    if (!exact.empty()) {
-        return exact;
-    }
-
-    const std::string lowerPackage = toLower(package);
-    std::vector<FlatpakPackage> fuzzy;
     for (const FlatpakPackage& app : context.installedFlatpaks) {
-        if (toLower(app.name).find(lowerPackage) != std::string::npos) {
-            addUniqueFlatpak(fuzzy, app);
+        if (startsWithInsensitive(app.name, package)) {
+            addUniqueFlatpak(matches, app);
         }
     }
 
-    std::sort(fuzzy.begin(), fuzzy.end(), [](const FlatpakPackage& lhs,
-                                             const FlatpakPackage& rhs) {
+    std::stable_sort(matches.begin(), matches.end(), [&](const FlatpakPackage& lhs,
+                                                         const FlatpakPackage& rhs) {
+        const bool lhsExact = toLower(lhs.name) == toLower(package);
+        const bool rhsExact = toLower(rhs.name) == toLower(package);
+        if (lhsExact != rhsExact) {
+            return lhsExact;
+        }
         if (lhs.name != rhs.name) {
             return lhs.name < rhs.name;
         }
         return lhs.flag < rhs.flag;
     });
 
-    return fuzzy;
+    return matches;
 }
 
 bool isInstalledNative(const AppContext& context, const std::string& package) {
@@ -832,12 +974,79 @@ bool isInstalledSnap(const AppContext& context, const std::string& package) {
     return context.hasSnap && runQuiet({"snap", "list", package});
 }
 
+std::vector<std::string> listInstalledNativePackages(const AppContext& context) {
+    ProcessResult result;
+    if (context.packageManager == "apt") {
+        result = capture({"dpkg-query", "-W", "-f=${binary:Package}\\n"});
+    } else if (context.packageManager == "zypper" || context.packageManager == "dnf") {
+        result = capture({"rpm", "-qa", "--qf", "%{NAME}\\n"});
+    } else {
+        return {};
+    }
+
+    if (result.exitCode != 0) {
+        return {};
+    }
+
+    std::vector<std::string> packages;
+    for (const std::string& line : splitLines(result.output)) {
+        addUniqueString(packages, line);
+    }
+
+    std::sort(packages.begin(), packages.end());
+    return packages;
+}
+
+std::vector<std::string> listInstalledSnaps() {
+    const ProcessResult result = capture({"snap", "list"});
+    if (result.exitCode != 0) {
+        return {};
+    }
+
+    std::vector<std::string> snaps;
+    for (const std::string& rawLine : splitLines(result.output)) {
+        const std::string line = trim(rawLine);
+        const std::string lower = toLower(line);
+        if (line.empty() || startsWith(lower, "name ")) {
+            continue;
+        }
+
+        std::istringstream stream(line);
+        std::string name;
+        if (stream >> name) {
+            addUniqueString(snaps, name);
+        }
+    }
+
+    std::sort(snaps.begin(), snaps.end());
+    return snaps;
+}
+
+std::vector<std::string> findNativeMatches(const AppContext& context,
+                                           const std::string& package) {
+    return prefixMatches(context.installedNativePackages,
+                         package,
+                         isInstalledNative(context, package));
+}
+
+std::vector<std::string> findSnapMatches(const AppContext& context,
+                                         const std::string& package) {
+    if (!context.hasSnap) {
+        return {};
+    }
+
+    return prefixMatches(context.installedSnaps,
+                         package,
+                         isInstalledSnap(context, package));
+}
+
 void printHelp(const char* progName) {
     std::cout << RED << "Usage: " << RESET << progName << " [options] [packages...]"
               << " or zpm rm/remove [options] [packages...]\n"
               << RED << "Options:\n" << RESET
               << "  (auto)         Picks native PM / Flatpak / Snap per package\n"
               << "  --purge, -p    APT purge instead of remove (APT only)\n"
+              << "  --dry-run      Simulate remove flow; fake packages are allowed\n"
               << "  --version, -v  Show version information\n"
               << "  --help,    -h  Show this help message\n";
 }
@@ -861,6 +1070,8 @@ bool parseOptions(int argc, char* argv[], Options& options) {
             options.showVersion = true;
         } else if (arg == "--purge" || arg == "-p") {
             options.purge = true;
+        } else if (arg == "--dry-run") {
+            options.dryRun = true;
         } else if (startsWith(arg, "-")) {
             errors.push_back("Unknown option: " + arg);
         } else if (!isValidPackageArgument(arg)) {
@@ -871,7 +1082,7 @@ bool parseOptions(int argc, char* argv[], Options& options) {
     }
 
     if ((options.showHelp || options.showVersion) &&
-        (options.purge || !options.packages.empty())) {
+        (options.purge || options.dryRun || !options.packages.empty())) {
         errors.push_back("--help and --version can only be combined with each other.");
     }
 
@@ -892,9 +1103,9 @@ bool readChoice(std::string& input) {
 
 std::string chooseRemoveMenu(const AppContext& context,
                              const std::string& package,
-                             bool nativeInstalled,
-                             bool snapInstalled,
-                             bool flatpakInstalled) {
+                             const std::vector<std::string>& nativeMatches,
+                             const std::vector<std::string>& snapMatches,
+                             const std::vector<FlatpakPackage>& flatpakMatches) {
     struct Option {
         int number = 0;
         std::string key;
@@ -906,8 +1117,13 @@ std::string chooseRemoveMenu(const AppContext& context,
     std::cout << "\n" << BOLD << "Package: " << CYAN << package << RESET << "\n";
 
     std::cout << "  " << BOLD << index << ". " << nativeLabel(context) << RESET;
-    if (nativeInstalled) {
-        std::cout << GREEN << "installed" << RESET << "\n";
+    if (!nativeMatches.empty()) {
+        if (nativeMatches.size() == 1) {
+            std::cout << GREEN << "installed (" << nativeMatches.front() << ")" << RESET << "\n";
+        } else {
+            std::cout << GREEN << "installed (" << nativeMatches.size()
+                      << " results)" << RESET << "\n";
+        }
         options.push_back({index, "native"});
     } else {
         std::cout << RED << "none" << RESET << "\n";
@@ -916,8 +1132,13 @@ std::string chooseRemoveMenu(const AppContext& context,
 
     if (context.hasSnap) {
         std::cout << "  " << BOLD << index << ". Snap:    " << RESET;
-        if (snapInstalled) {
-            std::cout << GREEN << "installed" << RESET << "\n";
+        if (!snapMatches.empty()) {
+            if (snapMatches.size() == 1) {
+                std::cout << GREEN << "installed (" << snapMatches.front() << ")" << RESET << "\n";
+            } else {
+                std::cout << GREEN << "installed (" << snapMatches.size()
+                          << " results)" << RESET << "\n";
+            }
             options.push_back({index, "snap"});
         } else {
             std::cout << RED << "none" << RESET << "\n";
@@ -927,8 +1148,15 @@ std::string chooseRemoveMenu(const AppContext& context,
 
     if (context.hasFlatpak) {
         std::cout << "  " << BOLD << index << ". Flatpak: " << RESET;
-        if (flatpakInstalled) {
-            std::cout << GREEN << "installed" << RESET << "\n";
+        if (!flatpakMatches.empty()) {
+            if (flatpakMatches.size() == 1) {
+                std::cout << GREEN << "installed (" << flatpakMatches.front().name
+                          << " [" << flatpakScopeName(flatpakMatches.front().flag)
+                          << "])" << RESET << "\n";
+            } else {
+                std::cout << GREEN << "installed (" << flatpakMatches.size()
+                          << " results)" << RESET << "\n";
+            }
             options.push_back({index, "flatpak"});
         } else {
             std::cout << RED << "none" << RESET << "\n";
@@ -971,12 +1199,76 @@ std::string chooseRemoveMenu(const AppContext& context,
     }
 }
 
+std::vector<std::string> choosePackagesToRemove(const std::vector<std::string>& installed,
+                                                const std::string& query,
+                                                const std::string& sourceName) {
+    if (installed.empty()) {
+        std::cout << YELLOW << "No installed " << sourceName << " packages";
+        if (!query.empty()) {
+            std::cout << " starting with '" << query << "'";
+        }
+        std::cout << ".\n" << RESET;
+        return {};
+    }
+
+    std::cout << GREEN << "\nInstalled " << sourceName << " packages";
+    if (!query.empty()) {
+        std::cout << " starting with '" << query << "'";
+    }
+    std::cout << ":\n" << RESET;
+
+    for (size_t i = 0; i < installed.size(); ++i) {
+        std::cout << "  " << (i + 1) << ". " << installed[i] << "\n";
+    }
+    std::cout << "  0. Cancel\n";
+
+    for (;;) {
+        std::cout << BOLD << "Enter number(s) to remove (e.g. 1 3): " << RESET;
+
+        std::string input;
+        if (!readChoice(input)) {
+            return {};
+        }
+
+        std::replace(input.begin(), input.end(), ',', ' ');
+        std::stringstream ss(input);
+        std::string token;
+        std::vector<std::string> selected;
+        bool invalid = false;
+
+        while (ss >> token) {
+            int choice = -1;
+            if (!parseInteger(token, choice)) {
+                invalid = true;
+                break;
+            }
+
+            if (choice == 0) {
+                return {};
+            }
+
+            if (choice < 1 || choice > static_cast<int>(installed.size())) {
+                invalid = true;
+                break;
+            }
+
+            addUniqueString(selected, installed[static_cast<size_t>(choice - 1)]);
+        }
+
+        if (!invalid && !selected.empty()) {
+            return selected;
+        }
+
+        std::cout << RED << "Invalid choice, try again.\n" << RESET;
+    }
+}
+
 std::vector<FlatpakPackage> chooseFlatpakToRemove(const std::vector<FlatpakPackage>& installed,
                                                   const std::string& query) {
     if (installed.empty()) {
         std::cout << YELLOW << "No installed Flatpak packages";
         if (!query.empty()) {
-            std::cout << " matching '" << query << "'";
+            std::cout << " starting with '" << query << "'";
         }
         std::cout << ".\n" << RESET;
         return {};
@@ -984,7 +1276,7 @@ std::vector<FlatpakPackage> chooseFlatpakToRemove(const std::vector<FlatpakPacka
 
     std::cout << GREEN << "\nInstalled Flatpak packages";
     if (!query.empty()) {
-        std::cout << " matching '" << query << "'";
+        std::cout << " starting with '" << query << "'";
     }
     std::cout << ":\n" << RESET;
 
@@ -1045,23 +1337,34 @@ std::vector<RemoveTarget> resolveRemoveTargets(const AppContext& context,
             break;
         }
 
-        const bool nativeInstalled = isInstalledNative(context, package);
-        const bool snapInstalled = isInstalledSnap(context, package);
+        const std::vector<std::string> nativeMatches = findNativeMatches(context, package);
+        const std::vector<std::string> snapMatches = findSnapMatches(context, package);
         const std::vector<FlatpakPackage> flatpakMatches =
             context.hasFlatpak ? findFlatpakMatches(context, package)
                                : std::vector<FlatpakPackage>{};
-        const bool flatpakInstalled = !flatpakMatches.empty();
 
         const std::string source = chooseRemoveMenu(context,
                                                     package,
-                                                    nativeInstalled,
-                                                    snapInstalled,
-                                                    flatpakInstalled);
+                                                    nativeMatches,
+                                                    snapMatches,
+                                                    flatpakMatches);
 
         if (source == "native") {
-            targets.push_back({package, RemoveSource::Native, purge, {}});
+            const std::vector<std::string> selected = nativeMatches.size() == 1
+                ? nativeMatches
+                : choosePackagesToRemove(nativeMatches, package, nativeShortLabel(context));
+
+            for (const std::string& name : selected) {
+                targets.push_back({name, RemoveSource::Native, purge, {}});
+            }
         } else if (source == "snap") {
-            targets.push_back({package, RemoveSource::Snap, false, {}});
+            const std::vector<std::string> selected = snapMatches.size() == 1
+                ? snapMatches
+                : choosePackagesToRemove(snapMatches, package, "Snap");
+
+            for (const std::string& name : selected) {
+                targets.push_back({name, RemoveSource::Snap, false, {}});
+            }
         } else if (source == "flatpak") {
             const std::vector<FlatpakPackage> selected = flatpakMatches.size() == 1
                 ? flatpakMatches
@@ -1076,20 +1379,26 @@ std::vector<RemoveTarget> resolveRemoveTargets(const AppContext& context,
     return targets;
 }
 
-bool ensureNativeConsistency(AppContext& context, float startPct, const std::string& label) {
+bool ensureNativeConsistency(AppContext& context, const RemoveProgress& progress) {
     if (context.nativeConsistencyChecked) {
+        showRemoveStep(progress, 3, "system already checked");
         return true;
     }
 
-    progressbar_start(startPct, label + " - checking system...");
-
     int exitCode = 0;
     if (context.packageManager == "apt") {
-        exitCode = runLogged({"dpkg", "--configure", "-a"},
-                             "-----checking_system_consistency-----",
-                             {{"DEBIAN_FRONTEND", "noninteractive"}});
+        exitCode = runLoggedStep({"dpkg", "--configure", "-a"},
+                                 "-----checking_system_consistency-----",
+                                 progress,
+                                 3,
+                                 "checking system consistency",
+                                 {{"DEBIAN_FRONTEND", "noninteractive"}});
     } else if (context.packageManager == "zypper" || context.packageManager == "dnf") {
-        exitCode = runLogged({"rpm", "--rebuilddb"}, "-----checking_system_consistency-----");
+        exitCode = runLoggedStep({"rpm", "--rebuilddb"},
+                                 "-----checking_system_consistency-----",
+                                 progress,
+                                 3,
+                                 "checking system consistency");
     }
 
     if (g_interrupted) {
@@ -1101,63 +1410,73 @@ bool ensureNativeConsistency(AppContext& context, float startPct, const std::str
     }
 
     context.nativeConsistencyChecked = true;
+    showRemoveStep(progress, 3, "system ready");
     return true;
 }
 
 RemoveStatus removeNative(AppContext& context,
                           const std::string& package,
                           bool purge,
-                          float startPct,
-                          float endPct,
-                          int index,
-                          int total) {
+                          const RemoveProgress& progress) {
     const std::string operation = (context.packageManager == "apt" && purge) ? "purge" : "remove";
-    const std::string label = std::to_string(index) + "/" + std::to_string(total) +
-                              " | " + nativeShortLabel(context) + " " + operation +
-                              ": " + package;
 
-    if (!ensureNativeConsistency(context, startPct, label)) {
+    if (!ensureNativeConsistency(context, progress)) {
         if (g_interrupted) {
             return RemoveStatus::Interrupted;
         }
-        progressbar_update(endPct, label + " - failed");
+        finishRemoveStep(progress, "failed");
         return RemoveStatus::Failed;
     }
 
-    progressbar_start(startPct, label + " - removing...");
+    showRemoveStep(progress, 4, "preparing " + operation + " transaction");
 
     int exitCode = 1;
     if (context.packageManager == "apt") {
-        exitCode = runLogged({"apt-get", "-y", operation, package},
-                             "-----apt_" + operation + "_" + package + "-----",
-                             {{"DEBIAN_FRONTEND", "noninteractive"}});
+        exitCode = runLoggedStep({"apt-get", "-y", operation, package},
+                                 "-----apt_" + operation + "_" + package + "-----",
+                                 progress,
+                                 5,
+                                 operation + " package",
+                                 {{"DEBIAN_FRONTEND", "noninteractive"}});
     } else if (context.packageManager == "zypper") {
-        exitCode = runLogged({"zypper", "--non-interactive", "remove", "-y", package},
-                             "-----zypper_remove_" + package + "-----");
+        exitCode = runLoggedStep({"zypper", "--non-interactive", "remove", "-y", package},
+                                 "-----zypper_remove_" + package + "-----",
+                                 progress,
+                                 5,
+                                 "removing package");
     } else if (context.packageManager == "dnf") {
-        exitCode = runLogged({context.dnfCommand, "remove", "-y", package},
-                             "-----" + context.dnfCommand + "_remove_" + package + "-----");
+        exitCode = runLoggedStep({context.dnfCommand, "remove", "-y", package},
+                                 "-----" + context.dnfCommand + "_remove_" + package + "-----",
+                                 progress,
+                                 5,
+                                 "removing package");
     }
 
     if (g_interrupted) {
         return RemoveStatus::Interrupted;
     }
 
-    progressbar_update(endPct, label + (exitCode == 0 ? " - done" : " - failed"));
-    return exitCode == 0 ? RemoveStatus::Removed : RemoveStatus::Failed;
+    if (exitCode != 0) {
+        finishRemoveStep(progress, "failed");
+        return RemoveStatus::Failed;
+    }
+
+    showRemoveStep(progress, 6, "verifying removal");
+    if (isInstalledNative(context, package)) {
+        finishRemoveStep(progress, "verification failed");
+        return RemoveStatus::Failed;
+    }
+
+    showRemoveStep(progress, 7, "finalizing");
+    finishRemoveStep(progress, "done");
+    return RemoveStatus::Removed;
 }
 
 RemoveStatus removeFlatpak(const AppContext& context,
                            const RemoveTarget& target,
-                           float startPct,
-                           float endPct,
-                           int index,
-                           int total) {
-    const std::string label = std::to_string(index) + "/" + std::to_string(total) +
-                              " | Flatpak: " + target.name +
-                              " [" + flatpakScopeName(target.flatpakFlag) + "]";
-
-    progressbar_start(startPct, label + " - removing...");
+                           const RemoveProgress& progress) {
+    showRemoveStep(progress, 3, "checking flatpak scope");
+    showRemoveStep(progress, 4, "preparing removal transaction");
 
     std::vector<std::string> args = {"flatpak", "uninstall"};
     if (!target.flatpakFlag.empty()) {
@@ -1167,57 +1486,163 @@ RemoveStatus removeFlatpak(const AppContext& context,
     args.push_back("--delete-data");
     args.push_back(target.name);
 
-    runLogged(args,
-              "-----flatpak_remove_" + target.name + "-----",
-              {},
-              userForFlatpakFlag(context, target.flatpakFlag));
+    const int exitCode = runLoggedStep(args,
+                                       "-----flatpak_remove_" + target.name + "-----",
+                                       progress,
+                                       5,
+                                       "removing package",
+                                       {},
+                                       userForFlatpakFlag(context, target.flatpakFlag));
     if (g_interrupted) {
         return RemoveStatus::Interrupted;
     }
+    if (exitCode != 0) {
+        finishRemoveStep(progress, "failed");
+        return RemoveStatus::Failed;
+    }
 
+    showRemoveStep(progress, 6, "verifying removal");
     const bool stillInstalled = isInstalledFlatpak(context, {target.name, target.flatpakFlag});
     const bool removed = !stillInstalled;
-    progressbar_update(endPct, label + (removed ? " - done" : " - failed"));
 
     if (removed) {
+        finishRemoveStep(progress, "done");
         return RemoveStatus::Removed;
     }
+    finishRemoveStep(progress, "verification failed");
     return RemoveStatus::Failed;
 }
 
-RemoveStatus removeSnap(const std::string& package,
-                        float startPct,
-                        float endPct,
-                        int index,
-                        int total) {
-    const std::string label = std::to_string(index) + "/" + std::to_string(total) +
-                              " | Snap: " + package;
+RemoveStatus removeSnap(const AppContext& context,
+                        const std::string& package,
+                        const RemoveProgress& progress) {
+    showRemoveStep(progress, 3, "checking snap state");
+    showRemoveStep(progress, 4, "preparing removal transaction");
 
-    progressbar_start(startPct, label + " - removing...");
-
-    const int exitCode = runLogged({"snap", "remove", package},
-                                   "-----snap_remove_" + package + "-----");
+    const int exitCode = runLoggedStep({"snap", "remove", package},
+                                       "-----snap_remove_" + package + "-----",
+                                       progress,
+                                       5,
+                                       "removing package");
     if (g_interrupted) {
         return RemoveStatus::Interrupted;
     }
 
-    progressbar_update(endPct, label + (exitCode == 0 ? " - done" : " - failed"));
-    return exitCode == 0 ? RemoveStatus::Removed : RemoveStatus::Failed;
+    if (exitCode != 0) {
+        finishRemoveStep(progress, "failed");
+        return RemoveStatus::Failed;
+    }
+
+    showRemoveStep(progress, 6, "verifying removal");
+    if (isInstalledSnap(context, package)) {
+        finishRemoveStep(progress, "verification failed");
+        return RemoveStatus::Failed;
+    }
+
+    finishRemoveStep(progress, "done");
+    return RemoveStatus::Removed;
+}
+
+std::string removeTargetDisplay(const AppContext& context, const RemoveTarget& target) {
+    switch (target.source) {
+        case RemoveSource::Native: {
+            const std::string operation = (context.packageManager == "apt" && target.purge)
+                ? "purge"
+                : "remove";
+            return nativeShortLabel(context) + " " + operation + ": " + target.name;
+        }
+        case RemoveSource::Flatpak:
+            return "Flatpak: " + target.name +
+                   " [" + flatpakScopeName(target.flatpakFlag) + "]";
+        case RemoveSource::Snap:
+            return "Snap: " + target.name;
+    }
+
+    return target.name;
+}
+
+std::string removeTargetLabel(const AppContext& context,
+                              const RemoveTarget& target,
+                              int index,
+                              int total) {
+    return std::to_string(index) + "/" + std::to_string(total) +
+           " | " + removeTargetDisplay(context, target);
+}
+
+std::string removeSourceDescription(const AppContext& context, const RemoveTarget& target) {
+    switch (target.source) {
+        case RemoveSource::Native:
+            return nativeShortLabel(context);
+        case RemoveSource::Flatpak:
+            return "Flatpak [" + flatpakScopeName(target.flatpakFlag) + "]";
+        case RemoveSource::Snap:
+            return "Snap";
+    }
+
+    return "selected source";
+}
+
+bool targetStillInstalled(const AppContext& context, const RemoveTarget& target) {
+    switch (target.source) {
+        case RemoveSource::Native:
+            return isInstalledNative(context, target.name);
+        case RemoveSource::Flatpak:
+            return isInstalledFlatpak(context, {target.name, target.flatpakFlag});
+        case RemoveSource::Snap:
+            return isInstalledSnap(context, target.name);
+    }
+
+    return false;
 }
 
 RemoveStatus removeTarget(AppContext& context,
                           const RemoveTarget& target,
+                          bool dryRun,
                           float startPct,
                           float endPct,
                           int index,
                           int total) {
+    const RemoveProgress progress {
+        startPct,
+        endPct,
+        removeStepCount(target.source),
+        removeTargetLabel(context, target, index, total)
+    };
+
+    progressbar_start(startPct, removeStepLabel(progress, 0, "preparing"));
+    showRemoveStep(progress, 1, "checking selected source");
+
+    if (dryRun) {
+        showRemoveStep(progress, 2, "would check installed state");
+        if (target.source == RemoveSource::Native) {
+            showRemoveStep(progress, 3, "would check system consistency");
+            showRemoveStep(progress, 4, "would prepare removal transaction");
+            showRemoveStep(progress, 5, "would remove package");
+            showRemoveStep(progress, 6, "would verify removal");
+        } else {
+            showRemoveStep(progress, 3, target.source == RemoveSource::Flatpak
+                                       ? "would check flatpak scope"
+                                       : "would check snap state");
+            showRemoveStep(progress, 4, "would prepare removal transaction");
+            showRemoveStep(progress, 5, "would remove package");
+        }
+        finishRemoveStep(progress, "would remove");
+        return RemoveStatus::WouldRemove;
+    }
+
+    showRemoveStep(progress, 2, "checking installed state");
+    if (!targetStillInstalled(context, target)) {
+        finishRemoveStep(progress, "already removed");
+        return RemoveStatus::Removed;
+    }
+
     switch (target.source) {
         case RemoveSource::Native:
-            return removeNative(context, target.name, target.purge, startPct, endPct, index, total);
+            return removeNative(context, target.name, target.purge, progress);
         case RemoveSource::Flatpak:
-            return removeFlatpak(context, target, startPct, endPct, index, total);
+            return removeFlatpak(context, target, progress);
         case RemoveSource::Snap:
-            return removeSnap(target.name, startPct, endPct, index, total);
+            return removeSnap(context, target.name, progress);
     }
 
     return RemoveStatus::Failed;
@@ -1234,14 +1659,30 @@ std::string successMessage(const AppContext& context, const RemoveTarget& target
     return "Package " + target.name + " removed successfully.";
 }
 
-int runRemoveLoop(AppContext& context, const std::vector<RemoveTarget>& targets) {
+std::string removeInfoText(const AppContext& context,
+                           const RemoveTarget& target,
+                           bool dryRun) {
+    return std::string(dryRun ? "simulating removal of " : "removing ") +
+           removeTargetDisplay(context, target);
+}
+
+int runRemoveLoop(AppContext& context,
+                  const std::vector<RemoveTarget>& targets,
+                  bool dryRun) {
     std::vector<PackageResult> results;
     results.reserve(targets.size());
 
     bool anyFailed = false;
     const int total = static_cast<int>(targets.size());
 
-    writeLogLine("-----zrm_start-----", LogMode::Truncate);
+    if (!dryRun) {
+        writeLogLine("-----zrm_start-----", LogMode::Truncate);
+    }
+
+    int infoStep = 0;
+    printInfoHeader();
+    progressbar_start(0.0f, "0/" + std::to_string(total) +
+                             (dryRun ? " | starting dry run..." : " | starting..."));
 
     for (int i = 0; i < total; ++i) {
         if (g_interrupted) {
@@ -1253,12 +1694,22 @@ int runRemoveLoop(AppContext& context, const std::vector<RemoveTarget>& targets)
         const RemoveTarget& target = targets[static_cast<size_t>(i)];
         const float startPct = (100.0f * static_cast<float>(i)) / static_cast<float>(total);
         const float endPct = (100.0f * static_cast<float>(i + 1)) / static_cast<float>(total);
+        const std::string progressText = "0/" +
+                                         std::to_string(removeStepCount(target.source)) +
+                                         " | " +
+                                         removeTargetLabel(context, target, i + 1, total);
 
         PackageResult result;
         result.name = target.name;
 
+        beginRemoveStep(startPct,
+                        progressText,
+                        infoStep,
+                        removeInfoText(context, target, dryRun));
+
         const RemoveStatus status = removeTarget(context,
                                                  target,
+                                                 dryRun,
                                                  startPct,
                                                  endPct,
                                                  i + 1,
@@ -1272,6 +1723,10 @@ int runRemoveLoop(AppContext& context, const std::vector<RemoveTarget>& targets)
 
         if (status == RemoveStatus::Removed) {
             result.message = successMessage(context, target);
+            result.success = true;
+        } else if (status == RemoveStatus::WouldRemove) {
+            result.message = "Package " + target.name + " would be removed from " +
+                             removeSourceDescription(context, target) + ".";
             result.success = true;
         } else {
             result.message = RED + "Package " + target.name + " removal failed." + RESET;
@@ -1292,13 +1747,15 @@ int runRemoveLoop(AppContext& context, const std::vector<RemoveTarget>& targets)
         return 1;
     }
 
-    progressbar_finish("Done!");
+    progressbar_finish(dryRun ? "Dry run done!" : "Done!");
     std::cout << "\n";
     for (const PackageResult& result : results) {
         std::cout << result.message << "\n";
     }
-    std::cout << GREEN << "Removal complete!\n" << RESET;
-    std::cout << YELLOW << "[RAPORT] " << RESET << kLogPath << "\n";
+    std::cout << GREEN << (dryRun ? "Dry run complete!\n" : "Removal complete!\n") << RESET;
+    if (!dryRun) {
+        std::cout << YELLOW << "[RAPORT] " << RESET << kLogPath << "\n";
+    }
 
     return 0;
 }
@@ -1310,6 +1767,7 @@ AppContext buildContext() {
     context.hasFlatpak = commandExists("flatpak");
     context.hasSnap = commandExists("snap");
     context.invokingUser = getInvokingUser();
+    context.installedNativePackages = listInstalledNativePackages(context);
 
     if (context.hasFlatpak) {
         for (const char* flag : {"--system", "--user"}) {
@@ -1320,7 +1778,67 @@ AppContext buildContext() {
         }
     }
 
+    if (context.hasSnap) {
+        context.installedSnaps = listInstalledSnaps();
+    }
+
     return context;
+}
+
+AppContext buildDryRunContext() {
+    AppContext context;
+    context.packageManager = get_package_manager();
+    if (context.packageManager == "unknown") {
+        context.packageManager = "apt";
+    }
+    context.dnfCommand = commandExists("dnf5") ? "dnf5" : "dnf";
+    context.hasFlatpak = commandExists("flatpak");
+    context.hasSnap = commandExists("snap");
+    return context;
+}
+
+std::vector<std::string> dryRunPackages(const std::vector<std::string>& packages) {
+    if (!packages.empty()) {
+        return packages;
+    }
+
+    return {
+        "fake-editor",
+        "fake-browser",
+        "fake-toolkit"
+    };
+}
+
+std::vector<RemoveTarget> buildDryRunTargets(const AppContext& context,
+                                             const std::vector<std::string>& packages,
+                                             bool purge) {
+    std::vector<RemoveSource> sources = {RemoveSource::Native};
+    if (context.hasFlatpak) {
+        sources.push_back(RemoveSource::Flatpak);
+    }
+    if (context.hasSnap) {
+        sources.push_back(RemoveSource::Snap);
+    }
+
+    std::vector<RemoveTarget> targets;
+    const std::vector<std::string> names = dryRunPackages(packages);
+    targets.reserve(names.size());
+
+    for (size_t i = 0; i < names.size(); ++i) {
+        const RemoveSource source = sources[i % sources.size()];
+        RemoveTarget target;
+        target.name = names[i];
+        target.source = source;
+        target.purge = source == RemoveSource::Native &&
+                       context.packageManager == "apt" &&
+                       purge;
+        if (source == RemoveSource::Flatpak) {
+            target.flatpakFlag = "--system";
+        }
+        targets.push_back(target);
+    }
+
+    return targets;
 }
 
 } // namespace
@@ -1352,9 +1870,21 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (options.packages.empty()) {
+    if (options.packages.empty() && !options.dryRun) {
         std::cout << YELLOW << "No package specified!\n" << RESET;
         return 1;
+    }
+
+    SigintGuard sigintGuard;
+
+    if (options.dryRun) {
+        AppContext context = buildDryRunContext();
+        std::vector<RemoveTarget> targets =
+            buildDryRunTargets(context, options.packages, options.purge);
+
+        std::cout << "\n" << RED << "Dry run demo: " << RESET
+                  << "no packages will be removed or checked.\n\n";
+        return runRemoveLoop(context, targets, true);
     }
 
     if (geteuid() != 0) {
@@ -1364,7 +1894,6 @@ int main(int argc, char* argv[]) {
 
     zpm_update::checkForUpdates();
 
-    SigintGuard sigintGuard;
     AppContext context = buildContext();
 
     if (context.packageManager == "unknown") {
@@ -1400,5 +1929,5 @@ int main(int argc, char* argv[]) {
               << " / Flatpak / Snap per package\n" << RESET;
     std::cout << "Removing packages...\n\n";
 
-    return runRemoveLoop(context, targets);
+    return runRemoveLoop(context, targets, false);
 }
