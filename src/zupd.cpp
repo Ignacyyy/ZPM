@@ -14,6 +14,14 @@ namespace {
 constexpr const char* kLogFile = "/tmp/zupd.log";
 constexpr const char* kPatchLogFile = "/tmp/zupd_patchcheck.log";
 constexpr std::chrono::milliseconds kDryRunStepDelay{160};
+constexpr std::chrono::milliseconds kLiveLogRefreshInterval{140};
+constexpr int kLiveLogLines = 3;
+constexpr int kLiveLogTopPaddingLines = 1;
+constexpr int kLiveLogBottomPaddingLines = 1;
+constexpr int kLiveLogRowsBelowBar =
+    kLiveLogTopPaddingLines + kLiveLogLines + kLiveLogBottomPaddingLines;
+constexpr int kLiveLogPrefixColumns = 7;
+constexpr std::size_t kMaxPendingLogLine = 4096;
 
 volatile std::sig_atomic_t g_interrupted = 0;
 
@@ -375,6 +383,212 @@ void writeLogLine(const char* path, const std::string& line, LogMode mode = LogM
 void writeLogHeader(const std::string& header, LogMode mode = LogMode::Append) {
     writeLogLine(kLogFile, header, mode);
 }
+
+class LiveLogView {
+public:
+    explicit LiveLogView(const char* path, bool enabled)
+        : path_(path), enabled_(enabled) {}
+
+    LiveLogView(const LiveLogView&) = delete;
+    LiveLogView& operator=(const LiveLogView&) = delete;
+
+    ~LiveLogView() {
+        stop();
+    }
+
+    void start() {
+        if (!enabled_ || started_) {
+            return;
+        }
+
+        offset_ = currentFileSize();
+        running_ = true;
+        started_ = true;
+        stopped_ = false;
+
+        try {
+            worker_ = std::thread(&LiveLogView::run, this);
+        } catch (...) {
+            running_ = false;
+            started_ = false;
+            stopped_ = true;
+        }
+    }
+
+    void stop() {
+        if (!started_ || stopped_) {
+            return;
+        }
+
+        stopped_ = true;
+        running_ = false;
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+
+        readNewLogData();
+        draw();
+    }
+
+    void moveCursorBelow() const {
+        if (!started_) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+        std::cout << "\033[" << kLiveLogRowsBelowBar << "B\r" << std::flush;
+    }
+
+private:
+    off_t currentFileSize() const {
+        FileDescriptor fd(open(path_, O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+        if (!fd.valid() || !isSafeOwnedRegularFile(fd.get())) {
+            return 0;
+        }
+
+        struct stat st {};
+        if (fstat(fd.get(), &st) != 0) {
+            return 0;
+        }
+
+        return st.st_size;
+    }
+
+    void addLine(const std::string& rawLine) {
+        std::string line = trim(rawLine);
+        if (line.empty()) {
+            return;
+        }
+
+        recentLines_.push_back(std::move(line));
+        if (recentLines_.size() > static_cast<std::size_t>(kLiveLogLines)) {
+            recentLines_.erase(recentLines_.begin());
+        }
+    }
+
+    void flushPendingLine() {
+        addLine(pendingLine_);
+        pendingLine_.clear();
+    }
+
+    bool readNewLogData() {
+        FileDescriptor fd(open(path_, O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+        if (!fd.valid() || !isSafeOwnedRegularFile(fd.get())) {
+            return false;
+        }
+
+        struct stat st {};
+        if (fstat(fd.get(), &st) != 0) {
+            return false;
+        }
+
+        if (st.st_size < offset_) {
+            offset_ = 0;
+            pendingLine_.clear();
+            recentLines_.clear();
+        }
+
+        if (lseek(fd.get(), offset_, SEEK_SET) < 0) {
+            return false;
+        }
+
+        bool changed = false;
+        std::array<char, 4096> buffer {};
+
+        for (;;) {
+            const ssize_t count = read(fd.get(), buffer.data(), buffer.size());
+            if (count > 0) {
+                offset_ += count;
+                changed = true;
+
+                for (ssize_t i = 0; i < count; ++i) {
+                    const unsigned char ch = static_cast<unsigned char>(buffer[static_cast<std::size_t>(i)]);
+                    if (ch == '\n' || ch == '\r') {
+                        flushPendingLine();
+                    } else if (ch == '\t') {
+                        pendingLine_ += ' ';
+                    } else if (ch >= 32 && ch != 127 && pendingLine_.size() < kMaxPendingLogLine) {
+                        pendingLine_ += static_cast<char>(ch);
+                    }
+                }
+                continue;
+            }
+
+            if (count == 0) {
+                break;
+            }
+
+            if (errno == EINTR) {
+                continue;
+            }
+
+            break;
+        }
+
+        return changed;
+    }
+
+    std::vector<std::string> displayLines() const {
+        std::vector<std::string> lines = recentLines_;
+        const std::string partial = trim(pendingLine_);
+        if (!partial.empty()) {
+            if (lines.size() == static_cast<std::size_t>(kLiveLogLines)) {
+                lines.erase(lines.begin());
+            }
+            lines.push_back(partial);
+        }
+        return lines;
+    }
+
+    void draw() const {
+        const std::vector<std::string> lines = displayLines();
+        const int textColumns = std::max(0,
+                                         zpm::progressbar_detail::terminalWidth() -
+                                             kLiveLogPrefixColumns);
+
+        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+        std::cout << "\033[s";
+
+        for (int i = 0; i < kLiveLogTopPaddingLines; ++i) {
+            std::cout << "\n\033[K";
+        }
+
+        for (int i = 0; i < kLiveLogLines; ++i) {
+            std::cout << "\n\033[K";
+            if (i < static_cast<int>(lines.size())) {
+                std::cout << CYAN << "  log> " << RESET
+                          << zpm::progressbar_detail::sanitizeTask(lines[static_cast<std::size_t>(i)],
+                                                                   textColumns);
+            }
+        }
+
+        for (int i = 0; i < kLiveLogBottomPaddingLines; ++i) {
+            std::cout << "\n\033[K";
+        }
+
+        std::cout << "\033[u" << std::flush;
+    }
+
+    void run() {
+        while (running_) {
+            if (readNewLogData() || !pendingLine_.empty()) {
+                draw();
+            }
+
+            std::this_thread::sleep_for(kLiveLogRefreshInterval);
+        }
+    }
+
+    const char* path_;
+    bool enabled_ = false;
+    bool started_ = false;
+    bool stopped_ = true;
+    std::atomic<bool> running_{false};
+    std::thread worker_;
+    off_t offset_ = 0;
+    std::string pendingLine_;
+    std::vector<std::string> recentLines_;
+};
 
 int decodeExitStatus(int status) {
     if (status == -1) {
@@ -1203,7 +1417,6 @@ bool checkInterrupted(bool& ok) {
         return false;
     }
 
-    std::cout << "\n" << YELLOW << "Cancelled by user (Ctrl+C).\n" << RESET;
     ok = false;
     return true;
 }
@@ -1319,9 +1532,18 @@ bool cleanupUniversal(const UpdateStatus& status) {
     return !g_interrupted;
 }
 
-bool finishAndReport(const Options& options, bool ok, int total, int step) {
+bool finishAndReport(const Options& options,
+                     bool ok,
+                     int total,
+                     int step,
+                     LiveLogView* liveLog = nullptr) {
+    const bool interrupted = g_interrupted;
     if (g_interrupted) {
         ok = false;
+    }
+
+    if (liveLog != nullptr) {
+        liveLog->stop();
     }
 
     if (ok) {
@@ -1330,7 +1552,17 @@ bool finishAndReport(const Options& options, bool ok, int total, int step) {
     } else {
         progressbar_set_state(UiState::ERROR, step);
         progressbar_finish("ERROR!");
+    }
 
+    if (liveLog != nullptr) {
+        liveLog->moveCursorBelow();
+    }
+
+    if (interrupted) {
+        std::cout << YELLOW << "Cancelled by user (Ctrl+C).\n" << RESET;
+    }
+
+    if (!ok) {
         if (options.dryRun) {
             std::cout << RED << "Dry run failed or was interrupted.\n" << RESET;
         } else {
@@ -1341,7 +1573,6 @@ bool finishAndReport(const Options& options, bool ok, int total, int step) {
     }
 
     if (options.dryRun) {
-        std::cout << GREEN << "Dry run complete! No packages were changed.\n" << RESET;
         return true;
     }
 
@@ -1633,6 +1864,8 @@ bool runUpdateFlow(const Options& options,
 
     printInfoHeader();
     progressbar_start(total);
+    LiveLogView liveLog(kLogFile, !options.dryRun);
+    liveLog.start();
 
     if (status.native) {
         beginProgressStep(UiState::CHECKING, step, "checking system consistency");
@@ -1640,7 +1873,7 @@ bool runUpdateFlow(const Options& options,
             ok = false;
         }
         if (checkInterrupted(ok)) {
-            return finishAndReport(options, ok, total, step);
+            return finishAndReport(options, ok, total, step, &liveLog);
         }
     }
 
@@ -1649,7 +1882,9 @@ bool runUpdateFlow(const Options& options,
         const NativeUpdateResult result = updateNative();
 
         if (result == NativeUpdateResult::RestartRequired) {
+            liveLog.stop();
             progressbar_finish("RESTART NEEDED");
+            liveLog.moveCursorBelow();
 
             std::cout << "\n" << YELLOW
                       << "[*] Zypper is adjusting its stack manager and has aborted the download.\n"
@@ -1667,7 +1902,7 @@ bool runUpdateFlow(const Options& options,
         }
     }
     if (checkInterrupted(ok)) {
-        return finishAndReport(options, ok, total, step);
+        return finishAndReport(options, ok, total, step, &liveLog);
     }
 
     if (status.hasFlatpakUpdates() && ok) {
@@ -1679,7 +1914,7 @@ bool runUpdateFlow(const Options& options,
         }
     }
     if (checkInterrupted(ok)) {
-        return finishAndReport(options, ok, total, step);
+        return finishAndReport(options, ok, total, step, &liveLog);
     }
 
     if (status.hasSnapUpdates() && ok) {
@@ -1691,7 +1926,7 @@ bool runUpdateFlow(const Options& options,
         }
     }
     if (checkInterrupted(ok)) {
-        return finishAndReport(options, ok, total, step);
+        return finishAndReport(options, ok, total, step, &liveLog);
     }
 
     beginProgressStep(UiState::CLEANUP, step, "cleaning");
@@ -1703,7 +1938,7 @@ bool runUpdateFlow(const Options& options,
     }
 
     checkInterrupted(ok);
-    return finishAndReport(options, ok, total, step);
+    return finishAndReport(options, ok, total, step, &liveLog);
 }
 
 bool aptUpdate(const Options& options, const UpdateStatus& status) {
@@ -1849,8 +2084,6 @@ int handleDryRun(const Options& options) {
     const UiState nativeState = nativeStateForPackageManager(packageManager);
     const UpdateStatus status = buildDryRunStatus(packageManager, options);
 
-    std::cout << "\n" << RED << "Dry run demo: " << RESET
-              << "no packages will be changed.\n";
     std::cout << YELLOW << "[SYS] " << RESET
               << "Simulating " << nativeTitleForPackageManager(packageManager, status.dnf5)
               << " update flow\n";
