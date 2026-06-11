@@ -793,4 +793,5 @@ std::vector<std::string> searchFlatpak(const AppContext& context, const std::str
     args.push_back(query);
 
     std::vector<std::string> results = parseFlatpakApplications(capture(args).output);
-    const std::string lowerQuery = toLower(query)
+    const std::string lowerQuery = toLower(query);
+}
