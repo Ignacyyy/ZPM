@@ -6,9 +6,9 @@ readonly LOG="/tmp/ZPM_INETINSTALL.log"
 readonly TMP="/tmp/ZPM_INETINSTALL_$$"
 readonly TARGET="/opt/ZPM"
 readonly GITHUB_REPO="Zielina-Konrad-productions/ZPM"
-readonly REQUIRED_DEPS_APT=(curl git wget python3 g++ sudo zip sed gawk coreutils nano)
-readonly REQUIRED_DEPS_ZYPPER=(curl git wget python3 gcc-c++ sudo zip sed gawk coreutils nano)
-readonly REQUIRED_DEPS_DNF=(curl git wget python3 gcc-c++ sudo zip sed gawk coreutils nano)
+readonly REQUIRED_DEPS_APT=(curl git wget python3 g++ sudo zip sed gawk coreutils nano unzip)
+readonly REQUIRED_DEPS_ZYPPER=(curl git wget python3 gcc-c++ sudo zip sed gawk coreutils nano unzip)
+readonly REQUIRED_DEPS_DNF=(curl git wget python3 gcc-c++ sudo zip sed gawk coreutils nano unzip)
 
 # ── LOGGING ───────────────────────────────────────────────────────────────────
 exec > >(tee -a "$LOG") 2>&1
