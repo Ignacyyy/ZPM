@@ -794,4 +794,842 @@ std::vector<std::string> searchFlatpak(const AppContext& context, const std::str
 
     std::vector<std::string> results = parseFlatpakApplications(capture(args).output);
     const std::string lowerQuery = toLower(query);
+
+    std::vector<std::string> filtered;
+    for (const std::string& app : results) {
+        if (toLower(app).find(lowerQuery) != std::string::npos) {
+            addUnique(filtered, app);
+        }
+    }
+
+    std::sort(filtered.begin(), filtered.end());
+    return filtered;
+}
+
+bool isInstalledNative(const AppContext& context, const std::string& package) {
+    if (context.packageManager == "apt") {
+        const ProcessResult result = capture({"dpkg-query", "-W", "-f=${Status}", package});
+        return result.exitCode == 0 &&
+               result.output.find("install ok installed") != std::string::npos;
+    }
+
+    return runQuiet({"rpm", "-q", package});
+}
+
+bool isInstalledFlatpak(const AppContext& context, const std::string& package) {
+    if (!context.hasFlatpak) {
+        return false;
+    }
+
+    std::vector<std::string> args = {"flatpak", "info"};
+    if (!context.flatpakFlag.empty()) {
+        args.push_back(context.flatpakFlag);
+    }
+    args.push_back(package);
+
+    return runQuiet(args);
+}
+
+bool isInstalledSnap(const AppContext& context, const std::string& package) {
+    return context.hasSnap && runQuiet({"snap", "list", package});
+}
+
+bool snapPackageExists(const AppContext& context, const std::string& package) {
+    return context.hasSnap && runQuiet({"snap", "info", package});
+}
+
+std::string parseFirstAptSearchResult(const std::string& output) {
+    for (const std::string& rawLine : splitLines(output)) {
+        std::istringstream ss(rawLine);
+        std::string package;
+        if (ss >> package) {
+            return package;
+        }
+    }
+    return {};
+}
+
+std::string parseFirstZypperSearchResult(const std::string& output) {
+    for (const std::string& rawLine : splitLines(output)) {
+        const std::string line = trim(rawLine);
+        if (line.empty() || line.find("-+-") != std::string::npos) {
+            continue;
+        }
+
+        const std::vector<std::string> columns = split(line, '|');
+        if (columns.size() < 2) {
+            continue;
+        }
+
+        const std::string status = trim(columns[0]);
+        const std::string name = trim(columns[1]);
+        if (!name.empty() && status != "S") {
+            return name;
+        }
+    }
+
+    return {};
+}
+
+ResolveResult resolveNative(const AppContext& context, const std::string& package) {
+    if (context.packageManager == "apt") {
+        if (runQuiet({"apt-cache", "show", package})) {
+            return {package, true};
+        }
+
+        const std::string pattern = "^" + regexEscape(package);
+        const std::string found = parseFirstAptSearchResult(
+            capture({"apt-cache", "search", "--names-only", pattern}).output
+        );
+
+        return found.empty() ? ResolveResult{package, false} : ResolveResult{found, true};
+    }
+
+    if (context.packageManager == "zypper") {
+        if (runQuiet({"zypper", "--no-refresh", "info", package})) {
+            return {package, true};
+        }
+
+        const std::string found = parseFirstZypperSearchResult(
+            capture({"zypper", "--no-refresh", "search", "-x", package}).output
+        );
+
+        return found.empty() ? ResolveResult{package, false} : ResolveResult{found, true};
+    }
+
+    const bool exists = runQuiet({context.dnfCommand, "info", package});
+    return {package, exists};
+}
+
+void printHelp(const char* progName) {
+    std::cout << RED << "Usage: " << RESET << progName << " [options] [packages...]"
+              << " or zpm inst/install [options] [packages...]\n"
+              << RED << "Options:\n" << RESET
+              << "  (auto)         Picks native PM / Flatpak / Snap per package\n"
+              << "  --dry-run      Simulate program flow; fake packages are allowed\n"
+              << "  --version, -v  Show version information\n"
+              << "  --help,    -h  Show this help message\n";
+}
+
+void printVersion() {
+    std::cout << RED << "zinst component version: v" << zpm_version::version()
+              << " of ZPM\n" << RESET
+              << "https://github.com/Zielina-Konrad-productions/ZPM\n"
+              << "Copyright (c) 2026 Ignacyyy & Ry3ball\nLicense: MIT\n";
+}
+
+bool parseOptions(int argc, char* argv[], Options& options) {
+    std::vector<std::string> errors;
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+
+        if (arg == "--help" || arg == "-h") {
+            options.showHelp = true;
+        } else if (arg == "--version" || arg == "-v") {
+            options.showVersion = true;
+        } else if (arg == "--dry-run") {
+            options.dryRun = true;
+        } else if (startsWith(arg, "-")) {
+            errors.push_back("Unknown option: " + arg);
+        } else if (!isValidPackageArgument(arg)) {
+            errors.push_back("Invalid package name: " + arg);
+        } else {
+            options.packages.push_back(arg);
+        }
+    }
+
+    if ((options.showHelp || options.showVersion) &&
+        (options.dryRun || !options.packages.empty())) {
+        errors.push_back("--help and --version can only be combined with each other.");
+    }
+
+    for (const std::string& error : errors) {
+        std::cerr << RED << "Error: " << error << RESET << "\n";
+    }
+
+    return errors.empty();
+}
+
+bool readChoice(std::string& input) {
+    if (g_interrupted) {
+        return false;
+    }
+
+    return static_cast<bool>(std::getline(std::cin, input));
+}
+
+std::string chooseSourceMenu(const AppContext& context,
+                             const std::string& package,
+                             bool nativeAvailable,
+                             const std::string& resolvedNativeName,
+                             bool snapAvailable,
+                             const std::vector<std::string>& flatpakResults) {
+    const bool flatpakAvailable = !flatpakResults.empty();
+
+    struct Option {
+        int number = 0;
+        std::string key;
+    };
+
+    std::vector<Option> options;
+    int index = 1;
+
+    std::cout << "\n" << BOLD << "Package: " << CYAN << package << RESET << "\n";
+
+    std::cout << "  " << BOLD << index << ". " << nativeLabel(context) << RESET;
+    if (nativeAvailable) {
+        std::cout << GREEN << "exist (" << resolvedNativeName << ")" << RESET << "\n";
+        options.push_back({index, "native"});
+    } else {
+        std::cout << RED << "none" << RESET << "\n";
+    }
+    ++index;
+
+    if (context.hasSnap) {
+        std::cout << "  " << BOLD << index << ". Snap:    " << RESET;
+        if (snapAvailable) {
+            std::cout << GREEN << "exist (" << package << ")" << RESET << "\n";
+            options.push_back({index, "snap"});
+        } else {
+            std::cout << RED << "none" << RESET << "\n";
+        }
+        ++index;
+    }
+
+    if (context.hasFlatpak) {
+        std::cout << "  " << BOLD << index << ". Flatpak: " << RESET;
+        if (flatpakAvailable) {
+            std::cout << GREEN << "exist (" << flatpakResults.size() << " result"
+                      << (flatpakResults.size() != 1 ? "s" : "") << ")" << RESET << "\n";
+            options.push_back({index, "flatpak"});
+        } else {
+            std::cout << RED << "none" << RESET << "\n";
+        }
+        ++index;
+    }
+
+    std::cout << "  " << BOLD << "0. Skip" << RESET << "\n";
+
+    if (options.empty()) {
+        std::cout << YELLOW << "No source available for '" << package << "'." << RESET << "\n";
+        return {};
+    }
+
+    for (;;) {
+        std::cout << BOLD << "Choose: " << RESET;
+
+        std::string input;
+        if (!readChoice(input)) {
+            return {};
+        }
+
+        int choice = -1;
+        try {
+            choice = std::stoi(trim(input));
+        } catch (...) {
+            choice = -1;
+        }
+
+        if (choice == 0) {
+            return {};
+        }
+
+        for (const Option& option : options) {
+            if (option.number == choice) {
+                return option.key;
+            }
+        }
+
+        std::cout << RED << "Invalid choice, try again.\n" << RESET;
+    }
+}
+
+std::string chooseFlatpakPackage(const std::vector<std::string>& packages,
+                                 const std::string& query) {
+    if (packages.empty()) {
+        std::cout << YELLOW << "No Flatpak packages found for '" << query << "'.\n" << RESET;
+        return {};
+    }
+
+    std::cout << GREEN << "\nFlatpak results for '" << query << "':\n" << RESET;
+    for (size_t i = 0; i < packages.size(); ++i) {
+        std::cout << "  " << (i + 1) << ". " << packages[i] << "\n";
+    }
+    std::cout << "  0. Cancel\n";
+
+    for (;;) {
+        std::cout << BOLD << "Choose: " << RESET;
+
+        std::string input;
+        if (!readChoice(input)) {
+            return {};
+        }
+
+        int choice = -1;
+        try {
+            choice = std::stoi(trim(input));
+        } catch (...) {
+            choice = -1;
+        }
+
+        if (choice == 0) {
+            return {};
+        }
+
+        if (choice >= 1 && choice <= static_cast<int>(packages.size())) {
+            return packages[static_cast<size_t>(choice - 1)];
+        }
+
+        std::cout << RED << "Invalid choice, try again.\n" << RESET;
+    }
+}
+
+std::vector<InstallTarget> resolveTargets(const AppContext& context,
+                                          const std::vector<std::string>& packages) {
+    std::vector<InstallTarget> targets;
+
+    for (const std::string& package : packages) {
+        if (g_interrupted) {
+            break;
+        }
+
+        const ResolveResult native = resolveNative(context, package);
+        const bool snapAvailable = snapPackageExists(context, package);
+        const std::vector<std::string> flatpakResults =
+            context.hasFlatpak ? searchFlatpak(context, package) : std::vector<std::string>{};
+
+        const std::string source = chooseSourceMenu(context,
+                                                    package,
+                                                    native.exists,
+                                                    native.name,
+                                                    snapAvailable,
+                                                    flatpakResults);
+
+        if (source == "native") {
+            targets.push_back({native.name, InstallSource::Native});
+        } else if (source == "snap") {
+            targets.push_back({package, InstallSource::Snap});
+        } else if (source == "flatpak") {
+            const bool exactMatch =
+                std::find(flatpakResults.begin(), flatpakResults.end(), package) != flatpakResults.end();
+            const std::string selected = exactMatch
+                ? package
+                : chooseFlatpakPackage(flatpakResults, package);
+
+            if (!selected.empty()) {
+                targets.push_back({selected, InstallSource::Flatpak});
+            }
+        }
+    }
+
+    return targets;
+}
+
+std::vector<std::string> dryRunPackages(const std::vector<std::string>& packages) {
+    if (!packages.empty()) {
+        return packages;
+    }
+
+    return {
+        "fake-editor",
+        "fake-browser",
+        "fake-toolkit"
+    };
+}
+
+std::vector<InstallTarget> buildDryRunTargets(const AppContext& context,
+                                              const std::vector<std::string>& packages) {
+    std::vector<InstallSource> sources = {InstallSource::Native};
+    if (context.hasFlatpak) {
+        sources.push_back(InstallSource::Flatpak);
+    }
+    if (context.hasSnap) {
+        sources.push_back(InstallSource::Snap);
+    }
+
+    std::vector<InstallTarget> targets;
+    const std::vector<std::string> names = dryRunPackages(packages);
+    targets.reserve(names.size());
+
+    for (size_t i = 0; i < names.size(); ++i) {
+        targets.push_back({names[i], sources[i % sources.size()]});
+    }
+
+    return targets;
+}
+
+std::string sourceName(const AppContext& context, InstallSource source) {
+    switch (source) {
+        case InstallSource::Native:
+            return nativeShortLabel(context);
+        case InstallSource::Flatpak:
+            return "Flatpak";
+        case InstallSource::Snap:
+            return "Snap";
+    }
+
+    return "Unknown";
+}
+
+std::string installInfoText(const AppContext& context,
+                            const InstallTarget& target,
+                            bool dryRun) {
+    return std::string(dryRun ? "simulating " : "installing ") +
+           sourceName(context, target.source) + " package: " + target.name;
+}
+
+bool targetAlreadyInstalled(const AppContext& context, const InstallTarget& target) {
+    switch (target.source) {
+        case InstallSource::Native:
+            return isInstalledNative(context, target.name);
+        case InstallSource::Flatpak:
+            return isInstalledFlatpak(context, target.name);
+        case InstallSource::Snap:
+            return isInstalledSnap(context, target.name);
+    }
+
+    return false;
+}
+
+bool ensureNativeConsistency(AppContext& context,
+                             float startPct,
+                             float endPct,
+                             const std::string& label) {
+    if (context.nativeConsistencyChecked) {
+        return true;
+    }
+
+    const float checkStartPct = progressBetween(startPct, endPct, 0.05f);
+    const float checkEndPct = progressBetween(startPct, endPct, 0.20f);
+
+    int exitCode = 0;
+    if (context.packageManager == "apt") {
+        exitCode = runLoggedWithProgress({"dpkg", "--configure", "-a"},
+                                         "-----checking_system_consistency-----",
+                                         checkStartPct,
+                                         checkEndPct,
+                                         label,
+                                         "checking system",
+                                         {{"DEBIAN_FRONTEND", "noninteractive"}});
+    } else if (context.packageManager == "zypper" || context.packageManager == "dnf") {
+        exitCode = runLoggedWithProgress({"rpm", "--rebuilddb"},
+                                         "-----checking_system_consistency-----",
+                                         checkStartPct,
+                                         checkEndPct,
+                                         label,
+                                         "checking system");
+    }
+
+    if (g_interrupted) {
+        return false;
+    }
+
+    if (exitCode != 0) {
+        return false;
+    }
+
+    context.nativeConsistencyChecked = true;
+    progressbar_update(checkEndPct, label + " - system ready");
+    return true;
+}
+
+InstallStatus installNative(AppContext& context,
+                            const std::string& package,
+                            float startPct,
+                            float endPct,
+                            int index,
+                            int total) {
+    const std::string label = std::to_string(index) + "/" + std::to_string(total) +
+                              " | " + nativeShortLabel(context) + ": " + package;
+
+    progressbar_start(startPct, label + " - preparing...");
+
+    if (!ensureNativeConsistency(context, startPct, endPct, label)) {
+        if (g_interrupted) {
+            return InstallStatus::Interrupted;
+        }
+        progressbar_update(endPct, label + " - failed");
+        return InstallStatus::Failed;
+    }
+
+    if (context.packageManager == "apt" && !context.aptCacheRefreshed) {
+        const float cacheStartPct = progressBetween(startPct, endPct, 0.22f);
+        const float cacheEndPct = progressBetween(startPct, endPct, 0.40f);
+        const int updateExit = runLoggedWithProgress({"apt-get", "update", "-qq"},
+                                                     "-----apt_update-----",
+                                                     cacheStartPct,
+                                                     cacheEndPct,
+                                                     label,
+                                                     "refreshing cache");
+        if (g_interrupted) {
+            return InstallStatus::Interrupted;
+        }
+        if (updateExit != 0) {
+            progressbar_update(endPct, label + " - failed");
+            return InstallStatus::Failed;
+        }
+        progressbar_update(cacheEndPct, label + " - cache ready");
+        context.aptCacheRefreshed = true;
+    } else {
+        progressbar_update(progressBetween(startPct, endPct, 0.30f),
+                           label + " - package cache ready");
+    }
+
+    const float installStartPct = progressBetween(startPct, endPct, 0.45f);
+    const float installEndPct = progressBetween(startPct, endPct, 0.92f);
+
+    int exitCode = 1;
+    if (context.packageManager == "apt") {
+        exitCode = runLoggedWithProgress({"apt-get", "install", "-y", package},
+                                         "-----apt_install_" + package + "-----",
+                                         installStartPct,
+                                         installEndPct,
+                                         label,
+                                         "installing",
+                                         {{"DEBIAN_FRONTEND", "noninteractive"}});
+    } else if (context.packageManager == "zypper") {
+        exitCode = runLoggedWithProgress({"zypper", "--non-interactive", "install", "-y", package},
+                                         "-----zypper_install_" + package + "-----",
+                                         installStartPct,
+                                         installEndPct,
+                                         label,
+                                         "installing");
+    } else if (context.packageManager == "dnf") {
+        exitCode = runLoggedWithProgress({context.dnfCommand, "install", "-y", package},
+                                         "-----" + context.dnfCommand + "_install_" + package + "-----",
+                                         installStartPct,
+                                         installEndPct,
+                                         label,
+                                         "installing");
+    }
+
+    if (g_interrupted) {
+        return InstallStatus::Interrupted;
+    }
+
+    progressbar_update(progressBetween(startPct, endPct, 0.96f), label + " - finalizing...");
+    progressbar_update(endPct, label + (exitCode == 0 ? " - done" : " - failed"));
+    return exitCode == 0 ? InstallStatus::Installed : InstallStatus::Failed;
+}
+
+InstallStatus installFlatpak(const AppContext& context,
+                             const std::string& package,
+                             float startPct,
+                             float endPct,
+                             int index,
+                             int total) {
+    const std::string label = std::to_string(index) + "/" + std::to_string(total) +
+                              " | Flatpak: " + package;
+
+    progressbar_start(startPct, label + " - preparing...");
+
+    std::vector<std::string> args = {"flatpak", "install"};
+    if (!context.flatpakFlag.empty()) {
+        args.push_back(context.flatpakFlag);
+    }
+    args.push_back("-y");
+    args.push_back("--noninteractive");
+    args.push_back("flathub");
+    args.push_back(package);
+
+    const int exitCode = runLoggedWithProgress(args,
+                                               "-----flatpak_install_" + package + "-----",
+                                               progressBetween(startPct, endPct, 0.15f),
+                                               progressBetween(startPct, endPct, 0.92f),
+                                               label,
+                                               "installing");
+    if (g_interrupted) {
+        return InstallStatus::Interrupted;
+    }
+
+    progressbar_update(progressBetween(startPct, endPct, 0.96f), label + " - finalizing...");
+    progressbar_update(endPct, label + (exitCode == 0 ? " - done" : " - failed"));
+    return exitCode == 0 ? InstallStatus::Installed : InstallStatus::Failed;
+}
+
+InstallStatus installSnap(const std::string& package,
+                          float startPct,
+                          float endPct,
+                          int index,
+                          int total) {
+    const std::string label = std::to_string(index) + "/" + std::to_string(total) +
+                              " | Snap: " + package;
+
+    progressbar_start(startPct, label + " - preparing...");
+
+    const int exitCode = runLoggedWithProgress({"snap", "install", package},
+                                               "-----snap_install_" + package + "-----",
+                                               progressBetween(startPct, endPct, 0.15f),
+                                               progressBetween(startPct, endPct, 0.92f),
+                                               label,
+                                               "installing");
+    if (g_interrupted) {
+        return InstallStatus::Interrupted;
+    }
+
+    progressbar_update(progressBetween(startPct, endPct, 0.96f), label + " - finalizing...");
+    progressbar_update(endPct, label + (exitCode == 0 ? " - done" : " - failed"));
+    return exitCode == 0 ? InstallStatus::Installed : InstallStatus::Failed;
+}
+
+InstallStatus installTarget(AppContext& context,
+                            const InstallTarget& target,
+                            bool dryRun,
+                            float startPct,
+                            float endPct,
+                            int index,
+                            int total) {
+    const std::string label = std::to_string(index) + "/" + std::to_string(total) +
+                              " | " + sourceName(context, target.source) + ": " + target.name;
+
+    if (dryRun) {
+        progressbar_start(startPct, label + " - demo start");
+        std::this_thread::sleep_for(kDryRunStepDelay);
+        progressbar_update(progressBetween(startPct, endPct, 0.25f), label + " - checking plan");
+        std::this_thread::sleep_for(kDryRunStepDelay);
+        progressbar_update(progressBetween(startPct, endPct, 0.50f), label + " - selecting source");
+        std::this_thread::sleep_for(kDryRunStepDelay);
+        progressbar_update(progressBetween(startPct, endPct, 0.75f), label + " - simulating install");
+        std::this_thread::sleep_for(kDryRunStepDelay);
+        progressbar_update(endPct, label + " - would install");
+        return InstallStatus::WouldInstall;
+    }
+
+    if (targetAlreadyInstalled(context, target)) {
+        progressbar_start(startPct, label + " - already installed");
+        progressbar_update(progressBetween(startPct, endPct, 0.50f),
+                           label + " - already installed");
+        progressbar_update(endPct, label + " - already installed");
+        return InstallStatus::AlreadyInstalled;
+    }
+
+    switch (target.source) {
+        case InstallSource::Native:
+            return installNative(context, target.name, startPct, endPct, index, total);
+        case InstallSource::Flatpak:
+            return installFlatpak(context, target.name, startPct, endPct, index, total);
+        case InstallSource::Snap:
+            return installSnap(target.name, startPct, endPct, index, total);
+    }
+
+    return InstallStatus::Failed;
+}
+
+int runInstallLoop(AppContext& context,
+                   const std::vector<InstallTarget>& targets,
+                   bool dryRun) {
+    std::vector<PackageResult> results;
+    bool anyFailed = false;
+    const int total = static_cast<int>(targets.size());
+
+    if (!dryRun) {
+        writeLogLine("-----zinst_start-----", LogMode::Truncate);
+    }
+
+    int infoStep = 0;
+    printInfoHeader();
+    progressbar_start(0.0f, "0/" + std::to_string(total) +
+                             (dryRun ? " | starting dry run..." : " | starting..."));
+
+    for (int i = 0; i < total; ++i) {
+        if (g_interrupted) {
+            progressbar_finish("Cancelled!");
+            std::cout << "\n" << YELLOW << "Cancelled.\n" << RESET;
+            return 130;
+        }
+
+        const InstallTarget& target = targets[static_cast<size_t>(i)];
+        const float startPct = (100.0f * static_cast<float>(i)) / static_cast<float>(total);
+        const float endPct = (100.0f * static_cast<float>(i + 1)) / static_cast<float>(total);
+        const std::string progressText = std::to_string(i + 1) + "/" +
+                                         std::to_string(total) + " | " +
+                                         sourceName(context, target.source) + ": " +
+                                         target.name;
+
+        PackageResult result;
+        result.name = target.name;
+
+        beginInstallStep(startPct,
+                         progressText,
+                         infoStep,
+                         installInfoText(context, target, dryRun));
+
+        const InstallStatus status = installTarget(context,
+                                                   target,
+                                                   dryRun,
+                                                   startPct,
+                                                   endPct,
+                                                   i + 1,
+                                                   total);
+
+        if (status == InstallStatus::Interrupted) {
+            progressbar_finish("Cancelled!");
+            std::cout << "\n" << YELLOW << "Cancelled.\n" << RESET;
+            return 130;
+        }
+
+        switch (status) {
+            case InstallStatus::AlreadyInstalled:
+                result.message = YELLOW + "Package " + target.name + " is already installed." + RESET;
+                result.success = true;
+                break;
+            case InstallStatus::WouldInstall:
+                result.message = "Package " + target.name + " would be installed from " +
+                                 sourceName(context, target.source) + ".";
+                result.success = true;
+                break;
+            case InstallStatus::Installed:
+                result.message = "Package " + target.name + " installed successfully.";
+                result.success = true;
+                break;
+            case InstallStatus::Failed:
+                result.message = RED + "Package " + target.name + " installation failed." + RESET;
+                anyFailed = true;
+                break;
+            case InstallStatus::Interrupted:
+                break;
+        }
+
+        results.push_back(result);
+    }
+
+    if (anyFailed) {
+        progressbar_finish("Done with errors!");
+        std::cout << "\n";
+        for (const PackageResult& result : results) {
+            std::cout << result.message << "\n";
+        }
+        std::cout << RED << "Installation finished with errors!\n" << RESET;
+        std::cout << YELLOW << "[RAPORT] " << RESET << kLogPath << "\n";
+        return 1;
+    }
+
+    progressbar_finish(dryRun ? "Dry run done!" : "Done!");
+    std::cout << "\n";
+    for (const PackageResult& result : results) {
+        std::cout << result.message << "\n";
+    }
+    std::cout << GREEN << (dryRun ? "Dry run complete!\n" : "Installation complete!\n") << RESET;
+    if (!dryRun) {
+        std::cout << YELLOW << "[RAPORT] " << RESET << kLogPath << "\n";
+    }
+
+    return 0;
+}
+
+AppContext buildContext() {
+    AppContext context;
+    context.packageManager = get_package_manager();
+    context.dnfCommand = commandExists("dnf5") ? "dnf5" : "dnf";
+    context.hasFlatpak = commandExists("flatpak");
+    context.hasSnap = commandExists("snap");
+
+    if (context.hasFlatpak) {
+        context.flatpakFlag = getFlatpakRemoteFlag();
+        if (context.flatpakFlag.empty()) {
+            std::cout << YELLOW << "Warning: No flathub remote found for flatpak "
+                      << "(tried --system and --user).\n" << RESET;
+            context.hasFlatpak = false;
+        }
+    }
+
+    return context;
+}
+
+AppContext buildDryRunContext() {
+    AppContext context;
+    context.packageManager = get_package_manager();
+    if (context.packageManager == "unknown") {
+        context.packageManager = "apt";
+    }
+    context.dnfCommand = commandExists("dnf5") ? "dnf5" : "dnf";
+    context.hasFlatpak = commandExists("flatpak");
+    context.hasSnap = commandExists("snap");
+    if (context.hasFlatpak) {
+        context.flatpakFlag = "--system";
+    }
+    return context;
+}
+
+} // namespace
+
+int main(int argc, char* argv[]) {
+    setvbuf(stdout, nullptr, _IONBF, 0);
+
+    Options options;
+    if (!parseOptions(argc, argv, options)) {
+        std::cerr << YELLOW << "Use --help to show available options." << RESET << "\n";
+        return 1;
+    }
+
+    if (options.showVersion && options.showHelp) {
+        std::cout << YELLOW << "--version" << RESET << "\n";
+        printVersion();
+        std::cout << "\n" << YELLOW << "--help" << RESET << "\n";
+        printHelp(argv[0]);
+        return 0;
+    }
+
+    if (options.showVersion) {
+        printVersion();
+        return 0;
+    }
+
+    if (options.showHelp) {
+        printHelp(argv[0]);
+        return 0;
+    }
+
+    if (options.packages.empty() && !options.dryRun) {
+        std::cout << YELLOW << "No package specified!\n" << RESET;
+        return 1;
+    }
+
+    SigintGuard sigintGuard;
+
+    if (options.dryRun) {
+        AppContext context = buildDryRunContext();
+        std::vector<InstallTarget> targets = buildDryRunTargets(context, options.packages);
+
+        std::cout << "\n" << RED << "Dry run demo: " << RESET
+                  << "no packages will be installed or checked.\n\n";
+        return runInstallLoop(context, targets, true);
+    }
+
+    if (!options.dryRun && geteuid() != 0) {
+        std::cout << RED << "Run with sudo!\n" << RESET;
+        return 1;
+    }
+
+    zpm_update::checkForUpdates();
+
+    AppContext context = buildContext();
+
+    if (context.packageManager == "unknown") {
+        std::cout << RED << "Error: Could not detect a supported package manager "
+                  << "(apt / zypper / dnf).\n" << RESET;
+        return 1;
+    }
+
+    std::vector<InstallTarget> targets = resolveTargets(context, options.packages);
+    if (g_interrupted) {
+        return 130;
+    }
+
+    if (targets.empty()) {
+        std::cout << YELLOW << "No packages selected.\n" << RESET;
+        return 0;
+    }
+
+    FileLock lock;
+    if (!lock.acquire()) {
+        return 1;
+    }
+
+    std::cout << "\n" << RED << "Auto mode: " << context.packageManager
+              << " / Flatpak / Snap per package\n" << RESET;
+    std::cout << "Installing packages...\n\n";
+
+    return runInstallLoop(context, targets, false);
 }
