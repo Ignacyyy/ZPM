@@ -22,11 +22,8 @@ constexpr int kUpgradeTotalSteps = 6;
 constexpr std::chrono::milliseconds kDryRunStepDelay{160};
 constexpr std::chrono::milliseconds kLiveLogRefreshInterval{140};
 constexpr int kLiveLogLines = 3;
-constexpr int kLiveLogTopPaddingLines = 1;
-constexpr int kLiveLogBottomPaddingLines = 1;
-constexpr int kLiveLogRowsBelowBar =
-    kLiveLogTopPaddingLines + kLiveLogLines + kLiveLogBottomPaddingLines;
-constexpr int kLiveLogPrefixColumns = 7;
+constexpr int kLiveLogRowsAboveBar = 1 + 1 + kLiveLogLines + 1;
+constexpr int kLiveLogPrefixColumns = 2;
 constexpr std::size_t kMaxPendingLogLine = 4096;
 
 volatile std::sig_atomic_t g_interrupted = 0;
@@ -289,23 +286,6 @@ void printInfoHeader() {
     std::cout << "\n" << CYAN << "[ZPM-INFO]" << RESET << "\n";
 }
 
-void beginUpgradeStep(UiState state,
-                      int& step,
-                      const std::string& text) {
-    std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-
-    if (step > 0) {
-        std::cout << "\r\033[K\033[1A\r\033[K";
-    } else {
-        std::cout << "\r\033[K";
-    }
-
-    std::cout << CYAN << "[>]" << RESET << " " << text << "\n\n";
-
-    progressbar_set_state(state, ++step);
-    std::cout << std::flush;
-}
-
 bool startsWith(const std::string& value, const std::string& prefix) {
     return value.rfind(prefix, 0) == 0;
 }
@@ -468,13 +448,38 @@ public:
         draw();
     }
 
-    void moveCursorBelow() const {
-        if (!started_) {
+    void prepareForInfoAppendLocked() {
+        if (!rowsReserved_) {
+            std::cout << "\r\033[K";
             return;
         }
 
-        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-        std::cout << "\033[" << kLiveLogRowsBelowBar << "B\r" << std::flush;
+        std::cout << "\r\033[K"
+                  << "\033[" << kLiveLogRowsAboveBar << "A\r\033[K";
+        rowsReserved_ = false;
+    }
+
+    void drawAtCursorLocked() {
+        const std::vector<std::string> lines = displayLines();
+        const int textColumns = std::max(0,
+                                         zpm::progressbar_detail::terminalWidth() -
+                                             kLiveLogPrefixColumns);
+
+        std::cout << "\r\033[K\n"
+                  << "\r\033[K" << CYAN << "[ZPM-LOG]" << RESET << "\n";
+
+        for (int row = 0; row < kLiveLogLines; ++row) {
+            std::cout << "\r\033[K";
+            if (row < static_cast<int>(lines.size())) {
+                std::cout << CYAN << "> " << RESET
+                          << zpm::progressbar_detail::sanitizeTask(lines[static_cast<std::size_t>(row)],
+                                                                   textColumns);
+            }
+            std::cout << "\n";
+        }
+
+        std::cout << "\r\033[K\n" << std::flush;
+        rowsReserved_ = true;
     }
 
 private:
@@ -579,36 +584,14 @@ private:
     }
 
     void draw() {
-        const std::vector<std::string> lines = displayLines();
-        const int textColumns = std::max(0,
-                                         zpm::progressbar_detail::terminalWidth() -
-                                             kLiveLogPrefixColumns);
-
         std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-
         if (!rowsReserved_) {
-            std::cout << "\033[s";
-            for (int i = 0; i < kLiveLogRowsBelowBar; ++i) {
-                std::cout << "\n\033[K";
-            }
-            std::cout << "\033[u";
-            rowsReserved_ = true;
+            return;
         }
 
-        std::cout << "\033[s";
-        for (int row = 1; row <= kLiveLogRowsBelowBar; ++row) {
-            std::cout << "\033[u\033[" << row << "B\r\033[K";
-
-            const int logIndex = row - kLiveLogTopPaddingLines - 1;
-            if (logIndex >= 0 &&
-                logIndex < kLiveLogLines &&
-                logIndex < static_cast<int>(lines.size())) {
-                std::cout << CYAN << "  log> " << RESET
-                          << zpm::progressbar_detail::sanitizeTask(lines[static_cast<std::size_t>(logIndex)],
-                                                                   textColumns);
-            }
-        }
-
+        std::cout << "\033[s"
+                  << "\033[" << kLiveLogRowsAboveBar << "A\r";
+        drawAtCursorLocked();
         std::cout << "\033[u" << std::flush;
     }
 
@@ -633,6 +616,43 @@ private:
     std::string pendingLine_;
     std::vector<std::string> recentLines_;
 };
+
+void beginUpgradeStep(UiState state,
+                      int& step,
+                      const std::string& text,
+                      LiveLogView* liveLog = nullptr) {
+    const bool startProgressbar = step == 0;
+    const int nextStep = step + 1;
+
+    {
+        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+
+        if (liveLog != nullptr) {
+            liveLog->prepareForInfoAppendLocked();
+        } else {
+            std::cout << "\r\033[K";
+        }
+
+        const int textColumns = std::max(0,
+                                         zpm::progressbar_detail::terminalWidth() - 4);
+
+        std::cout << CYAN << "[>]" << RESET << " "
+                  << zpm::progressbar_detail::sanitizeTask(text, textColumns)
+                  << "\n";
+
+        if (liveLog != nullptr) {
+            liveLog->drawAtCursorLocked();
+        }
+
+        std::cout << std::flush;
+    }
+
+    step = nextStep;
+    if (startProgressbar) {
+        progressbar_start(kUpgradeTotalSteps);
+    }
+    progressbar_set_state(state, step);
+}
 
 int decodeExitStatus(int status) {
     if (status == -1) {
@@ -2136,28 +2156,30 @@ bool runUpdate(const ReleaseInfo& release, bool prerelease) {
     int progressStep = 0;
 
     printInfoHeader();
-    progressbar_start(kUpgradeTotalSteps);
     LiveLogView liveLog(kLogPath, true);
     liveLog.start();
 
     if (ok) {
         beginUpgradeStep(UiState::ZPM_CHECKING,
                          progressStep,
-                         "checking required tools");
+                         "checking required tools",
+                         &liveLog);
         ok = ensureRequiredCommands();
     }
 
     if (ok && !g_interrupted) {
         beginUpgradeStep(UiState::ZPM_DOWNLOAD,
                          progressStep,
-                         "downloading ZPM release");
+                         "downloading ZPM release",
+                         &liveLog);
         ok = downloadRelease(release, archivePath);
     }
 
     if (ok && !g_interrupted) {
         beginUpgradeStep(UiState::ZPM_EXTRACT,
                          progressStep,
-                         "extracting release archive");
+                         "extracting release archive",
+                         &liveLog);
         sourceDir = extractRelease(archivePath, extractDir);
         ok = sourceDir.has_value();
     }
@@ -2165,14 +2187,16 @@ bool runUpdate(const ReleaseInfo& release, bool prerelease) {
     if (ok && !g_interrupted) {
         beginUpgradeStep(UiState::ZPM_BUILD,
                          progressStep,
-                         "building ZPM");
+                         "building ZPM",
+                         &liveLog);
         ok = buildRelease(*sourceDir, buildDir);
     }
 
     if (ok && !g_interrupted) {
         beginUpgradeStep(UiState::ZPM_INSTALL,
                          progressStep,
-                         "installing ZPM");
+                         "installing ZPM",
+                         &liveLog);
         ok = installRelease(*sourceDir, buildDir, release, prerelease);
     }
 
@@ -2183,13 +2207,13 @@ bool runUpdate(const ReleaseInfo& release, bool prerelease) {
 
     beginUpgradeStep(UiState::CLEANUP,
                      progressStep,
-                     "cleaning");
+                     "cleaning",
+                     &liveLog);
 
     if (ok) {
         liveLog.stop();
         progressbar_set_state(UiState::DONE, kUpgradeTotalSteps);
         progressbar_finish("DONE!");
-        liveLog.moveCursorBelow();
         std::cout << YELLOW << "[RAPORT]" << RESET << " " << kLogPath << "\n";
         return true;
     }
@@ -2197,7 +2221,6 @@ bool runUpdate(const ReleaseInfo& release, bool prerelease) {
     liveLog.stop();
     progressbar_set_state(UiState::ERROR, progressStep);
     progressbar_finish("ERROR!");
-    liveLog.moveCursorBelow();
     std::cout << RED << "ERROR," << RESET << " check " << kLogPath << " for details.\n"
               << RED << "If ZPM is not usable, reinstall with:\n" << RESET
               << BOLD << "sudo bash -c \"$(curl -fsSL https://raw.githubusercontent.com/"
@@ -2225,7 +2248,6 @@ int handleDryRun(const Options& options) {
     bool ok = true;
 
     printInfoHeader();
-    progressbar_start(kUpgradeTotalSteps);
 
     const auto runStep = [&progressStep, &ok](UiState state,
                                               const std::string& infoText) {
@@ -2308,7 +2330,7 @@ int handleExperimental(const Options& options,
             return 0;
         }
 
-        std::cout << RED << "Updating ZPM...\n" << RESET;
+        std::cout << RED << "\n" << "Updating ZPM...\n" << RESET;
         return runUpdate(remote.prerelease, true) ? 0 : 1;
     }
 
