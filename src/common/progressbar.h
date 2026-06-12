@@ -306,6 +306,10 @@ public:
         stateChanged_.notify_all();
     }
 
+    void pause() {
+        stopThread();
+    }
+
     void finish(const std::string& task) {
         {
             std::lock_guard<std::mutex> lock(stateMutex_);
@@ -424,6 +428,10 @@ inline void progressbar_start() {
 
 inline void progressbar_update(float totalProgress, const std::string& task) {
     zpm::progressbar_detail::controller().update(totalProgress, task);
+}
+
+inline void progressbar_pause() {
+    zpm::progressbar_detail::controller().pause();
 }
 
 inline void progressbar_finish(const std::string& task) {
