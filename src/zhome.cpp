@@ -28,6 +28,19 @@ void PAGE1() {
     std::cout << BOLD << "Type zhome -p2 / zpm home -p2 to see PAGE2." << RESET << std::endl;
 }
 
+void printZpmCommandRow(const std::string& command,
+                        const std::string& alias,
+                        const std::string& component,
+                        const std::string& description) {
+      const std::string aliasText = alias.empty() ? "-" : alias;
+
+      std::cout << "  "
+                << GREEN << std::left << std::setw(16) << command << RESET
+                << CYAN << std::left << std::setw(13) << aliasText << RESET
+                << YELLOW << std::left << std::setw(12) << component << RESET
+                << description << std::endl;
+}
+
 void PAGE2(){
       // add return 0, when using !!!
       // PAGE 2 info
@@ -38,29 +51,37 @@ void PAGE2(){
 
       // zpm wrapper commands
       std::cout << RED << "zpm wrapper commands:" << RESET << std::endl;
-      std::cout << "  " << GREEN << "zpm home" << RESET << "             - Home page of ZPM (zhome)" << std::endl;
-      std::cout << "  " << GREEN << "zpm update / zpm upd" << RESET << "       - Perform a system upgrade (zupd)" << std::endl;
-      std::cout << "  " << GREEN << "zpm upgrade / zpm upgr" << RESET << "   - Upgrade ZPM itself (zupgr)" << std::endl;
-      std::cout << "  " << GREEN << "zpm install / zpm inst" << RESET << "   - Install package (zinst)" << std::endl;
-      std::cout << "  " << GREEN << "zpm remove / zpm rm" << RESET << "       - Remove package (zrm)" << std::endl;
-      std::cout << "  " << GREEN << "zpm list / zpm ls" << RESET << "         - List installed packages (zlist)" << std::endl;
-      std::cout << "  " << GREEN << "zpm search" << RESET << "           - Search for package (zsearch)" << std::endl;
-      std::cout << "  " << GREEN << "zpm clean" << RESET << "            - Clean system cache (zclean)" << std::endl;
-      std::cout << "  " << GREEN << "zpm info" << RESET << "             - Package information (zinfo)" << std::endl;
-      std::cout << "  " << GREEN << "zpm uninstall" << RESET << "        - Uninstall ZPM (zuninstall)" << std::endl;
-      std::cout << "  " << GREEN << "zpm run" << RESET << "              - Run programs using ZPM (zrun)" << std::endl;
+      std::cout << "  "
+                << BOLD << std::left << std::setw(16) << "Command"
+                << std::setw(13) << "Alias"
+                << std::setw(12) << "Runs"
+                << "Description" << RESET << std::endl;
+      std::cout << "  " << std::string(76, '-') << std::endl;
+      printZpmCommandRow("zpm home", "-", "zhome", "Open the ZPM home pages");
+      printZpmCommandRow("zpm update", "zpm upd", "zupd", "Update system packages");
+      printZpmCommandRow("zpm upgrade", "zpm upgr", "zupgr", "Upgrade ZPM itself");
+      printZpmCommandRow("zpm install", "zpm inst", "zinst", "Install packages");
+      printZpmCommandRow("zpm remove", "zpm rm", "zrm", "Remove packages");
+      printZpmCommandRow("zpm list", "zpm ls", "zlist", "List installed packages");
+      printZpmCommandRow("zpm search", "-", "zsearch", "Search for packages");
+      printZpmCommandRow("zpm clean", "-", "zclean", "Clean package cache");
+      printZpmCommandRow("zpm info", "-", "zinfo", "Show package information");
+      printZpmCommandRow("zpm uninstall", "-", "zuninstall", "Uninstall ZPM");
+      printZpmCommandRow("zpm run", "-", "zrun", "Run programs using ZPM");
 
       // global options
-      std::cout << "\n" << BOLD << "zpm options:" << RESET << std::endl;
-      std::cout << "  zpm --help, -h       Show wrapper help" << std::endl;
-      std::cout << "  zpm --version, -v    Show wrapper version" << std::endl;
+      std::cout << "\n" << RED << "Wrapper options:" << RESET << std::endl;
+      std::cout << "  " << GREEN << std::left << std::setw(20) << "zpm --help, -h" << RESET
+                << "Show wrapper help" << std::endl;
+      std::cout << "  " << GREEN << std::left << std::setw(20) << "zpm --version, -v" << RESET
+                << "Show wrapper version" << std::endl;
 
       // examples
-      std::cout << "\n" << BOLD << "Examples:" << RESET << std::endl;
-      std::cout << "  zpm install firefox" << std::endl;
-      std::cout << "  sudo zpm update -full -y" << std::endl;
-      std::cout << "  zpm remove vlc -p" << std::endl;
-      std::cout << "  sudo zpm upgrade -ex" << std::endl;
+      std::cout << "\n" << RED << "Examples:" << RESET << std::endl;
+      std::cout << "  " << BOLD << "zpm install firefox" << RESET << "        install a package" << std::endl;
+      std::cout << "  " << BOLD << "sudo zpm update -full -y" << RESET << "   full system update" << std::endl;
+      std::cout << "  " << BOLD << "zpm remove vlc -p" << RESET << "           remove with purge option" << std::endl;
+      std::cout << "  " << BOLD << "sudo zpm upgrade -ex" << RESET << "      experimental ZPM upgrade" << std::endl;
       std::cout << "" << std::endl;
 
       //page 3 info
