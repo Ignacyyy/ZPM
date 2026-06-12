@@ -20,6 +20,7 @@ constexpr const char* kArchiveBaseUrl =
     "https://github.com/Zielina-Konrad-productions/ZPM/archive/refs/tags/";
 constexpr std::chrono::milliseconds kDryRunStepDelay{160};
 constexpr std::chrono::milliseconds kLiveLogRefreshInterval{140};
+constexpr std::chrono::seconds kProgressbarInfoDelay{1};
 constexpr int kLiveLogLines = 3;
 constexpr int kLiveLogTopPaddingLines = 1;
 constexpr int kLiveLogBottomPaddingLines = 1;
@@ -291,6 +292,8 @@ void beginUpgradeStep(float progress,
                       const std::string& progressText,
                       int& step,
                       const std::string& infoText) {
+    progressbar_pause();
+
     std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
 
     if (step > 0) {
@@ -300,9 +303,11 @@ void beginUpgradeStep(float progress,
     }
 
     std::cout << CYAN << "[>]" << RESET << " " << infoText << "\n\n";
+    std::cout << std::flush;
+    std::this_thread::sleep_for(kProgressbarInfoDelay);
 
     ++step;
-    progressbar_update(progress, progressText);
+    progressbar_start(progress, progressText);
     std::cout << std::flush;
 }
 
@@ -596,7 +601,6 @@ private:
         }
 
         std::cout << "\033[s";
-
         for (int row = 1; row <= kLiveLogRowsBelowBar; ++row) {
             std::cout << "\033[u\033[" << row << "B\r\033[K";
 
@@ -2126,7 +2130,6 @@ bool runUpdate(const ReleaseInfo& release, bool prerelease) {
     int progressStep = 0;
 
     printInfoHeader();
-    progressbar_start(0.0f, "0/6 | Starting update...");
     LiveLogView liveLog(kLogPath, true);
     liveLog.start();
 
@@ -2219,7 +2222,6 @@ int handleDryRun(const Options& options) {
     bool ok = true;
 
     printInfoHeader();
-    progressbar_start(0.0f, "0/6 | Starting dry run...");
 
     const auto runStep = [&progressStep, &ok](float progress,
                                               const std::string& progressText,
