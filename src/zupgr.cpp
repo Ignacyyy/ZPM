@@ -30,6 +30,7 @@ constexpr int kLiveLogPrefixColumns = 7;
 constexpr std::size_t kMaxPendingLogLine = 4096;
 
 volatile std::sig_atomic_t g_interrupted = 0;
+std::atomic<bool> g_liveLogCursorSaved{false};
 
 enum class LogMode {
     Truncate,
@@ -292,23 +293,32 @@ void beginUpgradeStep(float progress,
                       const std::string& progressText,
                       int& step,
                       const std::string& infoText) {
-    progressbar_pause();
+    const bool firstStep = step == 0;
 
-    std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+    {
+        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
 
-    if (step > 0) {
-        std::cout << "\r\033[K\033[1A\r\033[K";
-    } else {
-        std::cout << "\r\033[K";
+        if (g_liveLogCursorSaved.load(std::memory_order_relaxed)) {
+            std::cout << "\033[u";
+        }
+
+        if (step > 0) {
+            std::cout << "\r\033[K\033[1A\r\033[K";
+        } else {
+            std::cout << "\r\033[K";
+        }
+
+        std::cout << CYAN << "[>]" << RESET << " " << infoText << "\n\n";
+        std::cout << std::flush;
     }
 
-    std::cout << CYAN << "[>]" << RESET << " " << infoText << "\n\n";
-    std::cout << std::flush;
-    std::this_thread::sleep_for(kProgressbarInfoDelay);
-
     ++step;
-    progressbar_start(progress, progressText);
-    std::cout << std::flush;
+    if (firstStep) {
+        progressbar_start(progress, progressText);
+    } else {
+        progressbar_update(progress, progressText);
+    }
+    std::this_thread::sleep_for(kProgressbarInfoDelay);
 }
 
 bool startsWith(const std::string& value, const std::string& prefix) {
@@ -448,6 +458,7 @@ public:
         running_ = true;
         started_ = true;
         stopped_ = false;
+        g_liveLogCursorSaved.store(false, std::memory_order_relaxed);
 
         try {
             worker_ = std::thread(&LiveLogView::run, this);
@@ -480,6 +491,16 @@ public:
 
         std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
         std::cout << "\033[" << kLiveLogRowsBelowBar << "B\r" << std::flush;
+    }
+
+    void reserveRows() {
+        if (!enabled_ || !started_) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+        reserveRowsLocked();
+        std::cout << std::flush;
     }
 
 private:
@@ -590,15 +611,7 @@ private:
                                              kLiveLogPrefixColumns);
 
         std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-
-        if (!rowsReserved_) {
-            std::cout << "\033[s";
-            for (int i = 0; i < kLiveLogRowsBelowBar; ++i) {
-                std::cout << "\n\033[K";
-            }
-            std::cout << "\033[u";
-            rowsReserved_ = true;
-        }
+        reserveRowsLocked();
 
         std::cout << "\033[s";
         for (int row = 1; row <= kLiveLogRowsBelowBar; ++row) {
@@ -615,6 +628,20 @@ private:
         }
 
         std::cout << "\033[u" << std::flush;
+    }
+
+    void reserveRowsLocked() {
+        if (rowsReserved_) {
+            return;
+        }
+
+        std::cout << "\033[s";
+        for (int i = 0; i < kLiveLogRowsBelowBar; ++i) {
+            std::cout << "\n\033[K";
+        }
+        std::cout << "\033[u";
+        rowsReserved_ = true;
+        g_liveLogCursorSaved.store(true, std::memory_order_relaxed);
     }
 
     void run() {
@@ -2138,6 +2165,7 @@ bool runUpdate(const ReleaseInfo& release, bool prerelease) {
                          "1/6 | Checking tools...",
                          progressStep,
                          "checking required tools");
+        liveLog.reserveRows();
         ok = ensureRequiredCommands();
     }
 
