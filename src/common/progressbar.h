@@ -18,6 +18,11 @@
 enum class UiState {
     IDLE,
     CHECKING,
+    ZPM_CHECKING,
+    ZPM_DOWNLOAD,
+    ZPM_EXTRACT,
+    ZPM_BUILD,
+    ZPM_INSTALL,
     APT,
     ZYPPER,
     DNF,
@@ -74,6 +79,16 @@ inline std::string stateLabel(UiState state) {
             return "Idle";
         case UiState::CHECKING:
             return "Checking system consistency";
+        case UiState::ZPM_CHECKING:
+            return "Checking ZPM requirements";
+        case UiState::ZPM_DOWNLOAD:
+            return "Downloading ZPM release";
+        case UiState::ZPM_EXTRACT:
+            return "Extracting ZPM release";
+        case UiState::ZPM_BUILD:
+            return "Building ZPM";
+        case UiState::ZPM_INSTALL:
+            return "Installing ZPM";
         case UiState::APT:
             return "Updating APT packages";
         case UiState::ZYPPER:
@@ -306,10 +321,6 @@ public:
         stateChanged_.notify_all();
     }
 
-    void pause() {
-        stopThread();
-    }
-
     void finish(const std::string& task) {
         {
             std::lock_guard<std::mutex> lock(stateMutex_);
@@ -428,10 +439,6 @@ inline void progressbar_start() {
 
 inline void progressbar_update(float totalProgress, const std::string& task) {
     zpm::progressbar_detail::controller().update(totalProgress, task);
-}
-
-inline void progressbar_pause() {
-    zpm::progressbar_detail::controller().pause();
 }
 
 inline void progressbar_finish(const std::string& task) {
