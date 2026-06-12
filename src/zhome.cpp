@@ -267,25 +267,25 @@ int main(int argc, char* argv[]) {
     }
 
     //----------------------if all pages---------------------------------------------
-    if (zhelp::showallpages()) {
+    if (zhome::showallpages()) {
         PAGE_ALL();
         return 0;
     }
 
     //-------------------------------if default page = 3-----------------------------
-    if (zhelp::defaultpage(3)){
+    if (zhome::defaultpage(3)){
         PAGE3();
         return 0;
     }
 
     //-------------------------------if default page = 2-----------------------------
-    if (zhelp::defaultpage(2)){
+    if (zhome::defaultpage(2)){
         PAGE2();
         return 0; 
     }
 
     //---------------------------if default page = 1----------------------------------
-    if (zhelp::defaultpage(1)){
+    if (zhome::defaultpage(1)){
         PAGE1();
         return 0;
     }
