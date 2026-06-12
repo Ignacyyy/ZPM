@@ -16,11 +16,8 @@ constexpr const char* kPatchLogFile = "/tmp/zupd_patchcheck.log";
 constexpr std::chrono::milliseconds kDryRunStepDelay{160};
 constexpr std::chrono::milliseconds kLiveLogRefreshInterval{140};
 constexpr int kLiveLogLines = 3;
-constexpr int kLiveLogTopPaddingLines = 1;
-constexpr int kLiveLogBottomPaddingLines = 1;
-constexpr int kLiveLogRowsBelowBar =
-    kLiveLogTopPaddingLines + kLiveLogLines + kLiveLogBottomPaddingLines;
-constexpr int kLiveLogPrefixColumns = 7;
+constexpr int kLiveLogRowsAboveBar = 1 + 1 + kLiveLogLines + 1;
+constexpr int kLiveLogPrefixColumns = 2;
 constexpr std::size_t kMaxPendingLogLine = 4096;
 
 volatile std::sig_atomic_t g_interrupted = 0;
@@ -430,13 +427,38 @@ public:
         draw();
     }
 
-    void moveCursorBelow() const {
-        if (!started_) {
+    void prepareForInfoAppendLocked() {
+        if (!rowsReserved_) {
+            std::cout << "\r\033[K";
             return;
         }
 
-        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-        std::cout << "\033[" << kLiveLogRowsBelowBar << "B\r" << std::flush;
+        std::cout << "\r\033[K"
+                  << "\033[" << kLiveLogRowsAboveBar << "A\r\033[K";
+        rowsReserved_ = false;
+    }
+
+    void drawAtCursorLocked() {
+        const std::vector<std::string> lines = displayLines();
+        const int textColumns = std::max(0,
+                                         zpm::progressbar_detail::terminalWidth() -
+                                             kLiveLogPrefixColumns);
+
+        std::cout << "\r\033[K\n"
+                  << "\r\033[K" << CYAN << "[ZPM-LOG]" << RESET << "\n";
+
+        for (int row = 0; row < kLiveLogLines; ++row) {
+            std::cout << "\r\033[K";
+            if (row < static_cast<int>(lines.size())) {
+                std::cout << CYAN << "> " << RESET
+                          << zpm::progressbar_detail::sanitizeTask(lines[static_cast<std::size_t>(row)],
+                                                                   textColumns);
+            }
+            std::cout << "\n";
+        }
+
+        std::cout << "\r\033[K\n" << std::flush;
+        rowsReserved_ = true;
     }
 
 private:
@@ -541,37 +563,14 @@ private:
     }
 
     void draw() {
-        const std::vector<std::string> lines = displayLines();
-        const int textColumns = std::max(0,
-                                         zpm::progressbar_detail::terminalWidth() -
-                                             kLiveLogPrefixColumns);
-
         std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-
         if (!rowsReserved_) {
-            std::cout << "\033[s";
-            for (int i = 0; i < kLiveLogRowsBelowBar; ++i) {
-                std::cout << "\n\033[K";
-            }
-            std::cout << "\033[u";
-            rowsReserved_ = true;
+            return;
         }
 
-        std::cout << "\033[s";
-
-        for (int row = 1; row <= kLiveLogRowsBelowBar; ++row) {
-            std::cout << "\033[u\033[" << row << "B\r\033[K";
-
-            const int logIndex = row - kLiveLogTopPaddingLines - 1;
-            if (logIndex >= 0 &&
-                logIndex < kLiveLogLines &&
-                logIndex < static_cast<int>(lines.size())) {
-                std::cout << CYAN << "  log> " << RESET
-                          << zpm::progressbar_detail::sanitizeTask(lines[static_cast<std::size_t>(logIndex)],
-                                                                   textColumns);
-            }
-        }
-
+        std::cout << "\033[s"
+                  << "\033[" << kLiveLogRowsAboveBar << "A\r";
+        drawAtCursorLocked();
         std::cout << "\033[u" << std::flush;
     }
 
@@ -1328,19 +1327,40 @@ std::string nativeUpdateTask(UiState state) {
 
 void beginProgressStep(UiState state,
                        int& step,
-                       const std::string& text) {
-    std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+                       int total,
+                       const std::string& text,
+                       LiveLogView* liveLog = nullptr) {
+    const bool startProgressbar = step == 0;
+    const int nextStep = step + 1;
 
-    if (step > 0) {
-        std::cout << "\r\033[K\033[1A\r\033[K";
-    } else {
-        std::cout << "\r\033[K";
+    {
+        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+
+        if (liveLog != nullptr) {
+            liveLog->prepareForInfoAppendLocked();
+        } else {
+            std::cout << "\r\033[K";
+        }
+
+        const int textColumns = std::max(0,
+                                         zpm::progressbar_detail::terminalWidth() - 4);
+
+        std::cout << CYAN << "[>]" << RESET << " "
+                  << zpm::progressbar_detail::sanitizeTask(text, textColumns)
+                  << "\n";
+
+        if (liveLog != nullptr) {
+            liveLog->drawAtCursorLocked();
+        }
+
+        std::cout << std::flush;
     }
 
-    std::cout << CYAN << "[>]" << RESET << " " << text << "\n\n";
-
-    progressbar_set_state(state, ++step);
-    std::cout << std::flush;
+    step = nextStep;
+    if (startProgressbar) {
+        progressbar_start(total);
+    }
+    progressbar_set_state(state, step);
 }
 
 void printInfoHeader() {
@@ -1559,10 +1579,6 @@ bool finishAndReport(const Options& options,
     } else {
         progressbar_set_state(UiState::ERROR, step);
         progressbar_finish("ERROR!");
-    }
-
-    if (liveLog != nullptr) {
-        liveLog->moveCursorBelow();
     }
 
     if (interrupted) {
@@ -1870,28 +1886,37 @@ bool runUpdateFlow(const Options& options,
     bool ok = true;
 
     printInfoHeader();
-    progressbar_start(total);
     LiveLogView liveLog(kLogFile, !options.dryRun);
     liveLog.start();
+    LiveLogView* liveLogView = options.dryRun ? nullptr : &liveLog;
 
     if (status.native) {
-        beginProgressStep(UiState::CHECKING, step, "checking system consistency");
+        beginProgressStep(UiState::CHECKING,
+                          step,
+                          total,
+                          "checking system consistency",
+                          liveLogView);
         if (!checkConsistency()) {
             ok = false;
         }
         if (checkInterrupted(ok)) {
-            return finishAndReport(options, ok, total, step, &liveLog);
+            return finishAndReport(options, ok, total, step, liveLogView);
         }
     }
 
     if (status.native && ok) {
-        beginProgressStep(nativeState, step, nativeUpdateTask(nativeState));
+        beginProgressStep(nativeState,
+                          step,
+                          total,
+                          nativeUpdateTask(nativeState),
+                          liveLogView);
         const NativeUpdateResult result = updateNative();
 
         if (result == NativeUpdateResult::RestartRequired) {
-            liveLog.stop();
+            if (liveLogView != nullptr) {
+                liveLogView->stop();
+            }
             progressbar_finish("RESTART NEEDED");
-            liveLog.moveCursorBelow();
 
             std::cout << "\n" << YELLOW
                       << "[*] Zypper is adjusting its stack manager and has aborted the download.\n"
@@ -1909,11 +1934,15 @@ bool runUpdateFlow(const Options& options,
         }
     }
     if (checkInterrupted(ok)) {
-        return finishAndReport(options, ok, total, step, &liveLog);
+        return finishAndReport(options, ok, total, step, liveLogView);
     }
 
     if (status.hasFlatpakUpdates() && ok) {
-        beginProgressStep(UiState::FLATPAK, step, "updating Flatpak packages");
+        beginProgressStep(UiState::FLATPAK,
+                          step,
+                          total,
+                          "updating Flatpak packages",
+                          liveLogView);
         if (options.dryRun) {
             ok = dryRunStep() && ok;
         } else if (!runCommandOk({"flatpak", "update", "-y"}, "----updating_flatpak----")) {
@@ -1921,11 +1950,15 @@ bool runUpdateFlow(const Options& options,
         }
     }
     if (checkInterrupted(ok)) {
-        return finishAndReport(options, ok, total, step, &liveLog);
+        return finishAndReport(options, ok, total, step, liveLogView);
     }
 
     if (status.hasSnapUpdates() && ok) {
-        beginProgressStep(UiState::SNAP, step, "updating Snap packages");
+        beginProgressStep(UiState::SNAP,
+                          step,
+                          total,
+                          "updating Snap packages",
+                          liveLogView);
         if (options.dryRun) {
             ok = dryRunStep() && ok;
         } else if (!runCommandOk({"snap", "refresh"}, "----updating_snap----")) {
@@ -1933,10 +1966,14 @@ bool runUpdateFlow(const Options& options,
         }
     }
     if (checkInterrupted(ok)) {
-        return finishAndReport(options, ok, total, step, &liveLog);
+        return finishAndReport(options, ok, total, step, liveLogView);
     }
 
-    beginProgressStep(UiState::CLEANUP, step, "cleaning");
+    beginProgressStep(UiState::CLEANUP,
+                      step,
+                      total,
+                      "cleaning",
+                      liveLogView);
     if (!cleanupNative()) {
         ok = false;
     }
@@ -1945,11 +1982,11 @@ bool runUpdateFlow(const Options& options,
     }
 
     checkInterrupted(ok);
-    return finishAndReport(options, ok, total, step, &liveLog);
+    return finishAndReport(options, ok, total, step, liveLogView);
 }
 
 bool aptUpdate(const Options& options, const UpdateStatus& status) {
-    printPackageList("APT", status.nativePackages, status.native);
+    printPackageList("APT", status.nativePackages);
     printUniversalUpdateLists(status);
 
     if (!askConfirm(options)) {
@@ -1996,7 +2033,7 @@ bool aptUpdate(const Options& options, const UpdateStatus& status) {
 }
 
 bool zypperUpdate(const Options& options, const UpdateStatus& status) {
-    printPackageList("Zypper", status.nativePackages, status.native);
+    printPackageList("Zypper", status.nativePackages);
     if (!status.zypperDup) {
         printPackageList("Zypper patches", status.zypperPatches);
     }
@@ -2039,7 +2076,7 @@ bool zypperUpdate(const Options& options, const UpdateStatus& status) {
 }
 
 bool dnfUpdate(const Options& options, const UpdateStatus& status) {
-    printPackageList(status.dnf5 ? "DNF5" : "DNF", status.nativePackages, status.native);
+    printPackageList(status.dnf5 ? "DNF5" : "DNF", status.nativePackages);
     printUniversalUpdateLists(status);
 
     if (!askConfirm(options)) {
