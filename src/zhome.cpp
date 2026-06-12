@@ -17,7 +17,7 @@ void PAGE1() {
     std::cout << "  zhome" << std::endl;
     std::cout << "  zpm home" << std::endl;
     std::cout << "  --edit-config, -ed" << std::endl;
-    std::cout << "  Opens /opt/ZPM/zielina.conf" << std::endl;
+    std::cout << "  Opens /opt/ZPM/zielina.conf in the default terminal text editor" << std::endl;
     std::cout << std::endl;
     std::cout << BOLD << RED << "ARM support:" << RESET << std::endl;
     std::cout << "  ZPM supports ARM (aarch64 / armhf) systems" << std::endl;
@@ -33,11 +33,50 @@ void PAGE2(){
       // PAGE 2 info
       std::cout << YELLOW << "Current PAGE:" << RESET << std::endl;
       std::cout << BOLD << "PAGE 2" << RESET;
-      std::cout << " (Commands, options and zpm wrapper info)" << std::endl;
+      std::cout << " (zpm wrapper commands)" << std::endl;
+      std::cout << "" << std::endl;
+
+      // zpm wrapper commands
+      std::cout << RED << "zpm wrapper commands:" << RESET << std::endl;
+      std::cout << "  " << GREEN << "zpm home" << RESET << "             - Home page of ZPM (zhome)" << std::endl;
+      std::cout << "  " << GREEN << "zpm update / zpm upd" << RESET << "       - Perform a system upgrade (zupd)" << std::endl;
+      std::cout << "  " << GREEN << "zpm upgrade / zpm upgr" << RESET << "   - Upgrade ZPM itself (zupgr)" << std::endl;
+      std::cout << "  " << GREEN << "zpm install / zpm inst" << RESET << "   - Install package (zinst)" << std::endl;
+      std::cout << "  " << GREEN << "zpm remove / zpm rm" << RESET << "       - Remove package (zrm)" << std::endl;
+      std::cout << "  " << GREEN << "zpm list / zpm ls" << RESET << "         - List installed packages (zlist)" << std::endl;
+      std::cout << "  " << GREEN << "zpm search" << RESET << "           - Search for package (zsearch)" << std::endl;
+      std::cout << "  " << GREEN << "zpm clean" << RESET << "            - Clean system cache (zclean)" << std::endl;
+      std::cout << "  " << GREEN << "zpm info" << RESET << "             - Package information (zinfo)" << std::endl;
+      std::cout << "  " << GREEN << "zpm uninstall" << RESET << "        - Uninstall ZPM (zuninstall)" << std::endl;
+      std::cout << "  " << GREEN << "zpm run" << RESET << "              - Run programs using ZPM (zrun)" << std::endl;
+
+      // global options
+      std::cout << "\n" << BOLD << "zpm options:" << RESET << std::endl;
+      std::cout << "  zpm --help, -h       Show wrapper help" << std::endl;
+      std::cout << "  zpm --version, -v    Show wrapper version" << std::endl;
+
+      // examples
+      std::cout << "\n" << BOLD << "Examples:" << RESET << std::endl;
+      std::cout << "  zpm install firefox" << std::endl;
+      std::cout << "  sudo zpm update -full -y" << std::endl;
+      std::cout << "  zpm remove vlc -p" << std::endl;
+      std::cout << "  sudo zpm upgrade -ex" << std::endl;
+      std::cout << "" << std::endl;
+
+      //page 3 info
+      std::cout << BOLD << "Type zhome -p3 / zpm home -p3 to see PAGE3." << RESET << std::endl;
+}
+
+void PAGE3(){
+      // add return 0, when using !!!
+      // PAGE 3 info
+      std::cout << YELLOW << "Current PAGE:" << RESET << std::endl;
+      std::cout << BOLD << "PAGE 3" << RESET;
+      std::cout << " (zpm aliases commands)" << std::endl;
       std::cout << "" << std::endl;
       
       // commands
-      std::cout << RED << "Commands:" << RESET << std::endl;
+      std::cout << RED << "Aliases:" << RESET << std::endl;
       std::cout << "  " << GREEN << "zhome" << RESET << "      - Display home page" << std::endl;
       std::cout << "  " << GREEN << "zpm" << RESET << "        - Unified wrapper" << std::endl;
       std::cout << "  " << GREEN << "zupd" << RESET << "       - Update system packages" << std::endl;
@@ -69,61 +108,18 @@ void PAGE2(){
       std::cout << "  Run " << BOLD << "zpm --help" << RESET << " for more details." << std::endl;
       std::cout << "" << std::endl;
   
-      //page 1 info
+      //page 1 and page 2 info
       std::cout << BOLD << "Type zhome -p1 / zpm home -p1 to see PAGE1." << RESET << std::endl;
+      std::cout << BOLD << "Type zhome -p2 / zpm home -p2 to see PAGE2." << RESET << std::endl;
 }
 
-void PAGE1_PAGE2(){
-    // add return 0, when using !!!
-    // ARM support + config info
-    std::cout << "" << std::endl;
-    std::cout << BOLD << RED << "ZPM Configuration:" << RESET << std::endl;
-    std::cout << "  Config file: /opt/ZPM/zielina.conf" << std::endl;
-    std::cout << "  Used for runtime behavior and update settings" << std::endl;
-    std::cout << "Config editing:" << std::endl;
-    std::cout << "  zhome" << std::endl;
-    std::cout << "  zpm home" << std::endl;
-    std::cout << "  --edit-config, -ed" << std::endl;
-    std::cout << "  Opens /opt/ZPM/zielina.conf" << std::endl;
+void PAGE_ALL(){
+    PAGE1();
     std::cout << std::endl;
-    std::cout << BOLD << RED << "ARM support:" << RESET << std::endl;
-    std::cout << "  ZPM supports ARM (aarch64 / armhf) systems" << std::endl;
-    std::cout << "  ARM mode does NOT affect normal usage" << std::endl;
+    PAGE2();
     std::cout << std::endl;
-
-    // commands
-    std::cout << RED << "Commands:" << RESET << std::endl;
-    std::cout << "  " << GREEN << "zhome" << RESET << "      - Display home page" << std::endl;
-    std::cout << "  " << GREEN << "zpm" << RESET << "        - Unified wrapper" << std::endl;
-    std::cout << "  " << GREEN << "zupd" << RESET << "       - Update system packages" << std::endl;
-    std::cout << "  " << GREEN << "zinst" << RESET << "      - Install package" << std::endl;
-    std::cout << "  " << GREEN << "zrm" << RESET << "        - Remove package" << std::endl;
-    std::cout << "  " << GREEN << "zlist" << RESET << "      - List installed packages" << std::endl;
-    std::cout << "  " << GREEN << "zsearch" << RESET << "    - Search for package" << std::endl;
-    std::cout << "  " << GREEN << "zinfo" << RESET << "      - Package information" << std::endl;
-    std::cout << "  " << GREEN << "zclean" << RESET << "     - Clean package cache" << std::endl;
-    std::cout << "  " << GREEN << "zupgr" << RESET << "      - Update ZPM itself (sudo)" << std::endl;
-    std::cout << "  " << GREEN << "zuninstall" << RESET << " - Uninstall ZPM (sudo)" << std::endl;
-    std::cout << "  " << GREEN << "zrun" << RESET << "       - Run programs" << std::endl;
-
-    // global options
-    std::cout << "\n" << BOLD << "Common options:" << RESET << std::endl;
-    std::cout << "  --help, -h    Show help for a specific command" << std::endl;
-    std::cout << "  --version, -v Show version" << std::endl;
-
-    // examples
-    std::cout << "\n" << BOLD << "Examples:" << RESET << std::endl;
-    std::cout << "  zinst firefox" << std::endl;
-    std::cout << "  sudo zupd -full -y" << std::endl;
-    std::cout << "  zrm vlc -p" << std::endl;
-    std::cout << "  sudo zupgr -ex" <<std::endl;
-
-    // zpm wrapper info
-    std::cout << "\n" << RED << "New way of using ZPM:" << RESET << std::endl;
-    std::cout << "  " << BOLD << "zpm" << RESET << " <command> [options]   (e.g., zpm install firefox)" << std::endl;
-    std::cout << "  Run " << BOLD << "zpm --help" << RESET << " for more details." << std::endl;
-    std::cout << "" << std::endl;
-	}
+    PAGE3();
+}
 
 bool executableAt(const std::string& path) {
     return access(path.c_str(), X_OK) == 0;
@@ -153,21 +149,62 @@ bool commandExists(const std::string& command) {
     return false;
 }
 
+std::string firstCommandWord(const std::string& command) {
+    std::stringstream stream(command);
+    std::string word;
+    stream >> word;
+    return word;
+}
+
+std::string defaultTextEditor() {
+    const char* sudoEditor = getenv("SUDO_EDITOR");
+    if (sudoEditor != nullptr && sudoEditor[0] != '\0' && commandExists(firstCommandWord(sudoEditor))) {
+        return sudoEditor;
+    }
+
+    const char* visual = getenv("VISUAL");
+    if (visual != nullptr && visual[0] != '\0' && commandExists(firstCommandWord(visual))) {
+        return visual;
+    }
+
+    const char* editor = getenv("EDITOR");
+    if (editor != nullptr && editor[0] != '\0' && commandExists(firstCommandWord(editor))) {
+        return editor;
+    }
+
+    const std::array<std::string, 4> candidates {
+        "sensible-editor",
+        "editor",
+        "vim",
+        "vi",
+    };
+
+    for (const std::string& candidate : candidates) {
+        if (commandExists(candidate)) {
+            return candidate;
+        }
+    }
+
+    return {};
+}
+
 int main(int argc, char* argv[]) {
 
     zpm_update::checkForUpdates();
 
-    bool page2 = false;
     bool page1 = false;
+    bool page2 = false;
+    bool page3 = false;
     bool config = false;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        if (arg == "-p2") page2 = true;
         if (arg == "-p1") page1 = true;
+        if (arg == "-p2") page2 = true;
+        if (arg == "-p3") page3 = true;
         if (arg == "--edit-config" || arg == "-ed") config = true;
     }
 
-    if ((page1 && config) || (page2 && config)) {
+    if ((page1 && config) || (page2 && config) || (page3 && config)) {
         std::cerr << RED
         << "Error: --edit-config / -ed must be used alone"
         << RESET << std::endl;
@@ -176,8 +213,9 @@ int main(int argc, char* argv[]) {
 
     if (config) {
 
-        if (!commandExists("nano")){
-         std::cerr << RED << "Error: install nano!\n" << RESET;
+        const std::string editor = defaultTextEditor();
+        if (editor.empty()) {
+            std::cerr << RED << "Error: no terminal text editor found!\n" << RESET;
             return 1;
         }
 
@@ -185,7 +223,8 @@ int main(int argc, char* argv[]) {
             std::cerr << RED << "Run with sudo!\n" << RESET;
             return 1;
         }
-        execlp("nano", "nano", "/opt/ZPM/zielina.conf", nullptr);
+        const std::string command = editor + " /opt/ZPM/zielina.conf";
+        execlp("sh", "sh", "-c", command.c_str(), nullptr);
         perror("execlp");
         return 1;
     }
@@ -202,32 +241,40 @@ int main(int argc, char* argv[]) {
     // page info
     std::cout << CYAN << "PAGE Information:" << RESET << std::endl;
     std::cout << BOLD << "PAGE 1" << RESET << " - ARM support and config information" <<std::endl;
-    std::cout << BOLD << "PAGE 2" << RESET << " - commands, options and zpm wrapper info" <<std::endl;
+    std::cout << BOLD << "PAGE 2" << RESET << " - zpm wrapper commands" <<std::endl;
+    std::cout << BOLD << "PAGE 3" << RESET << " - zpm aliases" <<std::endl;
     std::cout << "" << std::endl;
 
 
 
-    //--------------if page 1 and page 2 --------------------------------------------
-    if(page1 == true && page2 == true){
-        PAGE1_PAGE2();
-        return 0;
-    }
-
-    //---------------------------if page 2 = true (arg)------------------------------
-    if (page2 == true){
-        PAGE2();
-        return 0;
-    }
-
-    //------------------------------if page 1 = true (arg)---------------------------
-    if ( page1 == true) {
-        PAGE1();
+    //--------------if page selected by args ----------------------------------------
+    if (page1 == true || page2 == true || page3 == true) {
+        bool printed = false;
+        if (page1 == true) {
+            PAGE1();
+            printed = true;
+        }
+        if (page2 == true) {
+            if (printed) std::cout << std::endl;
+            PAGE2();
+            printed = true;
+        }
+        if (page3 == true) {
+            if (printed) std::cout << std::endl;
+            PAGE3();
+        }
         return 0;
     }
 
     //----------------------if all pages---------------------------------------------
     if (zhelp::showallpages()) {
-        PAGE1_PAGE2();
+        PAGE_ALL();
+        return 0;
+    }
+
+    //-------------------------------if default page = 3-----------------------------
+    if (zhelp::defaultpage(3)){
+        PAGE3();
         return 0;
     }
 
