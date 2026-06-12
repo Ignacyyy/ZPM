@@ -18,9 +18,9 @@ constexpr const char* kRepoApiUrl =
     "https://api.github.com/repos/Zielina-Konrad-productions/ZPM/releases";
 constexpr const char* kArchiveBaseUrl =
     "https://github.com/Zielina-Konrad-productions/ZPM/archive/refs/tags/";
+constexpr int kUpgradeTotalSteps = 6;
 constexpr std::chrono::milliseconds kDryRunStepDelay{160};
 constexpr std::chrono::milliseconds kLiveLogRefreshInterval{140};
-constexpr std::chrono::seconds kProgressbarInfoDelay{1};
 constexpr int kLiveLogLines = 3;
 constexpr int kLiveLogTopPaddingLines = 1;
 constexpr int kLiveLogBottomPaddingLines = 1;
@@ -30,7 +30,6 @@ constexpr int kLiveLogPrefixColumns = 7;
 constexpr std::size_t kMaxPendingLogLine = 4096;
 
 volatile std::sig_atomic_t g_interrupted = 0;
-std::atomic<bool> g_liveLogCursorSaved{false};
 
 enum class LogMode {
     Truncate,
@@ -55,6 +54,7 @@ struct ProcessConfig {
     bool mirrorCapturedStdoutToLog = false;
     bool logStdout = false;
     bool logStderr = false;
+    bool discardStdin = true;
     bool discardStdout = true;
     bool discardStderr = true;
     LogMode logMode = LogMode::Append;
@@ -289,36 +289,21 @@ void printInfoHeader() {
     std::cout << "\n" << CYAN << "[ZPM-INFO]" << RESET << "\n";
 }
 
-void beginUpgradeStep(float progress,
-                      const std::string& progressText,
+void beginUpgradeStep(UiState state,
                       int& step,
-                      const std::string& infoText) {
-    const bool firstStep = step == 0;
+                      const std::string& text) {
+    std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
 
-    {
-        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-
-        if (g_liveLogCursorSaved.load(std::memory_order_relaxed)) {
-            std::cout << "\033[u";
-        }
-
-        if (step > 0) {
-            std::cout << "\r\033[K\033[1A\r\033[K";
-        } else {
-            std::cout << "\r\033[K";
-        }
-
-        std::cout << CYAN << "[>]" << RESET << " " << infoText << "\n\n";
-        std::cout << std::flush;
-    }
-
-    ++step;
-    if (firstStep) {
-        progressbar_start(progress, progressText);
+    if (step > 0) {
+        std::cout << "\r\033[K\033[1A\r\033[K";
     } else {
-        progressbar_update(progress, progressText);
+        std::cout << "\r\033[K";
     }
-    std::this_thread::sleep_for(kProgressbarInfoDelay);
+
+    std::cout << CYAN << "[>]" << RESET << " " << text << "\n\n";
+
+    progressbar_set_state(state, ++step);
+    std::cout << std::flush;
 }
 
 bool startsWith(const std::string& value, const std::string& prefix) {
@@ -458,7 +443,6 @@ public:
         running_ = true;
         started_ = true;
         stopped_ = false;
-        g_liveLogCursorSaved.store(false, std::memory_order_relaxed);
 
         try {
             worker_ = std::thread(&LiveLogView::run, this);
@@ -491,16 +475,6 @@ public:
 
         std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
         std::cout << "\033[" << kLiveLogRowsBelowBar << "B\r" << std::flush;
-    }
-
-    void reserveRows() {
-        if (!enabled_ || !started_) {
-            return;
-        }
-
-        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-        reserveRowsLocked();
-        std::cout << std::flush;
     }
 
 private:
@@ -611,7 +585,15 @@ private:
                                              kLiveLogPrefixColumns);
 
         std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-        reserveRowsLocked();
+
+        if (!rowsReserved_) {
+            std::cout << "\033[s";
+            for (int i = 0; i < kLiveLogRowsBelowBar; ++i) {
+                std::cout << "\n\033[K";
+            }
+            std::cout << "\033[u";
+            rowsReserved_ = true;
+        }
 
         std::cout << "\033[s";
         for (int row = 1; row <= kLiveLogRowsBelowBar; ++row) {
@@ -628,20 +610,6 @@ private:
         }
 
         std::cout << "\033[u" << std::flush;
-    }
-
-    void reserveRowsLocked() {
-        if (rowsReserved_) {
-            return;
-        }
-
-        std::cout << "\033[s";
-        for (int i = 0; i < kLiveLogRowsBelowBar; ++i) {
-            std::cout << "\n\033[K";
-        }
-        std::cout << "\033[u";
-        rowsReserved_ = true;
-        g_liveLogCursorSaved.store(true, std::memory_order_relaxed);
     }
 
     void run() {
@@ -691,6 +659,7 @@ int waitForChild(pid_t pid) {
 
         if (result < 0 && errno == EINTR) {
             if (g_interrupted && !signalSent) {
+                kill(-pid, SIGINT);
                 kill(pid, SIGINT);
                 signalSent = true;
             }
@@ -702,7 +671,8 @@ int waitForChild(pid_t pid) {
 }
 
 void redirectToDevNull(int targetFd) {
-    const int nullFd = open("/dev/null", O_WRONLY | O_CLOEXEC);
+    const int flags = (targetFd == STDIN_FILENO) ? O_RDONLY : O_WRONLY;
+    const int nullFd = open("/dev/null", flags | O_CLOEXEC);
     if (nullFd >= 0) {
         dup2(nullFd, targetFd);
         close(nullFd);
@@ -711,7 +681,7 @@ void redirectToDevNull(int targetFd) {
 
 ProcessResult runProcess(const std::vector<std::string>& args,
                          const ProcessConfig& config = {}) {
-    if (args.empty()) {
+    if (args.empty() || args.front().empty()) {
         return {};
     }
 
@@ -758,6 +728,12 @@ ProcessResult runProcess(const std::vector<std::string>& args,
     }
 
     if (pid == 0) {
+        setpgid(0, 0);
+
+        if (config.discardStdin) {
+            redirectToDevNull(STDIN_FILENO);
+        }
+
         if (config.captureStdout) {
             readEnd.reset();
             dup2(writeEnd.get(), STDOUT_FILENO);
@@ -776,6 +752,8 @@ ProcessResult runProcess(const std::vector<std::string>& args,
         execvp(argv[0], argv.data());
         _exit(127);
     }
+
+    setpgid(pid, pid);
 
     if (config.captureStdout) {
         writeEnd.reset();
@@ -801,6 +779,7 @@ ProcessResult runProcess(const std::vector<std::string>& args,
 
             if (errno == EINTR) {
                 if (g_interrupted) {
+                    kill(-pid, SIGINT);
                     kill(pid, SIGINT);
                 }
                 continue;
@@ -2157,29 +2136,26 @@ bool runUpdate(const ReleaseInfo& release, bool prerelease) {
     int progressStep = 0;
 
     printInfoHeader();
+    progressbar_start(kUpgradeTotalSteps);
     LiveLogView liveLog(kLogPath, true);
     liveLog.start();
 
     if (ok) {
-        beginUpgradeStep(10.0f,
-                         "1/6 | Checking tools...",
+        beginUpgradeStep(UiState::ZPM_CHECKING,
                          progressStep,
                          "checking required tools");
-        liveLog.reserveRows();
         ok = ensureRequiredCommands();
     }
 
     if (ok && !g_interrupted) {
-        beginUpgradeStep(25.0f,
-                         "2/6 | Downloading release...",
+        beginUpgradeStep(UiState::ZPM_DOWNLOAD,
                          progressStep,
                          "downloading ZPM release");
         ok = downloadRelease(release, archivePath);
     }
 
     if (ok && !g_interrupted) {
-        beginUpgradeStep(40.0f,
-                         "3/6 | Extracting release...",
+        beginUpgradeStep(UiState::ZPM_EXTRACT,
                          progressStep,
                          "extracting release archive");
         sourceDir = extractRelease(archivePath, extractDir);
@@ -2187,16 +2163,14 @@ bool runUpdate(const ReleaseInfo& release, bool prerelease) {
     }
 
     if (ok && !g_interrupted) {
-        beginUpgradeStep(60.0f,
-                         "4/6 | Building ZPM...",
+        beginUpgradeStep(UiState::ZPM_BUILD,
                          progressStep,
                          "building ZPM");
         ok = buildRelease(*sourceDir, buildDir);
     }
 
     if (ok && !g_interrupted) {
-        beginUpgradeStep(85.0f,
-                         "5/6 | Installing ZPM...",
+        beginUpgradeStep(UiState::ZPM_INSTALL,
                          progressStep,
                          "installing ZPM");
         ok = installRelease(*sourceDir, buildDir, release, prerelease);
@@ -2207,21 +2181,22 @@ bool runUpdate(const ReleaseInfo& release, bool prerelease) {
         writeLogLine("update: interrupted by user");
     }
 
-    beginUpgradeStep(95.0f,
-                     "6/6 | Cleaning up...",
+    beginUpgradeStep(UiState::CLEANUP,
                      progressStep,
                      "cleaning");
 
     if (ok) {
         liveLog.stop();
-        progressbar_finish("6/6 | DONE!");
+        progressbar_set_state(UiState::DONE, kUpgradeTotalSteps);
+        progressbar_finish("DONE!");
         liveLog.moveCursorBelow();
         std::cout << YELLOW << "[RAPORT]" << RESET << " " << kLogPath << "\n";
         return true;
     }
 
     liveLog.stop();
-    progressbar_finish("6/6 | ERROR!");
+    progressbar_set_state(UiState::ERROR, progressStep);
+    progressbar_finish("ERROR!");
     liveLog.moveCursorBelow();
     std::cout << RED << "ERROR," << RESET << " check " << kLogPath << " for details.\n"
               << RED << "If ZPM is not usable, reinstall with:\n" << RESET
@@ -2250,31 +2225,33 @@ int handleDryRun(const Options& options) {
     bool ok = true;
 
     printInfoHeader();
+    progressbar_start(kUpgradeTotalSteps);
 
-    const auto runStep = [&progressStep, &ok](float progress,
-                                              const std::string& progressText,
+    const auto runStep = [&progressStep, &ok](UiState state,
                                               const std::string& infoText) {
         if (!ok || g_interrupted) {
             return;
         }
 
-        beginUpgradeStep(progress, progressText, progressStep, infoText);
+        beginUpgradeStep(state, progressStep, infoText);
         ok = dryRunStep();
     };
 
-    runStep(10.0f, "1/6 | Checking tools...", "checking required tools");
-    runStep(25.0f, "2/6 | Downloading release...", "downloading ZPM release");
-    runStep(40.0f, "3/6 | Extracting release...", "extracting release archive");
-    runStep(60.0f, "4/6 | Building ZPM...", "building ZPM");
-    runStep(85.0f, "5/6 | Installing ZPM...", "installing ZPM");
-    runStep(95.0f, "6/6 | Cleaning up...", "cleaning");
+    runStep(UiState::ZPM_CHECKING, "checking required tools");
+    runStep(UiState::ZPM_DOWNLOAD, "downloading ZPM release");
+    runStep(UiState::ZPM_EXTRACT, "extracting release archive");
+    runStep(UiState::ZPM_BUILD, "building ZPM");
+    runStep(UiState::ZPM_INSTALL, "installing ZPM");
+    runStep(UiState::CLEANUP, "cleaning");
 
     if (!ok || g_interrupted) {
-        progressbar_finish("Dry run interrupted!");
+        progressbar_set_state(UiState::ERROR, progressStep);
+        progressbar_finish("ERROR!");
         std::cout << RED << "Dry run failed or was interrupted.\n" << RESET;
         return g_interrupted ? 130 : 1;
     }
 
+    progressbar_set_state(UiState::DONE, kUpgradeTotalSteps);
     progressbar_finish("Dry run done!");
     return 0;
 }
