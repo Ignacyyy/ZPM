@@ -19,11 +19,8 @@ constexpr const char* kLogPath = "/tmp/zclean.log";
 constexpr std::chrono::milliseconds kDryRunStepDelay{160};
 constexpr std::chrono::milliseconds kLiveLogRefreshInterval{140};
 constexpr int kLiveLogLines = 3;
-constexpr int kLiveLogTopPaddingLines = 1;
-constexpr int kLiveLogBottomPaddingLines = 1;
-constexpr int kLiveLogRowsBelowBar =
-    kLiveLogTopPaddingLines + kLiveLogLines + kLiveLogBottomPaddingLines;
-constexpr int kLiveLogPrefixColumns = 7;
+constexpr int kLiveLogRowsAboveBar = 1 + 1 + kLiveLogLines + 1;
+constexpr int kLiveLogPrefixColumns = 2;
 constexpr std::size_t kMaxPendingLogLine = 4096;
 
 volatile std::sig_atomic_t g_interrupted = 0;
@@ -325,25 +322,6 @@ void printInfoHeader() {
     std::cout << CYAN << "[ZPM-INFO]" << RESET << "\n";
 }
 
-void beginCleanStep(float progress,
-                    const std::string& progressText,
-                    int& step,
-                    const std::string& infoText) {
-    std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-
-    if (step > 0) {
-        std::cout << "\r\033[K\033[1A\r\033[K";
-    } else {
-        std::cout << "\r\033[K";
-    }
-
-    std::cout << CYAN << "[>]" << RESET << " " << infoText << "\n\n";
-
-    ++step;
-    progressbar_update(progress, progressText);
-    std::cout << std::flush;
-}
-
 bool startsWith(const std::string& value, const std::string& prefix) {
     return value.rfind(prefix, 0) == 0;
 }
@@ -512,13 +490,38 @@ public:
         draw();
     }
 
-    void moveCursorBelow() const {
-        if (!started_) {
+    void prepareForInfoAppendLocked() {
+        if (!rowsReserved_) {
+            std::cout << "\r\033[K";
             return;
         }
 
-        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-        std::cout << "\033[" << kLiveLogRowsBelowBar << "B\r" << std::flush;
+        std::cout << "\r\033[K"
+                  << "\033[" << kLiveLogRowsAboveBar << "A\r\033[K";
+        rowsReserved_ = false;
+    }
+
+    void drawAtCursorLocked() {
+        const std::vector<std::string> lines = displayLines();
+        const int textColumns = std::max(0,
+                                         zpm::progressbar_detail::terminalWidth() -
+                                             kLiveLogPrefixColumns);
+
+        std::cout << "\r\033[K\n"
+                  << "\r\033[K" << CYAN << "[ZPM-LOG]" << RESET << "\n";
+
+        for (int row = 0; row < kLiveLogLines; ++row) {
+            std::cout << "\r\033[K";
+            if (row < static_cast<int>(lines.size())) {
+                std::cout << CYAN << "> " << RESET
+                          << zpm::progressbar_detail::sanitizeTask(lines[static_cast<std::size_t>(row)],
+                                                                   textColumns);
+            }
+            std::cout << "\n";
+        }
+
+        std::cout << "\r\033[K\n" << std::flush;
+        rowsReserved_ = true;
     }
 
 private:
@@ -623,37 +626,14 @@ private:
     }
 
     void draw() {
-        const std::vector<std::string> lines = displayLines();
-        const int textColumns = std::max(0,
-                                         zpm::progressbar_detail::terminalWidth() -
-                                             kLiveLogPrefixColumns);
-
         std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-
         if (!rowsReserved_) {
-            std::cout << "\033[s";
-            for (int i = 0; i < kLiveLogRowsBelowBar; ++i) {
-                std::cout << "\n\033[K";
-            }
-            std::cout << "\033[u";
-            rowsReserved_ = true;
+            return;
         }
 
-        std::cout << "\033[s";
-
-        for (int row = 1; row <= kLiveLogRowsBelowBar; ++row) {
-            std::cout << "\033[u\033[" << row << "B\r\033[K";
-
-            const int logIndex = row - kLiveLogTopPaddingLines - 1;
-            if (logIndex >= 0 &&
-                logIndex < kLiveLogLines &&
-                logIndex < static_cast<int>(lines.size())) {
-                std::cout << CYAN << "  log> " << RESET
-                          << zpm::progressbar_detail::sanitizeTask(lines[static_cast<std::size_t>(logIndex)],
-                                                                   textColumns);
-            }
-        }
-
+        std::cout << "\033[s"
+                  << "\033[" << kLiveLogRowsAboveBar << "A\r";
+        drawAtCursorLocked();
         std::cout << "\033[u" << std::flush;
     }
 
@@ -678,6 +658,44 @@ private:
     std::string pendingLine_;
     std::vector<std::string> recentLines_;
 };
+
+void beginCleanStep(float progress,
+                    const std::string& progressText,
+                    int& step,
+                    const std::string& infoText,
+                    LiveLogView* liveLog = nullptr) {
+    const bool startProgressbar = step == 0;
+
+    {
+        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+
+        if (liveLog != nullptr) {
+            liveLog->prepareForInfoAppendLocked();
+        } else {
+            std::cout << "\r\033[K";
+        }
+
+        const int textColumns = std::max(0,
+                                         zpm::progressbar_detail::terminalWidth() - 4);
+
+        std::cout << CYAN << "[>]" << RESET << " "
+                  << zpm::progressbar_detail::sanitizeTask(infoText, textColumns)
+                  << "\n";
+
+        if (liveLog != nullptr) {
+            liveLog->drawAtCursorLocked();
+        }
+
+        std::cout << std::flush;
+    }
+
+    ++step;
+    if (startProgressbar) {
+        progressbar_start(progress, progressText);
+    } else {
+        progressbar_update(progress, progressText);
+    }
+}
 
 int decodeExitStatus(int status) {
     if (status == -1) {
@@ -1455,7 +1473,6 @@ int runSteps(const std::vector<Step>& steps) {
 
     int infoStep = 0;
     printInfoHeader();
-    progressbar_start(0.0f, "0/" + std::to_string(total) + " | starting...");
     LiveLogView liveLog(kLogPath, true);
     liveLog.start();
 
@@ -1463,7 +1480,6 @@ int runSteps(const std::vector<Step>& steps) {
         if (g_interrupted) {
             liveLog.stop();
             progressbar_finish("Cancelled!");
-            liveLog.moveCursorBelow();
             std::cout << YELLOW << "Cancelled.\n" << RESET;
             return 130;
         }
@@ -1474,13 +1490,12 @@ int runSteps(const std::vector<Step>& steps) {
         const std::string prefix = std::to_string(i + 1) + "/" + std::to_string(total) +
                                    " | " + step.label;
 
-        beginCleanStep(startPct, prefix, infoStep, step.label);
+        beginCleanStep(startPct, prefix, infoStep, step.label, &liveLog);
         const bool ok = step.action();
 
         if (g_interrupted) {
             liveLog.stop();
             progressbar_finish("Cancelled!");
-            liveLog.moveCursorBelow();
             std::cout << YELLOW << "Cancelled.\n" << RESET;
             return 130;
         }
@@ -1492,7 +1507,6 @@ int runSteps(const std::vector<Step>& steps) {
     if (anyFailed) {
         liveLog.stop();
         progressbar_finish("Done with errors!");
-        liveLog.moveCursorBelow();
         std::cout << RED << "Cleaning finished with errors!\n" << RESET;
         std::cout << YELLOW << "[RAPORT] " << RESET << kLogPath << "\n";
         return 1;
@@ -1500,7 +1514,6 @@ int runSteps(const std::vector<Step>& steps) {
 
     liveLog.stop();
     progressbar_finish("Done!");
-    liveLog.moveCursorBelow();
     std::cout << GREEN << "Cleaning complete!\n" << RESET;
     std::cout << YELLOW << "[RAPORT] " << RESET << kLogPath << "\n";
     return 0;
@@ -1674,7 +1687,6 @@ int runDryRunSteps(const std::vector<std::string>& labels) {
     int infoStep = 0;
 
     printInfoHeader();
-    progressbar_start(0.0f, "0/" + std::to_string(total) + " | starting dry run...");
 
     for (int i = 0; i < total; ++i) {
         if (g_interrupted) {
@@ -1689,7 +1701,10 @@ int runDryRunSteps(const std::vector<std::string>& labels) {
         const std::string prefix = std::to_string(i + 1) + "/" + std::to_string(total) +
                                    " | " + labels[static_cast<size_t>(i)];
 
-        beginCleanStep(startPct, prefix, infoStep, labels[static_cast<size_t>(i)]);
+        beginCleanStep(startPct,
+                       prefix,
+                       infoStep,
+                       labels[static_cast<size_t>(i)]);
 
         if (!dryRunStep()) {
             progressbar_finish("Dry run interrupted!");
