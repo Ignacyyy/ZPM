@@ -227,16 +227,9 @@ if [ -d "$TARGET/bin" ] && [ -n "$(ls -A "$TARGET/bin" 2>/dev/null)" ]; then
 else
     warn "bin/ is empty — no symlinks created."
 fi
-
+    
 # ── CLEAN PREVERSION STATE ────────────────────────────────────────────────────
 rm -f "$TARGET/PREVERSION.txt" 2>/dev/null || true
-
-# ── DONE ──────────────────────────────────────────────────────────────────────
-echo ""
-echo "Installation complete!"
-echo "type zhome to gain more info about ZPM"
-printf "Path    : %-34s\n" "$TARGET"
-printf "Log     : %-34s\n" "$LOG"
 
 # ── DONE ──────────────────────────────────────────────────────────────────────
 echo ""
