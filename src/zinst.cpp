@@ -1,10 +1,12 @@
 #include "main.h"
 
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cctype>
 #include <cstdlib>
 #include <limits>
+#include <thread>
 #include <sys/file.h>
 #include <sys/wait.h>
 
@@ -12,6 +14,11 @@ namespace {
 
 constexpr const char* kLogPath = "/tmp/zinst.log";
 constexpr std::size_t kMaxNativeSearchResults = 30;
+constexpr std::chrono::milliseconds kLiveLogRefreshInterval{140};
+constexpr int kLiveLogLines = 3;
+constexpr int kLiveLogRowsAboveBar = 1 + 1 + kLiveLogLines + 1;
+constexpr int kLiveLogPrefixColumns = 2;
+constexpr std::size_t kMaxPendingLogLine = 4096;
 
 volatile std::sig_atomic_t g_interrupted = 0;
 
@@ -297,25 +304,6 @@ void printInfoHeader() {
     std::cout << CYAN << "[ZPM-INFO]" << RESET << "\n";
 }
 
-void beginInstallStep(float progress,
-                      const std::string& progressText,
-                      int& step,
-                      const std::string& infoText) {
-    std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-
-    if (step > 0) {
-        std::cout << "\r\033[K\033[1A\r\033[K";
-    } else {
-        std::cout << "\r\033[K";
-    }
-
-    std::cout << CYAN << "[>]" << RESET << " " << infoText << "\n\n";
-
-    ++step;
-    progressbar_update(progress, progressText);
-    std::cout << std::flush;
-}
-
 bool startsWith(const std::string& value, const std::string& prefix) {
     return value.rfind(prefix, 0) == 0;
 }
@@ -492,6 +480,259 @@ void writeLogLine(const std::string& line, LogMode mode = LogMode::Append) {
         return;
     }
     writeAll(fd.get(), line + "\n");
+}
+
+class LiveLogView {
+public:
+    explicit LiveLogView(const char* path, bool enabled)
+        : path_(path), enabled_(enabled) {}
+
+    LiveLogView(const LiveLogView&) = delete;
+    LiveLogView& operator=(const LiveLogView&) = delete;
+
+    ~LiveLogView() {
+        stop();
+    }
+
+    void start() {
+        if (!enabled_ || started_) {
+            return;
+        }
+
+        offset_ = currentFileSize();
+        running_ = true;
+        started_ = true;
+        stopped_ = false;
+
+        try {
+            worker_ = std::thread(&LiveLogView::run, this);
+        } catch (...) {
+            running_ = false;
+            started_ = false;
+            stopped_ = true;
+        }
+    }
+
+    void stop() {
+        if (!started_ || stopped_) {
+            return;
+        }
+
+        stopped_ = true;
+        running_ = false;
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+
+        readNewLogData();
+        draw();
+    }
+
+    void prepareForInfoAppendLocked() {
+        if (!rowsReserved_) {
+            std::cout << "\r\033[K";
+            return;
+        }
+
+        std::cout << "\r\033[K"
+                  << "\033[" << kLiveLogRowsAboveBar << "A\r\033[K";
+        rowsReserved_ = false;
+    }
+
+    void drawAtCursorLocked() {
+        const std::vector<std::string> lines = displayLines();
+        const int textColumns = std::max(0,
+                                         zpm::progressbar_detail::terminalWidth() -
+                                             kLiveLogPrefixColumns);
+
+        std::cout << "\r\033[K\n"
+                  << "\r\033[K" << CYAN << "[ZPM-LOG]" << RESET << "\n";
+
+        for (int row = 0; row < kLiveLogLines; ++row) {
+            std::cout << "\r\033[K";
+            if (row < static_cast<int>(lines.size())) {
+                std::cout << CYAN << "> " << RESET
+                          << zpm::progressbar_detail::sanitizeTask(lines[static_cast<std::size_t>(row)],
+                                                                   textColumns);
+            }
+            std::cout << "\n";
+        }
+
+        std::cout << "\r\033[K\n" << std::flush;
+        rowsReserved_ = true;
+    }
+
+private:
+    off_t currentFileSize() const {
+        FileDescriptor fd(open(path_, O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+        if (!fd.valid() || !isSafeOwnedRegularFile(fd.get())) {
+            return 0;
+        }
+
+        struct stat st {};
+        if (fstat(fd.get(), &st) != 0) {
+            return 0;
+        }
+
+        return st.st_size;
+    }
+
+    void addLine(const std::string& rawLine) {
+        std::string line = trim(rawLine);
+        if (line.empty()) {
+            return;
+        }
+
+        recentLines_.push_back(std::move(line));
+        if (recentLines_.size() > static_cast<std::size_t>(kLiveLogLines)) {
+            recentLines_.erase(recentLines_.begin());
+        }
+    }
+
+    void flushPendingLine() {
+        addLine(pendingLine_);
+        pendingLine_.clear();
+    }
+
+    bool readNewLogData() {
+        FileDescriptor fd(open(path_, O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+        if (!fd.valid() || !isSafeOwnedRegularFile(fd.get())) {
+            return false;
+        }
+
+        struct stat st {};
+        if (fstat(fd.get(), &st) != 0) {
+            return false;
+        }
+
+        if (st.st_size < offset_) {
+            offset_ = 0;
+            pendingLine_.clear();
+            recentLines_.clear();
+        }
+
+        if (lseek(fd.get(), offset_, SEEK_SET) < 0) {
+            return false;
+        }
+
+        bool changed = false;
+        std::array<char, 4096> buffer {};
+
+        for (;;) {
+            const ssize_t count = read(fd.get(), buffer.data(), buffer.size());
+            if (count > 0) {
+                offset_ += count;
+                changed = true;
+
+                for (ssize_t i = 0; i < count; ++i) {
+                    const unsigned char ch = static_cast<unsigned char>(buffer[static_cast<std::size_t>(i)]);
+                    if (ch == '\n' || ch == '\r') {
+                        flushPendingLine();
+                    } else if (ch == '\t') {
+                        pendingLine_ += ' ';
+                    } else if (ch >= 32 && ch != 127 && pendingLine_.size() < kMaxPendingLogLine) {
+                        pendingLine_ += static_cast<char>(ch);
+                    }
+                }
+                continue;
+            }
+
+            if (count == 0) {
+                break;
+            }
+
+            if (errno == EINTR) {
+                continue;
+            }
+
+            break;
+        }
+
+        return changed;
+    }
+
+    std::vector<std::string> displayLines() const {
+        std::vector<std::string> lines = recentLines_;
+        const std::string partial = trim(pendingLine_);
+        if (!partial.empty()) {
+            if (lines.size() == static_cast<std::size_t>(kLiveLogLines)) {
+                lines.erase(lines.begin());
+            }
+            lines.push_back(partial);
+        }
+        return lines;
+    }
+
+    void draw() {
+        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+        if (!rowsReserved_) {
+            return;
+        }
+
+        std::cout << "\033[s"
+                  << "\033[" << kLiveLogRowsAboveBar << "A\r";
+        drawAtCursorLocked();
+        std::cout << "\033[u" << std::flush;
+    }
+
+    void run() {
+        while (running_) {
+            if (readNewLogData() || !pendingLine_.empty()) {
+                draw();
+            }
+
+            std::this_thread::sleep_for(kLiveLogRefreshInterval);
+        }
+    }
+
+    const char* path_;
+    bool enabled_ = false;
+    bool started_ = false;
+    bool stopped_ = true;
+    bool rowsReserved_ = false;
+    std::atomic<bool> running_{false};
+    std::thread worker_;
+    off_t offset_ = 0;
+    std::string pendingLine_;
+    std::vector<std::string> recentLines_;
+};
+
+void beginInstallStep(float progress,
+                      const std::string& progressText,
+                      int& step,
+                      const std::string& infoText,
+                      LiveLogView* liveLog = nullptr) {
+    const bool startProgressbar = step == 0;
+
+    {
+        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+
+        if (liveLog != nullptr) {
+            liveLog->prepareForInfoAppendLocked();
+        } else {
+            std::cout << "\r\033[K";
+        }
+
+        const int textColumns = std::max(0,
+                                         zpm::progressbar_detail::terminalWidth() - 4);
+
+        std::cout << CYAN << "[>]" << RESET << " "
+                  << zpm::progressbar_detail::sanitizeTask(infoText, textColumns)
+                  << "\n";
+
+        if (liveLog != nullptr) {
+            liveLog->drawAtCursorLocked();
+        }
+
+        std::cout << std::flush;
+    }
+
+    ++step;
+    if (startProgressbar) {
+        progressbar_start(progress, progressText);
+    } else {
+        progressbar_update(progress, progressText);
+    }
 }
 
 int decodeExitStatus(int status) {
@@ -885,6 +1126,74 @@ void parseAptNativeResults(const std::string& output,
     }
 }
 
+std::string aptPackageSummary(const std::string& output) {
+    for (const std::string& rawLine : splitLines(output)) {
+        const std::string line = trim(rawLine);
+        const std::size_t separator = line.find(':');
+        if (separator == std::string::npos) {
+            continue;
+        }
+
+        const std::string key = line.substr(0, separator);
+        if (key == "Description-en" || key == "Description") {
+            return trim(line.substr(separator + 1));
+        }
+    }
+
+    return {};
+}
+
+bool isTransitionalPackage(const PackageCandidate& candidate) {
+    const std::string summary = toLower(candidate.summary);
+    return summary.find("transitional package") != std::string::npos ||
+           summary.find("dummy transitional") != std::string::npos ||
+           summary.find("pakiet przej") != std::string::npos;
+}
+
+int aptCandidateRank(const std::string& query, const PackageCandidate& candidate) {
+    const std::string queryLower = toLower(query);
+    const std::string nameLower = toLower(candidate.name);
+    const bool exact = nameLower == queryLower;
+    const bool prefix = startsWith(nameLower, queryLower);
+    const bool transitional = isTransitionalPackage(candidate);
+
+    if (exact && !transitional) {
+        return 0;
+    }
+    if (!transitional && nameLower == queryLower + "-installer") {
+        return 1;
+    }
+    if (!transitional && nameLower == queryLower + "-launcher") {
+        return 2;
+    }
+    if (prefix && !transitional) {
+        return 3;
+    }
+    if (!transitional) {
+        return 4;
+    }
+    if (exact) {
+        return 5;
+    }
+    if (prefix) {
+        return 6;
+    }
+    return 7;
+}
+
+void sortAptNativeResults(const std::string& query, std::vector<PackageCandidate>& candidates) {
+    std::stable_sort(candidates.begin(),
+                     candidates.end(),
+                     [&](const PackageCandidate& left, const PackageCandidate& right) {
+                         const int leftRank = aptCandidateRank(query, left);
+                         const int rightRank = aptCandidateRank(query, right);
+                         if (leftRank != rightRank) {
+                             return leftRank < rightRank;
+                         }
+                         return toLower(left.name) < toLower(right.name);
+                     });
+}
+
 void parseZypperNativeResults(const std::string& output,
                               std::vector<PackageCandidate>& candidates,
                               bool& truncated) {
@@ -1015,15 +1324,21 @@ ResolveResult resolveNative(const AppContext& context, const std::string& packag
     result.name = package;
 
     if (context.packageManager == "apt") {
-        if (runQuiet({"apt-cache", "show", package})) {
-            addCandidate(result.candidates, package, {}, result.truncated);
-        }
-
         const std::string pattern = "^" + regexEscape(package);
         parseAptNativeResults(capture({"apt-cache", "search", "--names-only", pattern}).output,
                               result.candidates,
                               result.truncated);
 
+        const ProcessResult exactInfo =
+            capture({"apt-cache", "show", "--no-all-versions", package});
+        if (exactInfo.exitCode == 0 && !exactInfo.output.empty()) {
+            addCandidate(result.candidates,
+                         package,
+                         aptPackageSummary(exactInfo.output),
+                         result.truncated);
+        }
+
+        sortAptNativeResults(package, result.candidates);
         return finishResolveResult(package, std::move(result));
     }
 
@@ -1681,7 +1996,6 @@ InstallStatus installTarget(AppContext& context,
         label
     };
 
-    progressbar_start(startPct, installStepLabel(progress, 0, "preparing"));
     showInstallStep(progress, 1, "checking selected source");
 
     if (dryRun) {
@@ -1735,11 +2049,14 @@ int runInstallLoop(AppContext& context,
 
     int infoStep = 0;
     printInfoHeader();
-    progressbar_start(0.0f, "0/" + std::to_string(total) +
-                             (dryRun ? " | starting dry run..." : " | starting..."));
+
+    LiveLogView liveLog(kLogPath, !dryRun);
+    LiveLogView* liveLogView = dryRun ? nullptr : &liveLog;
+    liveLog.start();
 
     for (int i = 0; i < total; ++i) {
         if (g_interrupted) {
+            liveLog.stop();
             progressbar_finish("Cancelled!");
             std::cout << "\n" << YELLOW << "Cancelled.\n" << RESET;
             return 130;
@@ -1761,7 +2078,8 @@ int runInstallLoop(AppContext& context,
         beginInstallStep(startPct,
                          progressText,
                          infoStep,
-                         installInfoText(context, target, dryRun));
+                         installInfoText(context, target, dryRun),
+                         liveLogView);
 
         const InstallStatus status = installTarget(context,
                                                    target,
@@ -1772,6 +2090,7 @@ int runInstallLoop(AppContext& context,
                                                    total);
 
         if (status == InstallStatus::Interrupted) {
+            liveLog.stop();
             progressbar_finish("Cancelled!");
             std::cout << "\n" << YELLOW << "Cancelled.\n" << RESET;
             return 130;
@@ -1820,6 +2139,7 @@ int runInstallLoop(AppContext& context,
     }
 
     if (anyFailed) {
+        liveLog.stop();
         progressbar_finish("Done with errors!");
         std::cout << "\n";
         for (const PackageResult& result : results) {
@@ -1830,6 +2150,7 @@ int runInstallLoop(AppContext& context,
         return 1;
     }
 
+    liveLog.stop();
     progressbar_finish(dryRun ? "Dry run done!" : "Done!");
     std::cout << "\n";
     for (const PackageResult& result : results) {
