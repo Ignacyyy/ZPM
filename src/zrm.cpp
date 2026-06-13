@@ -1773,6 +1773,15 @@ RemoveStatus removeFlatpak(const AppContext& context,
         return RemoveStatus::Interrupted;
     }
     if (exitCode != 0) {
+        showRemoveStep(progress, 6, "verifying removal after warning");
+        if (!isInstalledFlatpak(context, {target.name, target.flatpakFlag})) {
+            writeLogLine("flatpak warning: uninstall exited with code " +
+                         std::to_string(exitCode) +
+                         ", but " + target.name + " is no longer installed");
+            finishRemoveStep(progress, "removed with warning");
+            return RemoveStatus::Removed;
+        }
+
         finishRemoveStep(progress, "failed");
         return RemoveStatus::Failed;
     }
