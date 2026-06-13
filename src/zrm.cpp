@@ -1100,6 +1100,32 @@ bool startsWithInsensitive(const std::string& value, const std::string& prefix) 
     return !lowerPrefix.empty() && lowerValue.rfind(lowerPrefix, 0) == 0;
 }
 
+std::string flatpakIdTail(const std::string& appId) {
+    const std::size_t dot = appId.rfind('.');
+    return dot == std::string::npos ? appId : appId.substr(dot + 1);
+}
+
+int flatpakMatchRank(const std::string& appId, const std::string& query) {
+    const std::string appLower = toLower(appId);
+    const std::string tailLower = toLower(flatpakIdTail(appId));
+    const std::string queryLower = toLower(trim(query));
+
+    if (queryLower.empty()) {
+        return 4;
+    }
+    if (appLower == queryLower || tailLower == queryLower) {
+        return 0;
+    }
+    if (startsWith(appLower, queryLower) || startsWith(tailLower, queryLower)) {
+        return 1;
+    }
+    if (queryLower.size() >= 3 && appLower.find(queryLower) != std::string::npos) {
+        return 2;
+    }
+
+    return 4;
+}
+
 std::vector<std::string> prefixMatches(const std::vector<std::string>& installed,
                                        const std::string& query,
                                        bool exactInstalled) {
@@ -1160,23 +1186,17 @@ std::vector<FlatpakPackage> findFlatpakMatches(const AppContext& context,
                                                const std::string& package) {
     std::vector<FlatpakPackage> matches;
     for (const FlatpakPackage& app : context.installedFlatpaks) {
-        if (toLower(app.name) == toLower(package)) {
-            addUniqueFlatpak(matches, app);
-        }
-    }
-
-    for (const FlatpakPackage& app : context.installedFlatpaks) {
-        if (startsWithInsensitive(app.name, package)) {
+        if (flatpakMatchRank(app.name, package) < 4) {
             addUniqueFlatpak(matches, app);
         }
     }
 
     std::stable_sort(matches.begin(), matches.end(), [&](const FlatpakPackage& lhs,
                                                          const FlatpakPackage& rhs) {
-        const bool lhsExact = toLower(lhs.name) == toLower(package);
-        const bool rhsExact = toLower(rhs.name) == toLower(package);
-        if (lhsExact != rhsExact) {
-            return lhsExact;
+        const int lhsRank = flatpakMatchRank(lhs.name, package);
+        const int rhsRank = flatpakMatchRank(rhs.name, package);
+        if (lhsRank != rhsRank) {
+            return lhsRank < rhsRank;
         }
         if (lhs.name != rhs.name) {
             return lhs.name < rhs.name;
