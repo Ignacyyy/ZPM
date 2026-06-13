@@ -1,18 +1,25 @@
 #include "main.h"
 
 #include <cerrno>
+#include <chrono>
 #include <cctype>
 #include <csignal>
 #include <cstdlib>
 #include <grp.h>
 #include <limits>
 #include <pwd.h>
+#include <thread>
 #include <sys/file.h>
 #include <sys/wait.h>
 
 namespace {
 
 constexpr const char* kLogPath = "/tmp/zrm.log";
+constexpr std::chrono::milliseconds kLiveLogRefreshInterval{140};
+constexpr int kLiveLogLines = 3;
+constexpr int kLiveLogRowsAboveBar = 1 + 1 + kLiveLogLines + 1;
+constexpr int kLiveLogPrefixColumns = 2;
+constexpr std::size_t kMaxPendingLogLine = 4096;
 
 volatile std::sig_atomic_t g_interrupted = 0;
 
@@ -304,25 +311,6 @@ void printInfoHeader() {
     std::cout << CYAN << "[ZPM-INFO]" << RESET << "\n";
 }
 
-void beginRemoveStep(float progress,
-                     const std::string& progressText,
-                     int& step,
-                     const std::string& infoText) {
-    std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
-
-    if (step > 0) {
-        std::cout << "\r\033[K\033[1A\r\033[K";
-    } else {
-        std::cout << "\r\033[K";
-    }
-
-    std::cout << CYAN << "[>]" << RESET << " " << infoText << "\n\n";
-
-    ++step;
-    progressbar_update(progress, progressText);
-    std::cout << std::flush;
-}
-
 bool startsWith(const std::string& value, const std::string& prefix) {
     return value.rfind(prefix, 0) == 0;
 }
@@ -424,6 +412,259 @@ void writeLogLine(const std::string& line, LogMode mode = LogMode::Append) {
         return;
     }
     writeAll(fd.get(), line + "\n");
+}
+
+class LiveLogView {
+public:
+    explicit LiveLogView(const char* path, bool enabled)
+        : path_(path), enabled_(enabled) {}
+
+    LiveLogView(const LiveLogView&) = delete;
+    LiveLogView& operator=(const LiveLogView&) = delete;
+
+    ~LiveLogView() {
+        stop();
+    }
+
+    void start() {
+        if (!enabled_ || started_) {
+            return;
+        }
+
+        offset_ = currentFileSize();
+        running_ = true;
+        started_ = true;
+        stopped_ = false;
+
+        try {
+            worker_ = std::thread(&LiveLogView::run, this);
+        } catch (...) {
+            running_ = false;
+            started_ = false;
+            stopped_ = true;
+        }
+    }
+
+    void stop() {
+        if (!started_ || stopped_) {
+            return;
+        }
+
+        stopped_ = true;
+        running_ = false;
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+
+        readNewLogData();
+        draw();
+    }
+
+    void prepareForInfoAppendLocked() {
+        if (!rowsReserved_) {
+            std::cout << "\r\033[K";
+            return;
+        }
+
+        std::cout << "\r\033[K"
+                  << "\033[" << kLiveLogRowsAboveBar << "A\r\033[K";
+        rowsReserved_ = false;
+    }
+
+    void drawAtCursorLocked() {
+        const std::vector<std::string> lines = displayLines();
+        const int textColumns = std::max(0,
+                                         zpm::progressbar_detail::terminalWidth() -
+                                             kLiveLogPrefixColumns);
+
+        std::cout << "\r\033[K\n"
+                  << "\r\033[K" << CYAN << "[ZPM-LOG]" << RESET << "\n";
+
+        for (int row = 0; row < kLiveLogLines; ++row) {
+            std::cout << "\r\033[K";
+            if (row < static_cast<int>(lines.size())) {
+                std::cout << CYAN << "> " << RESET
+                          << zpm::progressbar_detail::sanitizeTask(lines[static_cast<std::size_t>(row)],
+                                                                   textColumns);
+            }
+            std::cout << "\n";
+        }
+
+        std::cout << "\r\033[K\n" << std::flush;
+        rowsReserved_ = true;
+    }
+
+private:
+    off_t currentFileSize() const {
+        FileDescriptor fd(open(path_, O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+        if (!fd.valid() || !isSafeOwnedRegularFile(fd.get())) {
+            return 0;
+        }
+
+        struct stat st {};
+        if (fstat(fd.get(), &st) != 0) {
+            return 0;
+        }
+
+        return st.st_size;
+    }
+
+    void addLine(const std::string& rawLine) {
+        std::string line = trim(rawLine);
+        if (line.empty()) {
+            return;
+        }
+
+        recentLines_.push_back(std::move(line));
+        if (recentLines_.size() > static_cast<std::size_t>(kLiveLogLines)) {
+            recentLines_.erase(recentLines_.begin());
+        }
+    }
+
+    void flushPendingLine() {
+        addLine(pendingLine_);
+        pendingLine_.clear();
+    }
+
+    bool readNewLogData() {
+        FileDescriptor fd(open(path_, O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+        if (!fd.valid() || !isSafeOwnedRegularFile(fd.get())) {
+            return false;
+        }
+
+        struct stat st {};
+        if (fstat(fd.get(), &st) != 0) {
+            return false;
+        }
+
+        if (st.st_size < offset_) {
+            offset_ = 0;
+            pendingLine_.clear();
+            recentLines_.clear();
+        }
+
+        if (lseek(fd.get(), offset_, SEEK_SET) < 0) {
+            return false;
+        }
+
+        bool changed = false;
+        std::array<char, 4096> buffer {};
+
+        for (;;) {
+            const ssize_t count = read(fd.get(), buffer.data(), buffer.size());
+            if (count > 0) {
+                offset_ += count;
+                changed = true;
+
+                for (ssize_t i = 0; i < count; ++i) {
+                    const unsigned char ch = static_cast<unsigned char>(buffer[static_cast<std::size_t>(i)]);
+                    if (ch == '\n' || ch == '\r') {
+                        flushPendingLine();
+                    } else if (ch == '\t') {
+                        pendingLine_ += ' ';
+                    } else if (ch >= 32 && ch != 127 && pendingLine_.size() < kMaxPendingLogLine) {
+                        pendingLine_ += static_cast<char>(ch);
+                    }
+                }
+                continue;
+            }
+
+            if (count == 0) {
+                break;
+            }
+
+            if (errno == EINTR) {
+                continue;
+            }
+
+            break;
+        }
+
+        return changed;
+    }
+
+    std::vector<std::string> displayLines() const {
+        std::vector<std::string> lines = recentLines_;
+        const std::string partial = trim(pendingLine_);
+        if (!partial.empty()) {
+            if (lines.size() == static_cast<std::size_t>(kLiveLogLines)) {
+                lines.erase(lines.begin());
+            }
+            lines.push_back(partial);
+        }
+        return lines;
+    }
+
+    void draw() {
+        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+        if (!rowsReserved_) {
+            return;
+        }
+
+        std::cout << "\033[s"
+                  << "\033[" << kLiveLogRowsAboveBar << "A\r";
+        drawAtCursorLocked();
+        std::cout << "\033[u" << std::flush;
+    }
+
+    void run() {
+        while (running_) {
+            if (readNewLogData() || !pendingLine_.empty()) {
+                draw();
+            }
+
+            std::this_thread::sleep_for(kLiveLogRefreshInterval);
+        }
+    }
+
+    const char* path_;
+    bool enabled_ = false;
+    bool started_ = false;
+    bool stopped_ = true;
+    bool rowsReserved_ = false;
+    std::atomic<bool> running_{false};
+    std::thread worker_;
+    off_t offset_ = 0;
+    std::string pendingLine_;
+    std::vector<std::string> recentLines_;
+};
+
+void beginRemoveStep(float progress,
+                     const std::string& progressText,
+                     int& step,
+                     const std::string& infoText,
+                     LiveLogView* liveLog = nullptr) {
+    const bool startProgressbar = step == 0;
+
+    {
+        std::lock_guard<std::mutex> outputLock(zpm::progressbar_detail::outputMutex());
+
+        if (liveLog != nullptr) {
+            liveLog->prepareForInfoAppendLocked();
+        } else {
+            std::cout << "\r\033[K";
+        }
+
+        const int textColumns = std::max(0,
+                                         zpm::progressbar_detail::terminalWidth() - 4);
+
+        std::cout << CYAN << "[>]" << RESET << " "
+                  << zpm::progressbar_detail::sanitizeTask(infoText, textColumns)
+                  << "\n";
+
+        if (liveLog != nullptr) {
+            liveLog->drawAtCursorLocked();
+        }
+
+        std::cout << std::flush;
+    }
+
+    ++step;
+    if (startProgressbar) {
+        progressbar_start(progress, progressText);
+    } else {
+        progressbar_update(progress, progressText);
+    }
 }
 
 int decodeExitStatus(int status) {
@@ -977,7 +1218,7 @@ bool isInstalledSnap(const AppContext& context, const std::string& package) {
 std::vector<std::string> listInstalledNativePackages(const AppContext& context) {
     ProcessResult result;
     if (context.packageManager == "apt") {
-        result = capture({"dpkg-query", "-W", "-f=${binary:Package}\\n"});
+        result = capture({"dpkg-query", "-W", "-f=${binary:Package}\\t${Status}\\n"});
     } else if (context.packageManager == "zypper" || context.packageManager == "dnf") {
         result = capture({"rpm", "-qa", "--qf", "%{NAME}\\n"});
     } else {
@@ -990,6 +1231,21 @@ std::vector<std::string> listInstalledNativePackages(const AppContext& context) 
 
     std::vector<std::string> packages;
     for (const std::string& line : splitLines(result.output)) {
+        if (context.packageManager == "apt") {
+            const std::size_t separator = line.find('\t');
+            if (separator == std::string::npos) {
+                continue;
+            }
+
+            const std::string status = trim(line.substr(separator + 1));
+            if (status != "install ok installed") {
+                continue;
+            }
+
+            addUniqueString(packages, line.substr(0, separator));
+            continue;
+        }
+
         addUniqueString(packages, line);
     }
 
@@ -1609,7 +1865,6 @@ RemoveStatus removeTarget(AppContext& context,
         removeTargetLabel(context, target, index, total)
     };
 
-    progressbar_start(startPct, removeStepLabel(progress, 0, "preparing"));
     showRemoveStep(progress, 1, "checking selected source");
 
     if (dryRun) {
@@ -1681,11 +1936,14 @@ int runRemoveLoop(AppContext& context,
 
     int infoStep = 0;
     printInfoHeader();
-    progressbar_start(0.0f, "0/" + std::to_string(total) +
-                             (dryRun ? " | starting dry run..." : " | starting..."));
+
+    LiveLogView liveLog(kLogPath, !dryRun);
+    LiveLogView* liveLogView = dryRun ? nullptr : &liveLog;
+    liveLog.start();
 
     for (int i = 0; i < total; ++i) {
         if (g_interrupted) {
+            liveLog.stop();
             progressbar_finish("Cancelled!");
             std::cout << "\n" << YELLOW << "Cancelled.\n" << RESET;
             return 130;
@@ -1705,7 +1963,8 @@ int runRemoveLoop(AppContext& context,
         beginRemoveStep(startPct,
                         progressText,
                         infoStep,
-                        removeInfoText(context, target, dryRun));
+                        removeInfoText(context, target, dryRun),
+                        liveLogView);
 
         const RemoveStatus status = removeTarget(context,
                                                  target,
@@ -1716,6 +1975,7 @@ int runRemoveLoop(AppContext& context,
                                                  total);
 
         if (status == RemoveStatus::Interrupted) {
+            liveLog.stop();
             progressbar_finish("Cancelled!");
             std::cout << "\n" << YELLOW << "Cancelled.\n" << RESET;
             return 130;
@@ -1737,6 +1997,7 @@ int runRemoveLoop(AppContext& context,
     }
 
     if (anyFailed) {
+        liveLog.stop();
         progressbar_finish("Done with errors!");
         std::cout << "\n";
         for (const PackageResult& result : results) {
@@ -1747,6 +2008,7 @@ int runRemoveLoop(AppContext& context,
         return 1;
     }
 
+    liveLog.stop();
     progressbar_finish(dryRun ? "Dry run done!" : "Done!");
     std::cout << "\n";
     for (const PackageResult& result : results) {
