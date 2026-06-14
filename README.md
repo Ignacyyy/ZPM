@@ -86,6 +86,7 @@ sudo zpm clean
 | Recommended command | Short form | Legacy executable | Description |
 |---------------------|------------|-------------------|-------------|
 | `zpm home` | - | `zhome` | Show ZPM guide pages and configuration info |
+| `zpm tui` | `zpm ztui` | `ztui` | Open the ZPM terminal UI |
 | `zpm install <pkg...>` | `zpm inst` | `zinst` | Install packages from native PM / Flatpak / Snap |
 | `zpm remove <pkg...>` | `zpm rm` | `zrm` | Remove packages from native PM / Flatpak / Snap |
 | `zpm update` | `zpm upd` | `zupd` | Update system packages |
