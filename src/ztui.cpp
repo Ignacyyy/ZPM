@@ -404,18 +404,6 @@ std::vector<std::string> shellArgs(const std::string& script) {
     return {"sh", "-lc", script};
 }
 
-std::vector<std::string> logViewerArgs(const std::string& path) {
-    const std::string quotedPath = shellQuote(path);
-    return shellArgs(
-        "if [ ! -r " + quotedPath + " ]; then "
-        "printf '%s\\n' " + shellQuote("Log file not found or not readable: " + path) + "; exit 1; "
-        "fi; "
-        "pager=${PAGER:-less}; "
-        "if command -v \"$pager\" >/dev/null 2>&1; then exec \"$pager\" " + quotedPath + "; fi; "
-        "exec cat " + quotedPath
-    );
-}
-
 std::vector<std::string> editConfigArgs() {
     return shellArgs(
         "choose_editor() { "
@@ -434,6 +422,38 @@ std::vector<std::string> editConfigArgs() {
 }
 
 std::vector<Category> buildCategories(const SystemStatus& status) {
+    std::vector<Action> packageChanges {
+        {
+            "Install package",
+            "zpm install <packages...>",
+            promptCommandArgs("Packages to install", "zpm install"),
+            "Closes the TUI, asks for package names, and runs the real "
+            "ZPM install command in the terminal.",
+            true,
+        },
+        {
+            "Remove package",
+            "zpm remove <packages...>",
+            promptCommandArgs("Packages to remove", "zpm remove"),
+            "Closes the TUI, asks for package names, and runs the real "
+            "ZPM remove command in the terminal.",
+            true,
+        },
+    };
+
+    if (status.backend == "apt") {
+        packageChanges.push_back({
+            "Remove package purge",
+            "zpm remove --purge <packages...>",
+            promptCommandArgs("Packages to purge", "zpm remove --purge"),
+            "Closes the TUI, asks for package names, and runs APT purge "
+            "through ZPM.",
+            true,
+            false,
+            "APT purge can remove package configuration files.",
+        });
+    }
+
     std::vector<Category> categories {
         {
             "Welcome",
@@ -450,8 +470,74 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
             },
         },
         {
-            "System update",
-            "ZPM system update tasks for packages handled by the detected backend.",
+            "Dry runs",
+            "Preview package, update, cleanup, and upgrade operations without changing the system.",
+            {
+                {
+                    "Update dry-run",
+                    "zpm update --dry-run",
+                    {"zpm", "update", "--dry-run"},
+                    "Simulates the standard update flow and shows the plan without "
+                    "modifying packages.",
+                    false,
+                },
+                {
+                    "Full update dry-run",
+                    "zpm update --full --dry-run",
+                    {"zpm", "update", "--full", "--dry-run"},
+                    "Simulates the fuller update flow, such as dist-upgrade or the "
+                    "matching backend equivalent when supported.",
+                    false,
+                },
+                {
+                    "Install package dry-run",
+                    "zpm install --dry-run <packages...>",
+                    promptCommandArgs("Packages to simulate installing", "zpm install --dry-run"),
+                    "Closes the TUI, asks for package names, and simulates "
+                    "the ZPM install command without changing packages.",
+                    false,
+                },
+                {
+                    "Remove package dry-run",
+                    "zpm remove --dry-run <packages...>",
+                    promptCommandArgs("Packages to simulate removing", "zpm remove --dry-run"),
+                    "Closes the TUI, asks for package names, and simulates "
+                    "the ZPM remove command without changing packages.",
+                    false,
+                },
+                {
+                    "Clean dry-run",
+                    "zpm clean --dry-run",
+                    {"zpm", "clean", "--dry-run"},
+                    "Simulates cache cleanup without deleting files.",
+                    false,
+                },
+                {
+                    "ZPM upgrade dry-run",
+                    "zpm upgrade --dry-run",
+                    {"zpm", "upgrade", "--dry-run"},
+                    "Simulates the ZPM upgrade without changing files.",
+                    false,
+                },
+                {
+                    "Experimental upgrade dry-run",
+                    "zpm upgrade --experimental --dry-run",
+                    {"zpm", "upgrade", "--experimental", "--dry-run"},
+                    "Simulates the experimental ZPM upgrade flow without changing files.",
+                    false,
+                },
+                {
+                    "Force experimental dry-run",
+                    "zpm upgrade --experimental --force --dry-run",
+                    {"zpm", "upgrade", "--experimental", "--force", "--dry-run"},
+                    "Simulates the forced experimental ZPM upgrade flow without changing files.",
+                    false,
+                },
+            },
+        },
+        {
+            "Updates",
+            "Real system update tasks for packages handled by the detected backend.",
             {
                 {
                     "Normal update",
@@ -469,90 +555,17 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                     "or the matching backend equivalent when supported.",
                     true,
                 },
-                {
-                    "Full update dry-run",
-                    "zpm update --full --dry-run",
-                    {"zpm", "update", "--full", "--dry-run"},
-                    "Simulates the full ZPM system update flow without "
-                    "modifying packages.",
-                    false,
-                },
-                {
-                    "Update and reboot",
-                    "zpm update --yes --reboot",
-                    {"zpm", "update", "--yes", "--reboot"},
-                    "Runs the standard ZPM system update flow and requests a "
-                    "reboot after the update completes.",
-                    true,
-                    false,
-                    "This action can reboot the machine after updates finish.",
-                },
-                {
-                    "Update and shutdown",
-                    "zpm update --yes --shutdown",
-                    {"zpm", "update", "--yes", "--shutdown"},
-                    "Runs the standard ZPM system update flow and requests a "
-                    "shutdown after the update completes.",
-                    true,
-                    false,
-                    "This action can shut down the machine after updates finish.",
-                },
-                {
-                    "Dry-run update",
-                    "zpm update --dry-run",
-                    {"zpm", "update", "--dry-run"},
-                    "Simulates the update flow and shows the plan without "
-                    "modifying packages.",
-                    false,
-                },
             },
         },
         {
-            "Package management",
-            "Install, remove, search, and inspect packages through ZPM.",
+            "Package changes",
+            "Real install and remove operations.",
+            std::move(packageChanges),
+        },
+        {
+            "Search and lists",
+            "Read-only package search, package info, and installed package lists.",
             {
-                {
-                    "Install package",
-                    "zpm install <packages...>",
-                    promptCommandArgs("Packages to install", "zpm install"),
-                    "Closes the TUI, asks for package names, and runs the real "
-                    "ZPM install command in the terminal.",
-                    true,
-                },
-                {
-                    "Install package dry-run",
-                    "zpm install --dry-run <packages...>",
-                    promptCommandArgs("Packages to simulate installing", "zpm install --dry-run"),
-                    "Closes the TUI, asks for package names, and simulates "
-                    "the ZPM install command without changing packages.",
-                    false,
-                },
-                {
-                    "Remove package",
-                    "zpm remove <packages...>",
-                    promptCommandArgs("Packages to remove", "zpm remove"),
-                    "Closes the TUI, asks for package names, and runs the real "
-                    "ZPM remove command in the terminal.",
-                    true,
-                },
-                {
-                    "Remove package purge (APT only)",
-                    "zpm remove --purge <packages...>",
-                    promptCommandArgs("Packages to purge", "zpm remove --purge"),
-                    "Closes the TUI, asks for package names, and runs APT purge "
-                    "through ZPM. This option only applies to APT-based systems.",
-                    true,
-                    false,
-                    "APT purge can remove package configuration files.",
-                },
-                {
-                    "Remove package dry-run",
-                    "zpm remove --dry-run <packages...>",
-                    promptCommandArgs("Packages to simulate removing", "zpm remove --dry-run"),
-                    "Closes the TUI, asks for package names, and simulates "
-                    "the ZPM remove command without changing packages.",
-                    false,
-                },
                 {
                     "Search package",
                     "zpm search <query>",
@@ -601,7 +614,7 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
         },
         {
             "ZPM upgrade",
-            "Upgrade and test the installed Zielina Package Manager.",
+            "Real upgrade operations for Zielina Package Manager itself.",
             {
                 {
                     "Upgrade ZPM",
@@ -640,27 +653,6 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                     false,
                     "This forces a prerelease upgrade path. Review before running.",
                 },
-                {
-                    "Experimental dry-run upgrade",
-                    "zpm upgrade --experimental --dry-run",
-                    {"zpm", "upgrade", "--experimental", "--dry-run"},
-                    "Simulates the experimental ZPM upgrade flow without changing files.",
-                    false,
-                },
-                {
-                    "Force experimental dry-run upgrade",
-                    "zpm upgrade --experimental --force --dry-run",
-                    {"zpm", "upgrade", "--experimental", "--force", "--dry-run"},
-                    "Simulates the forced experimental ZPM upgrade flow without changing files.",
-                    false,
-                },
-                {
-                    "Dry-run upgrade",
-                    "zpm upgrade --dry-run",
-                    {"zpm", "upgrade", "--dry-run"},
-                    "Simulates the ZPM upgrade without changing files.",
-                    false,
-                },
             },
         },
         {
@@ -676,87 +668,37 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                     false,
                     "Clean can delete cached package data and leftover files.",
                 },
-                {
-                    "Dry-run clean",
-                    "zpm clean --dry-run",
-                    {"zpm", "clean", "--dry-run"},
-                    "Simulates cache cleanup without deleting files.",
-                    false,
-                },
             },
         },
         {
-            "Logs",
-            "Open recent ZPM operation logs with the configured pager.",
+            "Power actions",
+            "Update flows that may reboot or shut down the machine.",
             {
                 {
-                    "Package install log",
-                    "less /tmp/zinst.log",
-                    logViewerArgs("/tmp/zinst.log"),
-                    "Opens the latest package installation log.",
+                    "Update and reboot",
+                    "zpm update --yes --reboot",
+                    {"zpm", "update", "--yes", "--reboot"},
+                    "Runs the standard ZPM system update flow and requests a "
+                    "reboot after the update completes.",
+                    true,
                     false,
+                    "This action can reboot the machine after updates finish.",
                 },
                 {
-                    "Package removal log",
-                    "less /tmp/zrm.log",
-                    logViewerArgs("/tmp/zrm.log"),
-                    "Opens the latest package removal log.",
+                    "Update and shutdown",
+                    "zpm update --yes --shutdown",
+                    {"zpm", "update", "--yes", "--shutdown"},
+                    "Runs the standard ZPM system update flow and requests a "
+                    "shutdown after the update completes.",
+                    true,
                     false,
-                },
-                {
-                    "System update log",
-                    "less /tmp/zupd.log",
-                    logViewerArgs("/tmp/zupd.log"),
-                    "Opens the latest system update log.",
-                    false,
-                },
-                {
-                    "System patch-check log",
-                    "less /tmp/zupd_patchcheck.log",
-                    logViewerArgs("/tmp/zupd_patchcheck.log"),
-                    "Opens the latest system update patch-check log.",
-                    false,
-                },
-                {
-                    "ZPM upgrade log",
-                    "less /tmp/zupgr.log",
-                    logViewerArgs("/tmp/zupgr.log"),
-                    "Opens the latest ZPM upgrade log.",
-                    false,
-                },
-                {
-                    "Clean log",
-                    "less /tmp/zclean.log",
-                    logViewerArgs("/tmp/zclean.log"),
-                    "Opens the latest cleanup log.",
-                    false,
-                },
-                {
-                    "ZPM uninstall log",
-                    "less /var/log/zuninstall.log",
-                    logViewerArgs("/var/log/zuninstall.log"),
-                    "Opens the latest ZPM uninstall log.",
-                    false,
-                },
-                {
-                    "Manual installer log",
-                    "less /var/log/ZPM_INSTALL.log",
-                    logViewerArgs("/var/log/ZPM_INSTALL.log"),
-                    "Opens the manual ZPM installer log.",
-                    false,
-                },
-                {
-                    "Internet installer log",
-                    "less /var/log/ZPM_INETINSTALL.log",
-                    logViewerArgs("/var/log/ZPM_INETINSTALL.log"),
-                    "Opens the internet ZPM installer log.",
-                    false,
+                    "This action can shut down the machine after updates finish.",
                 },
             },
         },
         {
-            "Information",
-            "Read-only views that do not change system configuration.",
+            "Help and config",
+            "Help pages, version information, configuration editing, and exit.",
             {
                 {
                     "Homepage",
@@ -828,21 +770,6 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
             },
         },
     };
-
-    if (status.backend != "apt") {
-        for (Category& category : categories) {
-            if (category.title != "Package management") {
-                continue;
-            }
-            category.actions.erase(
-                std::remove_if(category.actions.begin(),
-                               category.actions.end(),
-                               [](const Action& action) {
-                                   return action.title == "Remove package purge (APT only)";
-                               }),
-                category.actions.end());
-        }
-    }
 
     return categories;
 }
@@ -1059,14 +986,14 @@ int main() {
 
     const SystemStatus systemStatus = collectSystemStatus();
     const std::vector<Category> categories = buildCategories(systemStatus);
-    int selectedCategory = 0;
-    int selectedAction = 0;
-    int focusedPane = 0;
 
     while (true) {
         Action selectedLaunch;
         Action pendingAction;
         bool shouldLaunch = false;
+        int selectedCategory = 0;
+        int selectedAction = 0;
+        int focusedPane = 0;
 
         {
             auto screen = ScreenInteractive::Fullscreen();
