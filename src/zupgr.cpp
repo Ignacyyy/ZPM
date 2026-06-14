@@ -89,6 +89,19 @@ struct ConfigEntry {
     std::vector<std::string> comments;
 };
 
+struct BuildTask {
+    std::filesystem::path source;
+    std::string outName;
+    std::filesystem::path outPath;
+    std::vector<std::string> command;
+};
+
+struct ActiveBuild {
+    pid_t pid = -1;
+    std::string outName;
+    std::filesystem::path outPath;
+};
+
 class FileDescriptor {
 public:
     FileDescriptor() = default;
@@ -1760,6 +1773,148 @@ bool setExecutablePermissions(const std::filesystem::path& path) {
     return true;
 }
 
+std::optional<std::size_t> parsePositiveJobCount(const char* text) {
+    if (text == nullptr) {
+        return std::nullopt;
+    }
+
+    const std::string value = trim(text);
+    if (value.empty() ||
+        !std::all_of(value.begin(), value.end(), [](unsigned char c) {
+            return std::isdigit(c);
+        })) {
+        return std::nullopt;
+    }
+
+    char* end = nullptr;
+    errno = 0;
+    const unsigned long long parsed = std::strtoull(value.c_str(), &end, 10);
+    if (errno != 0 || end == value.c_str() || *end != '\0' || parsed == 0 ||
+        parsed > static_cast<unsigned long long>(std::numeric_limits<std::size_t>::max())) {
+        return std::nullopt;
+    }
+
+    return static_cast<std::size_t>(parsed);
+}
+
+std::size_t detectBuildJobCount(std::size_t sourceCount) {
+    if (sourceCount <= 1) {
+        return sourceCount;
+    }
+
+    const char* override = getenv("ZPM_BUILD_JOBS");
+    if (override != nullptr && *override != '\0') {
+        if (const auto parsed = parsePositiveJobCount(override)) {
+            return std::max<std::size_t>(1, std::min(*parsed, sourceCount));
+        }
+
+        writeLogLine("build: ignoring invalid ZPM_BUILD_JOBS value: " +
+                     std::string(override));
+    }
+
+    const unsigned int detected = std::thread::hardware_concurrency();
+    const std::size_t jobs = detected == 0 ? 2 : static_cast<std::size_t>(detected);
+    return std::max<std::size_t>(1, std::min(jobs, sourceCount));
+}
+
+BuildTask makeBuildTask(const std::filesystem::path& source,
+                        const std::filesystem::path& includeDir,
+                        const std::filesystem::path& outputDir) {
+    BuildTask task;
+    task.source = source;
+    task.outName = binaryNameForSource(source);
+    task.outPath = outputDir / task.outName;
+    task.command = {
+        "g++",
+        source.string(),
+        "-std=c++20",
+        "-O2",
+        "-I", includeDir.string(),
+        "-o", task.outPath.string(),
+        "-pthread"
+    };
+
+    if (source.stem().string() == "ztui") {
+        task.command.emplace_back("-lftxui-component");
+        task.command.emplace_back("-lftxui-dom");
+        task.command.emplace_back("-lftxui-screen");
+    }
+
+    return task;
+}
+
+std::optional<pid_t> startLoggedBuildProcess(const BuildTask& task) {
+    if (task.command.empty() || task.command.front().empty()) {
+        return std::nullopt;
+    }
+
+    FileDescriptor log = openLog(LogMode::Append);
+    if (!log.valid()) {
+        return std::nullopt;
+    }
+
+    if (!writeAll(log.get(), "-----building_" + task.outName + "-----\n")) {
+        return std::nullopt;
+    }
+
+    std::vector<char*> argv;
+    argv.reserve(task.command.size() + 1);
+    for (const std::string& arg : task.command) {
+        argv.push_back(const_cast<char*>(arg.c_str()));
+    }
+    argv.push_back(nullptr);
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        return std::nullopt;
+    }
+
+    if (pid == 0) {
+        setpgid(0, 0);
+        redirectToDevNull(STDIN_FILENO);
+        dup2(log.get(), STDOUT_FILENO);
+        dup2(log.get(), STDERR_FILENO);
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
+
+    setpgid(pid, pid);
+    return pid;
+}
+
+void signalActiveBuilds(const std::vector<ActiveBuild>& active, int signal) {
+    for (const ActiveBuild& build : active) {
+        if (build.pid > 0) {
+            kill(-build.pid, signal);
+            kill(build.pid, signal);
+        }
+    }
+}
+
+bool handleFinishedBuild(std::vector<ActiveBuild>& active,
+                         pid_t pid,
+                         int status) {
+    const auto found = std::find_if(active.begin(), active.end(),
+                                    [pid](const ActiveBuild& build) {
+                                        return build.pid == pid;
+                                    });
+    if (found == active.end()) {
+        return true;
+    }
+
+    const ActiveBuild finished = *found;
+    active.erase(found);
+
+    const int exitCode = decodeExitStatus(status);
+    if (exitCode != 0) {
+        writeLogLine("build: " + finished.outName + " failed with exit code " +
+                     std::to_string(exitCode));
+        return false;
+    }
+
+    return setExecutablePermissions(finished.outPath);
+}
+
 bool buildRelease(const std::filesystem::path& sourceDir,
                   const std::filesystem::path& outputDir) {
     if (!compilerSupportsCpp20() || !createDirectories(outputDir)) {
@@ -1775,46 +1930,90 @@ bool buildRelease(const std::filesystem::path& sourceDir,
         return false;
     }
 
+    std::vector<BuildTask> tasks;
+    tasks.reserve(sources.size());
     for (const std::filesystem::path& source : sources) {
-        if (g_interrupted) {
-            return false;
-        }
-
-        const std::string outName = binaryNameForSource(source);
-        const std::filesystem::path outPath = outputDir / outName;
-        std::vector<std::string> buildCommand {
-            "g++",
-            source.string(),
-            "-std=c++20",
-            "-O2",
-            "-I", includeDir.string(),
-            "-o", outPath.string(),
-            "-pthread"
-        };
-
-        if (source.stem() == "ztui") {
-            buildCommand.emplace_back("-lftxui-component");
-            buildCommand.emplace_back("-lftxui-dom");
-            buildCommand.emplace_back("-lftxui-screen");
-        }
-
-        const int exitCode = runLogged(
-            buildCommand,
-            "-----building_" + outName + "-----"
-        );
-
-        if (exitCode != 0) {
-            writeLogLine("build: " + outName + " failed with exit code " +
-                         std::to_string(exitCode));
-            return false;
-        }
-
-        if (!setExecutablePermissions(outPath)) {
-            return false;
-        }
+        tasks.push_back(makeBuildTask(source, includeDir, outputDir));
     }
 
-    return true;
+    const std::size_t jobs = detectBuildJobCount(tasks.size());
+    writeLogLine("build: compiling " + std::to_string(tasks.size()) +
+                 " file(s) with " + std::to_string(jobs) + " parallel job(s)");
+
+    bool ok = true;
+    bool stopRequested = false;
+    std::size_t nextTask = 0;
+    std::vector<ActiveBuild> active;
+
+    while (nextTask < tasks.size() || !active.empty()) {
+        while (!stopRequested && nextTask < tasks.size() && active.size() < jobs) {
+            const BuildTask& task = tasks[nextTask++];
+            writeLogLine("build: starting " + task.outName + " from " +
+                         task.source.filename().string());
+
+            const auto pid = startLoggedBuildProcess(task);
+            if (!pid) {
+                writeLogLine("build: cannot start compiler for " + task.outName);
+                ok = false;
+                stopRequested = true;
+                signalActiveBuilds(active, SIGINT);
+                break;
+            }
+
+            active.push_back({*pid, task.outName, task.outPath});
+        }
+
+        if (active.empty()) {
+            break;
+        }
+
+        int status = 0;
+        const pid_t finished = waitpid(-1, &status, WNOHANG);
+        if (finished > 0) {
+            if (!handleFinishedBuild(active, finished, status)) {
+                ok = false;
+                if (!stopRequested) {
+                    stopRequested = true;
+                    signalActiveBuilds(active, SIGINT);
+                }
+            }
+            continue;
+        }
+
+        if (finished < 0) {
+            if (errno == EINTR) {
+                if (g_interrupted && !stopRequested) {
+                    ok = false;
+                    stopRequested = true;
+                    signalActiveBuilds(active, SIGINT);
+                }
+                continue;
+            }
+
+            if (errno == ECHILD) {
+                active.clear();
+                break;
+            }
+
+            writeLogLine("build: waitpid failed: " + std::string(std::strerror(errno)));
+            ok = false;
+            if (!stopRequested) {
+                stopRequested = true;
+                signalActiveBuilds(active, SIGINT);
+            }
+            continue;
+        }
+
+        if (g_interrupted && !stopRequested) {
+            ok = false;
+            stopRequested = true;
+            signalActiveBuilds(active, SIGINT);
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    }
+
+    return ok && !g_interrupted;
 }
 
 std::filesystem::path uniqueOptPath(const std::string& name) {
