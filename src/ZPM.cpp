@@ -46,7 +46,7 @@ namespace {
 
     constexpr std::array<CommandHelp, 12> kCommandHelp {{
         {"home", "Home page of ZPM"},
-        {"tui, ztui", "Run ZPM terminal UI"},
+        {"tui", "Run ZPM terminal UI"},
         {"update, upd", "Perform a system upgrade"},
         {"upgrade, upgr", "Upgrade ZPM itself"},
         {"install, inst", "Install package"},
