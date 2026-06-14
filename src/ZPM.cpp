@@ -89,6 +89,43 @@ namespace {
         return arg.size() > 1 && arg.front() == '-';
     }
 
+    bool configBoolEnabled(std::string_view key, bool fallback) {
+        std::ifstream conf("/opt/ZPM/zielina.conf");
+        if (!conf.is_open()) {
+            return fallback;
+        }
+
+        const std::string prefix = std::string(key) + "=";
+        std::string line;
+        while (std::getline(conf, line)) {
+            line.erase(
+                std::remove_if(line.begin(), line.end(), [](unsigned char c) {
+                    return std::isspace(c) || c == '\r' || c == '\n';
+                }),
+                line.end()
+            );
+
+            if (line.empty() || line[0] == '#' || line[0] == ';') {
+                continue;
+            }
+
+            if (line.rfind(prefix, 0) != 0) {
+                continue;
+            }
+
+            std::string value = line.substr(prefix.size());
+            std::transform(value.begin(), value.end(), value.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return value == "true" || value == "1" || value == "yes" || value == "on";
+        }
+
+        return fallback;
+    }
+
+    bool openTuiByDefault() {
+        return configBoolEnabled("zpm-open-tui-by-default", true);
+    }
+
     std::string commandTarget(std::string_view command) {
         for (const CommandAlias& alias : kCommandAliases) {
             if (alias.name == command) {
@@ -291,7 +328,18 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (help || argc == 1 || parsed.separatorIndex != -1) {
+    if (help || parsed.separatorIndex != -1) {
+        showHelp();
+        return 0;
+    }
+
+    if (argc == 1) {
+        if (openTuiByDefault()) {
+            const std::string target = "ztui";
+            const std::string executable = resolveComponentExecutable(target, argv[0]);
+            return execComponent(executable, {target});
+        }
+
         showHelp();
         return 0;
     }
