@@ -29,6 +29,7 @@ struct Options {
     bool showHelp = false;
     bool showVersion = false;
     bool noPager = false;
+    bool forcePager = false;
     SourceFilter filter = SourceFilter::All;
 };
 
@@ -344,14 +345,14 @@ bool pageOutput(const std::string& output) {
     return waitForChild(pid) == 0;
 }
 
-void emitOutput(const std::string& output, bool noPager) {
+void emitOutput(const std::string& output, const Options& options) {
     if (output.empty()) {
         return;
     }
 
-    const bool shouldUsePager = !noPager &&
+    const bool shouldUsePager = !options.noPager &&
                                 isatty(STDOUT_FILENO) == 1 &&
-                                lineCount(output) > terminalRows();
+                                (options.forcePager || lineCount(output) > terminalRows());
 
     if (shouldUsePager && pageOutput(output)) {
         return;
@@ -820,6 +821,7 @@ void printHelp(const char* programName) {
     std::cout << "  --native,   -n  List only native PM packages (apt/zypper/dnf)\n";
     std::cout << "  --flatpak,  -f  List only Flatpak packages\n";
     std::cout << "  --snap,     -s  List only Snap packages\n";
+    std::cout << "  --pager         Force the configured pager for terminal output\n";
     std::cout << "  --no-pager      Print directly even when output is longer than the terminal\n";
 }
 
@@ -865,6 +867,10 @@ ParseResult parseArgs(int argc, char* argv[]) {
             result.options.noPager = true;
             continue;
         }
+        if (arg == "--pager") {
+            result.options.forcePager = true;
+            continue;
+        }
 
         result.error = startsWith(arg, "-")
             ? "Unknown option: " + arg
@@ -874,6 +880,11 @@ ParseResult parseArgs(int argc, char* argv[]) {
 
     if (sourceFilters > 1) {
         result.error = "Choose only one package source filter.";
+        return result;
+    }
+
+    if (result.options.noPager && result.options.forcePager) {
+        result.error = "Choose only one pager mode: --pager or --no-pager.";
         return result;
     }
 
@@ -902,7 +913,7 @@ bool runList(const Options& options, const AppContext& context) {
         case SourceFilter::Native:
             if (context.packageManager == PackageManager::Unknown) {
                 ok = listNative(context.packageManager, printedAnySection, output);
-                emitOutput(output.str(), options.noPager);
+                emitOutput(output.str(), options);
                 return ok;
             }
             if (!nativeListToolAvailable(context.packageManager)) {
@@ -911,15 +922,15 @@ bool runList(const Options& options, const AppContext& context) {
                 return false;
             }
             ok = listNative(context.packageManager, printedAnySection, output);
-            emitOutput(output.str(), options.noPager);
+            emitOutput(output.str(), options);
             return ok;
         case SourceFilter::Flatpak:
             ok = listFlatpak(true, printedAnySection, output);
-            emitOutput(output.str(), options.noPager);
+            emitOutput(output.str(), options);
             return ok;
         case SourceFilter::Snap:
             ok = listSnap(true, printedAnySection, output);
-            emitOutput(output.str(), options.noPager);
+            emitOutput(output.str(), options);
             return ok;
         case SourceFilter::All:
             break;
@@ -927,7 +938,7 @@ bool runList(const Options& options, const AppContext& context) {
 
     if (!nativeListToolAvailable(context.packageManager)) {
         ok = listNative(context.packageManager, printedAnySection, output);
-        emitOutput(output.str(), options.noPager);
+        emitOutput(output.str(), options);
         return ok;
     }
 
@@ -939,7 +950,7 @@ bool runList(const Options& options, const AppContext& context) {
         ok = listSnap(false, printedAnySection, output) && ok;
     }
 
-    emitOutput(output.str(), options.noPager);
+    emitOutput(output.str(), options);
     return ok;
 }
 
