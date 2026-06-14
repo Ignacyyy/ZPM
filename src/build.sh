@@ -33,18 +33,23 @@ echo "---------------------------Building ZPM---------------------------"
 for file in *.cpp; do
     [ -e "$file" ] || continue
     name="${file%.cpp}"
-    
+
     if [[ "$name" == "ZPM" ]]; then
         out_name="zpm"
     else
         out_name="$name"
     fi
-    
+
     out="/tmp/$out_name"
     echo "Compiling $file -> $out_name"
-    
-    $CXX_CMD "$file" -std=c++20 -O2 -I /opt/ZPM/src/common -o "$out" -pthread 
-    
+
+    extra_libs=()
+    if [[ "$name" == "ztui" ]]; then
+        extra_libs=(-lftxui-component -lftxui-dom -lftxui-screen)
+    fi
+
+    $CXX_CMD "$file" -std=c++20 -O2 -I /opt/ZPM/src/common -o "$out" -pthread "${extra_libs[@]}"
+
     mv -f "$out" /opt/ZPM/bin/
     echo "Installed $out_name"
 done
