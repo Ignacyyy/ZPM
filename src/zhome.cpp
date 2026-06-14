@@ -58,6 +58,7 @@ void PAGE2(){
                 << "Description" << RESET << std::endl;
       std::cout << "  " << std::string(76, '-') << std::endl;
       printZpmCommandRow("zpm home", "-", "zhome", "Open the ZPM home pages");
+      printZpmCommandRow("zpm tui", "zpm ztui", "ztui", "Open the ZPM terminal UI");
       printZpmCommandRow("zpm update", "zpm upd", "zupd", "Update system packages");
       printZpmCommandRow("zpm upgrade", "zpm upgr", "zupgr", "Upgrade ZPM itself");
       printZpmCommandRow("zpm install", "zpm inst", "zinst", "Install packages");
@@ -110,6 +111,7 @@ void PAGE3(){
       std::cout << "  " << GREEN << "zupgr" << RESET << "      - Update ZPM itself (sudo)" << std::endl;
       std::cout << "  " << GREEN << "zuninstall" << RESET << " - Uninstall ZPM (sudo)" << std::endl;
       std::cout << "  " << GREEN << "zrun" << RESET << "       - Run programs" << std::endl;
+      std::cout << "  " << GREEN << "ztui" << RESET << "       - ZPM terminal UI (sudo)" << std::endl;
       
       // global options
       std::cout << "\n" << BOLD << "Common options:" << RESET << std::endl;
@@ -122,6 +124,7 @@ void PAGE3(){
       std::cout << "  sudo zupd -full -y" << std::endl;
       std::cout << "  zrm vlc -p" << std::endl;
       std::cout << "  sudo zupgr -ex" <<std::endl;
+      std::cout << "  sudo zpm tui" << std::endl;
       
       // zpm wrapper info
       std::cout << "\n" << RED << "New way of using ZPM:" << RESET << std::endl;
