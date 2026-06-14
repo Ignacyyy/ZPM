@@ -29,7 +29,7 @@ struct Action {
     std::string hint;
     bool needsRoot = false;
     bool exits = false;
-    std::string warning;s
+    std::string warning;
 };
 
 struct Category {
@@ -312,9 +312,18 @@ std::vector<std::string> logViewerArgs(const std::string& path) {
 
 std::vector<std::string> editConfigArgs() {
     return shellArgs(
-        "editor=${EDITOR:-nano}; "
-        "if ! command -v \"$editor\" >/dev/null 2>&1; then editor=vi; fi; "
-        "exec \"$editor\" /opt/ZPM/zielina.conf"
+        "choose_editor() { "
+        "for candidate in \"$SUDO_EDITOR\" \"$VISUAL\" \"$EDITOR\" sensible-editor editor vim vi; do "
+        "[ -n \"$candidate\" ] || continue; "
+        "set -f; set -- $candidate; "
+        "[ \"$#\" -gt 0 ] || continue; "
+        "if command -v \"$1\" >/dev/null 2>&1; then printf '%s\\n' \"$candidate\"; return 0; fi; "
+        "done; "
+        "return 1; "
+        "}; "
+        "editor=$(choose_editor) || { echo 'Error: no terminal text editor found!'; exit 1; }; "
+        "set -f; "
+        "exec $editor /opt/ZPM/zielina.conf"
     );
 }
 
@@ -456,31 +465,30 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                 },
                 {
                     "Package list",
-                    "zpm list --no-pager",
-                    {"zpm", "list", "--no-pager"},
-                    "Shows installed packages without a pager, so the command "
-                    "prints directly in the terminal after launch.",
+                    "zpm list",
+                    {"zpm", "list"},
+                    "Shows installed packages with the configured pager.",
                     false,
                 },
                 {
                     "Native package list",
-                    "zpm list --native --no-pager",
-                    {"zpm", "list", "--native", "--no-pager"},
-                    "Shows installed native packages without a pager.",
+                    "zpm list --native",
+                    {"zpm", "list", "--native"},
+                    "Shows installed native packages with the configured pager.",
                     false,
                 },
                 {
                     "Flatpak package list",
-                    "zpm list --flatpak --no-pager",
-                    {"zpm", "list", "--flatpak", "--no-pager"},
-                    "Shows installed Flatpak packages without a pager.",
+                    "zpm list --flatpak",
+                    {"zpm", "list", "--flatpak"},
+                    "Shows installed Flatpak packages with the configured pager.",
                     false,
                 },
                 {
                     "Snap package list",
-                    "zpm list --snap --no-pager",
-                    {"zpm", "list", "--snap", "--no-pager"},
-                    "Shows installed Snap packages without a pager.",
+                    "zpm list --snap",
+                    {"zpm", "list", "--snap"},
+                    "Shows installed Snap packages with the configured pager.",
                     false,
                 },
             },
@@ -694,18 +702,11 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                     false,
                 },
                 {
-                    "Show config",
-                    "cat /opt/ZPM/zielina.conf",
-                    {"cat", "/opt/ZPM/zielina.conf"},
-                    "Prints the active ZPM configuration file.",
-                    false,
-                },
-                {
                     "Edit config",
-                    "$EDITOR /opt/ZPM/zielina.conf",
+                    "$SUDO_EDITOR/$VISUAL/$EDITOR /opt/ZPM/zielina.conf",
                     editConfigArgs(),
-                    "Opens the active ZPM configuration file in $EDITOR, "
-                    "falling back to nano or vi.",
+                    "Opens the active ZPM configuration file in the default "
+                    "terminal editor.",
                     true,
                     false,
                     "Editing config can change ZPM behavior.",
