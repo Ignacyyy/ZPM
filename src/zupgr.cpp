@@ -1782,15 +1782,24 @@ bool buildRelease(const std::filesystem::path& sourceDir,
 
         const std::string outName = binaryNameForSource(source);
         const std::filesystem::path outPath = outputDir / outName;
+        std::vector<std::string> buildCommand {
+            "g++",
+            source.string(),
+            "-std=c++20",
+            "-O2",
+            "-I", includeDir.string(),
+            "-o", outPath.string(),
+            "-pthread"
+        };
+
+        if (source.stem() == "ztui") {
+            buildCommand.emplace_back("-lftxui-component");
+            buildCommand.emplace_back("-lftxui-dom");
+            buildCommand.emplace_back("-lftxui-screen");
+        }
+
         const int exitCode = runLogged(
-            {
-                "g++",
-                source.string(),
-                "-std=c++20",
-                "-O2",
-                "-I", includeDir.string(),
-                "-o", outPath.string()
-            },
+            buildCommand,
             "-----building_" + outName + "-----"
         );
 
