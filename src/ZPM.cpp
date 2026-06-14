@@ -53,7 +53,7 @@ constexpr std::array<CommandHelp, 11> kCommandHelp {{
     {"info", "Package information"},
     {"uninstall", "Uninstall ZPM"},
     {"run", "Run programs using ZPM"},
-    {"tui", "Run ZPM terminal UI"},
+    {"tui", "Run ZPM terminal UI"}
 }};
 
 void showVersion() {
