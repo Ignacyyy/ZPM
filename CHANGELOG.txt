@@ -1,3 +1,6 @@
+ZPM v2.1.6
+- hotfix
+
 ZPM v2.1.5
 - added terminal UI (zpm tui)
 
