@@ -43,16 +43,17 @@ constexpr std::array<CommandAlias, 16> kCommandAliases {{
 
 constexpr std::array<CommandHelp, 11> kCommandHelp {{
     {"home", "Home page of ZPM"},
-    {"update, upd", "Perform a system upgrade (zupd)"},
-    {"upgrade, upgr", "Upgrade ZPM itself (zupgr)"},
-    {"install, inst", "Install package (zinst)"},
-    {"remove, rm", "Remove package (zrm)"},
-    {"list, ls", "List installed packages (zlist)"},
-    {"search", "Search for package (zsearch)"},
-    {"clean", "Clean system cache (zclean)"},
-    {"info", "Package information (zinfo)"},
-    {"uninstall", "Uninstall ZPM (zuninstall)"},
+    {"update, upd", "Perform a system upgrade"},
+    {"upgrade, upgr", "Upgrade ZPM itself"},
+    {"install, inst", "Install package"},
+    {"remove, rm", "Remove package"},
+    {"list, ls", "List installed packages"},
+    {"search", "Search for package"},
+    {"clean", "Clean system cache"},
+    {"info", "Package information"},
+    {"uninstall", "Uninstall ZPM"},
     {"run", "Run programs using ZPM"},
+    {"tui", "Run ZPM terminal UI"},
 }};
 
 void showVersion() {
