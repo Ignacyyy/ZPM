@@ -283,8 +283,14 @@ std::vector<std::string> promptCommandArgs(const std::string& prompt,
         "printf '" + prompt + ": '; "
         "IFS= read -r value; "
         "if [ -z \"$value\" ]; then echo 'No input provided.'; exit 1; fi; "
-        "printf '$ " + command + " %s\\n' \"$value\"; "
-        "exec " + command + " \"$value\"";
+        "set -f; "
+        "IFS=' \t'; "
+        "set -- $value; "
+        "if [ \"$#\" -eq 0 ]; then echo 'No input provided.'; exit 1; fi; "
+        "printf '$ " + command + "'; "
+        "for arg do printf ' %s' \"$arg\"; done; "
+        "printf '\\n'; "
+        "exec " + command + " \"$@\"";
 
     return {"sh", "-lc", script};
 }
@@ -392,33 +398,33 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
             {
                 {
                     "Install package",
-                    "zpm install <package>",
-                    promptCommandArgs("Package to install", "zpm install"),
-                    "Closes the TUI, asks for a package name, and runs the real "
+                    "zpm install <packages...>",
+                    promptCommandArgs("Packages to install", "zpm install"),
+                    "Closes the TUI, asks for package names, and runs the real "
                     "ZPM install command in the terminal.",
                     true,
                 },
                 {
                     "Install package dry-run",
-                    "zpm install --dry-run <package>",
-                    promptCommandArgs("Package to simulate installing", "zpm install --dry-run"),
-                    "Closes the TUI, asks for a package name, and simulates "
+                    "zpm install --dry-run <packages...>",
+                    promptCommandArgs("Packages to simulate installing", "zpm install --dry-run"),
+                    "Closes the TUI, asks for package names, and simulates "
                     "the ZPM install command without changing packages.",
                     false,
                 },
                 {
                     "Remove package",
-                    "zpm remove <package>",
-                    promptCommandArgs("Package to remove", "zpm remove"),
-                    "Closes the TUI, asks for a package name, and runs the real "
+                    "zpm remove <packages...>",
+                    promptCommandArgs("Packages to remove", "zpm remove"),
+                    "Closes the TUI, asks for package names, and runs the real "
                     "ZPM remove command in the terminal.",
                     true,
                 },
                 {
                     "Remove package purge (APT only)",
-                    "zpm remove --purge <package>",
-                    promptCommandArgs("Package to purge", "zpm remove --purge"),
-                    "Closes the TUI, asks for a package name, and runs APT purge "
+                    "zpm remove --purge <packages...>",
+                    promptCommandArgs("Packages to purge", "zpm remove --purge"),
+                    "Closes the TUI, asks for package names, and runs APT purge "
                     "through ZPM. This option only applies to APT-based systems.",
                     true,
                     false,
@@ -426,9 +432,9 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                 },
                 {
                     "Remove package dry-run",
-                    "zpm remove --dry-run <package>",
-                    promptCommandArgs("Package to simulate removing", "zpm remove --dry-run"),
-                    "Closes the TUI, asks for a package name, and simulates "
+                    "zpm remove --dry-run <packages...>",
+                    promptCommandArgs("Packages to simulate removing", "zpm remove --dry-run"),
+                    "Closes the TUI, asks for package names, and simulates "
                     "the ZPM remove command without changing packages.",
                     false,
                 },
@@ -643,6 +649,34 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                     "zhome",
                     {"zhome"},
                     "Opens the ZPM homepage/help interface through zhome.",
+                    false,
+                },
+                {
+                    "Homepage page 1",
+                    "zhome -p1",
+                    {"zhome", "-p1"},
+                    "Opens PAGE 1 of the ZPM homepage.",
+                    false,
+                },
+                {
+                    "Homepage page 2",
+                    "zhome -p2",
+                    {"zhome", "-p2"},
+                    "Opens PAGE 2 of the ZPM homepage.",
+                    false,
+                },
+                {
+                    "Homepage page 3",
+                    "zhome -p3",
+                    {"zhome", "-p3"},
+                    "Opens PAGE 3 of the ZPM homepage.",
+                    false,
+                },
+                {
+                    "Homepage all pages",
+                    "zhome -p1 -p2 -p3",
+                    {"zhome", "-p1", "-p2", "-p3"},
+                    "Opens all ZPM homepage pages in order.",
                     false,
                 },
                 {
