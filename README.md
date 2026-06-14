@@ -155,7 +155,7 @@ When Flatpak or Snap is installed, ZPM can include them in install, remove, sear
 
 | Property | Value |
 |----------|-------|
-| Version | See `VERSION.txt` (`2.1.4` in this tree) |
+| Version | See `VERSION.txt` (`2.1.5` in this tree) |
 | Main CLI | `zpm <command> [options]` |
 | Legacy CLI | `zhome`, `zinst`, `zrm`, `zupd`, `zupgr`, `zlist`, `zsearch`, `zclean`, `zinfo`, `zuninstall`, `zrun` |
 | Supported native PMs | `apt`, `dnf`/`dnf5`, `zypper` |
