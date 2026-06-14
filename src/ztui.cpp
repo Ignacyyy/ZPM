@@ -641,6 +641,20 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
             std::move(packageChanges),
         },
         {
+            "Run",
+            "Find and launch installed applications through ZPM.",
+            {
+                {
+                    "Run application",
+                    "zpm run <application>",
+                    promptCommandArgs("Application to run", "zpm run"),
+                    "Closes the TUI, asks for an application name, and runs the "
+                    "real ZPM run command in the terminal.",
+                    false,
+                },
+            },
+        },
+        {
             "Search and info",
             "Read-only package search and package details.",
             {
