@@ -305,6 +305,15 @@ int decodeExitStatus(int status) {
     return 127;
 }
 
+void clearTerminalForCommand() {
+    if (isatty(STDOUT_FILENO) != 1) {
+        return;
+    }
+
+    std::cout << "\033[H\033[2J\033[3J";
+    std::cout.flush();
+}
+
 int runRealCommand(Action action) {
     std::vector<std::string> args = std::move(action.args);
     if (args.empty()) {
@@ -320,6 +329,7 @@ int runRealCommand(Action action) {
     }
     argv.push_back(nullptr);
 
+    clearTerminalForCommand();
     std::cout << "$ " << action.commandPreview << "\n";
     std::cout.flush();
 
@@ -536,35 +546,57 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
             },
         },
         {
-            "Updates",
-            "Real system update tasks for packages handled by the detected backend.",
+            "Updates automatic",
+            "System updates that answer package-manager prompts automatically.",
             {
                 {
-                    "Normal update",
+                    "Automatic normal update",
                     "zpm update --yes",
                     {"zpm", "update", "--yes"},
                     "Runs the standard ZPM system update flow. ZPM detects apt, "
-                    "dnf, or zypper and starts the normal package update.",
+                    "dnf, or zypper and answers package-manager prompts automatically.",
                     true,
                 },
                 {
-                    "Full system update",
+                    "Automatic full update",
                     "zpm update --full --yes",
                     {"zpm", "update", "--full", "--yes"},
                     "Runs the fuller ZPM system update flow, such as dist-upgrade "
-                    "or the matching backend equivalent when supported.",
+                    "or the matching backend equivalent, with automatic confirmations.",
+                    true,
+                },
+            },
+        },
+        {
+            "Updates with prompts",
+            "System updates that leave package-manager questions visible in the terminal.",
+            {
+                {
+                    "Normal update with prompts",
+                    "zpm update",
+                    {"zpm", "update"},
+                    "Runs the standard ZPM system update flow and lets the native "
+                    "package manager ask for confirmation when needed.",
+                    true,
+                },
+                {
+                    "Full update with prompts",
+                    "zpm update --full",
+                    {"zpm", "update", "--full"},
+                    "Runs the fuller ZPM system update flow and lets the native "
+                    "package manager ask for confirmation when needed.",
                     true,
                 },
             },
         },
         {
             "Power actions",
-            "Update flows that may reboot or shut down the machine.",
+            "Normal and full update flows that may reboot or shut down the machine.",
             {
                 {
-                    "Update and reboot",
-                    "zpm update --yes --reboot",
-                    {"zpm", "update", "--yes", "--reboot"},
+                    "Normal update and reboot",
+                    "zpm update --reboot",
+                    {"zpm", "update", "--reboot"},
                     "Runs the standard ZPM system update flow and requests a "
                     "reboot after the update completes.",
                     true,
@@ -572,14 +604,34 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                     "This action can reboot the machine after updates finish.",
                 },
                 {
-                    "Update and shutdown",
-                    "zpm update --yes --shutdown",
-                    {"zpm", "update", "--yes", "--shutdown"},
+                    "Normal update and shutdown",
+                    "zpm update --shutdown",
+                    {"zpm", "update", "--shutdown"},
                     "Runs the standard ZPM system update flow and requests a "
                     "shutdown after the update completes.",
                     true,
                     false,
                     "This action can shut down the machine after updates finish.",
+                },
+                {
+                    "Full update and reboot",
+                    "zpm update --full --reboot",
+                    {"zpm", "update", "--full", "--reboot"},
+                    "Runs the full ZPM system update flow and requests a "
+                    "reboot after the update completes.",
+                    true,
+                    false,
+                    "This action can perform a full system update and reboot the machine.",
+                },
+                {
+                    "Full update and shutdown",
+                    "zpm update --full --shutdown",
+                    {"zpm", "update", "--full", "--shutdown"},
+                    "Runs the full ZPM system update flow and requests a "
+                    "shutdown after the update completes.",
+                    true,
+                    false,
+                    "This action can perform a full system update and shut down the machine.",
                 },
             },
         },
