@@ -353,7 +353,7 @@ void addUnique(std::vector<std::string>& values, const std::string& value) {
 void addCandidate(std::vector<PackageCandidate>& candidates,
                   const std::string& name,
                   const std::string& summary,
-                  bool& truncated) {
+                  bool&) {
     const std::string cleanedName = trim(name);
     if (cleanedName.empty()) {
         return;
@@ -367,11 +367,6 @@ void addCandidate(std::vector<PackageCandidate>& candidates,
             }
             return;
         }
-    }
-
-    if (candidates.size() >= kMaxNativeSearchResults) {
-        truncated = true;
-        return;
     }
 
     candidates.push_back({cleanedName, cleanedSummary});
@@ -1150,13 +1145,21 @@ bool isTransitionalPackage(const PackageCandidate& candidate) {
            summary.find("pakiet przej") != std::string::npos;
 }
 
-int aptCandidateRank(const std::string& query, const PackageCandidate& candidate) {
+int nativeCandidateRank(const std::string& query, const PackageCandidate& candidate) {
     const std::string queryLower = toLower(query);
     const std::string nameLower = toLower(candidate.name);
+    const std::string summaryLower = toLower(candidate.summary);
     const bool exact = nameLower == queryLower;
     const bool prefix = startsWith(nameLower, queryLower);
+    const bool nameContains =
+        queryLower.size() >= 3 && nameLower.find(queryLower) != std::string::npos;
+    const bool summaryContains =
+        queryLower.size() >= 4 && summaryLower.find(queryLower) != std::string::npos;
     const bool transitional = isTransitionalPackage(candidate);
 
+    if (queryLower.empty()) {
+        return 10;
+    }
     if (exact && !transitional) {
         return 0;
     }
@@ -1169,29 +1172,76 @@ int aptCandidateRank(const std::string& query, const PackageCandidate& candidate
     if (prefix && !transitional) {
         return 3;
     }
-    if (!transitional) {
+    if (nameContains && !transitional) {
         return 4;
     }
-    if (exact) {
+    if (summaryContains && !transitional) {
         return 5;
     }
-    if (prefix) {
+    if (!transitional) {
+        return 10;
+    }
+    if (exact) {
         return 6;
     }
-    return 7;
+    if (prefix) {
+        return 7;
+    }
+    if (nameContains) {
+        return 8;
+    }
+    if (summaryContains) {
+        return 9;
+    }
+    return 10;
 }
 
-void sortAptNativeResults(const std::string& query, std::vector<PackageCandidate>& candidates) {
+bool candidateMatchesNativeQuery(const std::string& query, const PackageCandidate& candidate) {
+    return nativeCandidateRank(query, candidate) < 10;
+}
+
+void sortNativeResults(const std::string& query, std::vector<PackageCandidate>& candidates) {
     std::stable_sort(candidates.begin(),
                      candidates.end(),
                      [&](const PackageCandidate& left, const PackageCandidate& right) {
-                         const int leftRank = aptCandidateRank(query, left);
-                         const int rightRank = aptCandidateRank(query, right);
+                         const int leftRank = nativeCandidateRank(query, left);
+                         const int rightRank = nativeCandidateRank(query, right);
                          if (leftRank != rightRank) {
                              return leftRank < rightRank;
                          }
                          return toLower(left.name) < toLower(right.name);
                      });
+}
+
+std::vector<PackageCandidate>::const_iterator exactNativeCandidate(
+    const std::vector<PackageCandidate>& candidates,
+    const std::string& query) {
+    const std::string queryLower = toLower(query);
+    return std::find_if(candidates.begin(),
+                        candidates.end(),
+                        [&](const PackageCandidate& candidate) {
+                            return toLower(candidate.name) == queryLower &&
+                                   !isTransitionalPackage(candidate);
+                        });
+}
+
+void finalizeNativeCandidates(const std::string& query, ResolveResult& result) {
+    std::vector<PackageCandidate> filtered;
+    filtered.reserve(result.candidates.size());
+
+    for (const PackageCandidate& candidate : result.candidates) {
+        if (candidateMatchesNativeQuery(query, candidate)) {
+            filtered.push_back(candidate);
+        }
+    }
+
+    result.candidates = std::move(filtered);
+    sortNativeResults(query, result.candidates);
+
+    if (result.candidates.size() > kMaxNativeSearchResults) {
+        result.candidates.resize(kMaxNativeSearchResults);
+        result.truncated = true;
+    }
 }
 
 void parseZypperNativeResults(const std::string& output,
@@ -1314,6 +1364,7 @@ void parseDnfNativeResults(const std::string& output,
 }
 
 ResolveResult finishResolveResult(const std::string& query, ResolveResult result) {
+    finalizeNativeCandidates(query, result);
     result.exists = !result.candidates.empty();
     result.name = result.exists ? result.candidates.front().name : query;
     return result;
@@ -1338,7 +1389,6 @@ ResolveResult resolveNative(const AppContext& context, const std::string& packag
                          result.truncated);
         }
 
-        sortAptNativeResults(package, result.candidates);
         return finishResolveResult(package, std::move(result));
     }
 
@@ -1445,10 +1495,16 @@ std::string chooseSourceMenu(const AppContext& context,
 
     std::cout << "  " << BOLD << index << ". " << nativeLabel(context) << RESET;
     if (nativeAvailable) {
-        if (native.candidates.size() > 1) {
+        const auto exact = exactNativeCandidate(native.candidates, package);
+        if (exact != native.candidates.end() && native.candidates.size() == 1) {
+            std::cout << GREEN << "exist (" << exact->name << ")" << RESET << "\n";
+        } else if (native.candidates.size() > 1) {
             std::cout << GREEN << "exist (" << native.candidates.size() << " results";
             if (native.truncated) {
                 std::cout << ", showing first " << kMaxNativeSearchResults;
+            }
+            if (exact != native.candidates.end()) {
+                std::cout << ", first result: " << exact->name;
             }
             std::cout << ")" << RESET << "\n";
         } else {
