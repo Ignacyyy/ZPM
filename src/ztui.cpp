@@ -29,7 +29,7 @@ struct Action {
     std::string hint;
     bool needsRoot = false;
     bool exits = false;
-    std::string warning;
+    std::string warning;s
 };
 
 struct Category {
