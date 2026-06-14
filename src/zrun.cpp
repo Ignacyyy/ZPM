@@ -6,8 +6,11 @@
 #include <cerrno>
 #include <cctype>
 #include <cstring>
+#include <grp.h>
+#include <limits>
 #include <optional>
 #include <poll.h>
+#include <pwd.h>
 #include <termios.h>
 #include <utility>
 
@@ -49,6 +52,15 @@ struct ProcessResult {
 struct LaunchResult {
     bool started = false;
     int errorNumber = 0;
+};
+
+struct LaunchIdentity {
+    uid_t uid = 0;
+    gid_t gid = 0;
+    std::string user;
+    std::string home;
+    std::string shell;
+    std::string runtimeDir;
 };
 
 struct MenuItem {
@@ -488,6 +500,328 @@ bool writeAll(int fd, const void* data, std::size_t size) {
     return true;
 }
 
+bool parseId(const char* text, unsigned long long& value) {
+    if (text == nullptr || *text == '\0') {
+        return false;
+    }
+
+    const std::string raw(text);
+    if (!std::all_of(raw.begin(), raw.end(), [](unsigned char c) {
+            return std::isdigit(c);
+        })) {
+        return false;
+    }
+
+    char* end = nullptr;
+    errno = 0;
+    const unsigned long long parsed = std::strtoull(raw.c_str(), &end, 10);
+    if (errno != 0 || end == raw.c_str() || *end != '\0') {
+        return false;
+    }
+
+    value = parsed;
+    return true;
+}
+
+bool parseUidEnv(const char* key, uid_t& uid) {
+    unsigned long long value = 0;
+    if (!parseId(getenv(key), value) ||
+        value == 0 ||
+        value > static_cast<unsigned long long>(std::numeric_limits<uid_t>::max())) {
+        return false;
+    }
+
+    uid = static_cast<uid_t>(value);
+    return true;
+}
+
+bool parseGidEnv(const char* key, gid_t& gid) {
+    unsigned long long value = 0;
+    if (!parseId(getenv(key), value) ||
+        value > static_cast<unsigned long long>(std::numeric_limits<gid_t>::max())) {
+        return false;
+    }
+
+    gid = static_cast<gid_t>(value);
+    return true;
+}
+
+std::string runtimeDirForUid(uid_t uid) {
+    return "/run/user/" + std::to_string(uid);
+}
+
+bool runtimeDirLooksUsable(const std::string& path, uid_t uid) {
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(path, error);
+    if (error || !std::filesystem::is_directory(status)) {
+        return false;
+    }
+
+    struct stat st {};
+    if (stat(path.c_str(), &st) != 0) {
+        return false;
+    }
+
+    return st.st_uid == uid;
+}
+
+std::optional<uid_t> uidFromRuntimePath(const std::string& path) {
+    const std::string prefix = "/run/user/";
+    if (!startsWith(path, prefix)) {
+        return std::nullopt;
+    }
+
+    unsigned long long value = 0;
+    if (!parseId(path.c_str() + prefix.size(), value) ||
+        value == 0 ||
+        value > static_cast<unsigned long long>(std::numeric_limits<uid_t>::max())) {
+        return std::nullopt;
+    }
+
+    const uid_t uid = static_cast<uid_t>(value);
+    if (!runtimeDirLooksUsable(path, uid)) {
+        return std::nullopt;
+    }
+
+    return uid;
+}
+
+std::optional<LaunchIdentity> identityFromUid(uid_t uid) {
+    if (uid == 0) {
+        return std::nullopt;
+    }
+
+    LaunchIdentity identity;
+    identity.uid = uid;
+    identity.runtimeDir = runtimeDirForUid(uid);
+
+    if (const passwd* entry = getpwuid(identity.uid)) {
+        identity.gid = entry->pw_gid;
+        if (entry->pw_name != nullptr) {
+            identity.user = entry->pw_name;
+        }
+        if (entry->pw_dir != nullptr) {
+            identity.home = entry->pw_dir;
+        }
+        if (entry->pw_shell != nullptr) {
+            identity.shell = entry->pw_shell;
+        }
+    }
+
+    if (identity.gid == 0) {
+        gid_t envGid = 0;
+        if (parseGidEnv("SUDO_GID", envGid)) {
+            identity.gid = envGid;
+        }
+    }
+
+    if (identity.gid == 0 && identity.user.empty()) {
+        return std::nullopt;
+    }
+
+    const char* sudoUser = getenv("SUDO_USER");
+    if (sudoUser != nullptr && *sudoUser != '\0' && std::string(sudoUser) != "root") {
+        const passwd* sudoEntry = getpwnam(sudoUser);
+        if (sudoEntry != nullptr && sudoEntry->pw_uid == identity.uid) {
+            identity.user = sudoUser;
+        } else if (identity.user.empty()) {
+            identity.user = sudoUser;
+        }
+    }
+
+    return identity;
+}
+
+bool directoryExists(const std::string& path) {
+    std::error_code error;
+    return std::filesystem::is_directory(path, error);
+}
+
+bool fileExists(const std::string& path) {
+    std::error_code error;
+    return std::filesystem::is_regular_file(path, error) ||
+           std::filesystem::is_socket(std::filesystem::symlink_status(path, error));
+}
+
+void setEnvIfNotEmpty(const char* key, const std::string& value) {
+    if (!value.empty()) {
+        setenv(key, value.c_str(), 1);
+    }
+}
+
+void clearPrivilegeEnvironment() {
+    unsetenv("SUDO_COMMAND");
+    unsetenv("SUDO_GID");
+    unsetenv("SUDO_UID");
+    unsetenv("SUDO_USER");
+    unsetenv("PKEXEC_UID");
+}
+
+void prepareXAuthority(const LaunchIdentity& identity) {
+    const char* display = getenv("DISPLAY");
+    if (display == nullptr || *display == '\0' || identity.home.empty()) {
+        return;
+    }
+
+    const std::string userXauthority = identity.home + "/.Xauthority";
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(userXauthority, error) || error) {
+        return;
+    }
+
+    const char* current = getenv("XAUTHORITY");
+    if (current == nullptr ||
+        *current == '\0' ||
+        startsWith(current, "/root/")) {
+        setenv("XAUTHORITY", userXauthority.c_str(), 1);
+    }
+}
+
+std::optional<std::string> firstWaylandDisplay(const std::string& runtimeDir) {
+    std::error_code error;
+    std::filesystem::directory_iterator iterator(runtimeDir, error);
+    if (error) {
+        return std::nullopt;
+    }
+
+    std::vector<std::string> displays;
+    for (const auto& entry : iterator) {
+        const std::string name = entry.path().filename().string();
+        if (!startsWith(name, "wayland-")) {
+            continue;
+        }
+
+        std::error_code statusError;
+        if (std::filesystem::is_socket(entry.symlink_status(statusError)) && !statusError) {
+            displays.push_back(name);
+        }
+    }
+
+    if (displays.empty()) {
+        return std::nullopt;
+    }
+
+    std::sort(displays.begin(), displays.end());
+    return displays.front();
+}
+
+std::optional<uid_t> activeRuntimeUid() {
+    const char* currentRuntime = getenv("XDG_RUNTIME_DIR");
+    if (currentRuntime != nullptr && *currentRuntime != '\0') {
+        if (const auto uid = uidFromRuntimePath(currentRuntime)) {
+            return uid;
+        }
+    }
+
+    std::error_code error;
+    std::filesystem::directory_iterator iterator("/run/user", error);
+    if (error) {
+        return std::nullopt;
+    }
+
+    std::vector<uid_t> candidates;
+    for (const auto& entry : iterator) {
+        const std::string name = entry.path().filename().string();
+        unsigned long long value = 0;
+        if (!parseId(name.c_str(), value) ||
+            value == 0 ||
+            value > static_cast<unsigned long long>(std::numeric_limits<uid_t>::max())) {
+            continue;
+        }
+
+        const uid_t uid = static_cast<uid_t>(value);
+        const std::string runtimeDir = runtimeDirForUid(uid);
+        if (!runtimeDirLooksUsable(runtimeDir, uid)) {
+            continue;
+        }
+
+        if (fileExists(runtimeDir + "/bus") ||
+            firstWaylandDisplay(runtimeDir).has_value()) {
+            candidates.push_back(uid);
+        }
+    }
+
+    if (candidates.empty()) {
+        return std::nullopt;
+    }
+
+    std::sort(candidates.begin(), candidates.end());
+    return candidates.front();
+}
+
+std::optional<LaunchIdentity> launchIdentityForRoot() {
+    if (geteuid() != 0) {
+        return std::nullopt;
+    }
+
+    uid_t uid = 0;
+    if (parseUidEnv("SUDO_UID", uid) ||
+        parseUidEnv("PKEXEC_UID", uid)) {
+        return identityFromUid(uid);
+    }
+
+    if (const auto runtimeUid = activeRuntimeUid()) {
+        return identityFromUid(*runtimeUid);
+    }
+
+    return std::nullopt;
+}
+
+void prepareLaunchEnvironment(const LaunchIdentity& identity) {
+    clearPrivilegeEnvironment();
+
+    setEnvIfNotEmpty("USER", identity.user);
+    setEnvIfNotEmpty("LOGNAME", identity.user);
+    setEnvIfNotEmpty("HOME", identity.home);
+    setEnvIfNotEmpty("SHELL", identity.shell);
+
+    const std::string runtimeDir = identity.runtimeDir.empty()
+        ? runtimeDirForUid(identity.uid)
+        : identity.runtimeDir;
+    if (directoryExists(runtimeDir)) {
+        setenv("XDG_RUNTIME_DIR", runtimeDir.c_str(), 1);
+
+        const char* currentWayland = getenv("WAYLAND_DISPLAY");
+        if ((currentWayland == nullptr || *currentWayland == '\0')) {
+            if (const auto waylandDisplay = firstWaylandDisplay(runtimeDir)) {
+                setenv("WAYLAND_DISPLAY", waylandDisplay->c_str(), 1);
+            }
+        }
+
+        const std::string sessionBus = runtimeDir + "/bus";
+        if (fileExists(sessionBus)) {
+            const std::string busAddress = "unix:path=" + sessionBus;
+            setenv("DBUS_SESSION_BUS_ADDRESS", busAddress.c_str(), 1);
+        }
+    }
+
+    prepareXAuthority(identity);
+}
+
+bool dropToLaunchIdentity(const LaunchIdentity& identity, int failureFd) {
+    prepareLaunchEnvironment(identity);
+
+    if (!identity.user.empty() && initgroups(identity.user.c_str(), identity.gid) != 0) {
+        const int error = errno;
+        writeAll(failureFd, &error, sizeof(error));
+        return false;
+    }
+
+    if (setgid(identity.gid) != 0) {
+        const int error = errno;
+        writeAll(failureFd, &error, sizeof(error));
+        return false;
+    }
+
+    if (setuid(identity.uid) != 0) {
+        const int error = errno;
+        writeAll(failureFd, &error, sizeof(error));
+        return false;
+    }
+
+    return true;
+}
+
 int decodeExitStatus(int status) {
     if (WIFEXITED(status)) {
         return WEXITSTATUS(status);
@@ -625,6 +959,8 @@ LaunchResult launchDetached(const std::vector<std::vector<std::string>>& candida
         return {false, EINVAL};
     }
 
+    const std::optional<LaunchIdentity> launchIdentity = launchIdentityForRoot();
+
     int pipeFd[2] = {-1, -1};
     if (pipe(pipeFd) != 0) {
         return {false, errno};
@@ -647,6 +983,10 @@ LaunchResult launchDetached(const std::vector<std::vector<std::string>>& candida
         redirectToDevNull(STDIN_FILENO);
         redirectToDevNull(STDOUT_FILENO);
         redirectToDevNull(STDERR_FILENO);
+
+        if (launchIdentity && !dropToLaunchIdentity(*launchIdentity, writeEnd.get())) {
+            _exit(126);
+        }
 
         int lastError = ENOENT;
         for (const auto& args : candidates) {
