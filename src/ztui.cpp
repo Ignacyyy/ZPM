@@ -3,6 +3,7 @@
 #include <ftxui/component/event.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/terminal.hpp>
 
 #include <algorithm>
 #include <cerrno>
@@ -30,6 +31,23 @@ struct Action {
     bool needsRoot = false;
     bool exits = false;
     std::string warning;
+
+    Action() = default;
+
+    Action(std::string titleValue,
+           std::string commandPreviewValue,
+           std::vector<std::string> argsValue,
+           std::string hintValue,
+           bool needsRootValue = false,
+           bool exitsValue = false,
+           std::string warningValue = {})
+        : title(std::move(titleValue)),
+          commandPreview(std::move(commandPreviewValue)),
+          args(std::move(argsValue)),
+          hint(std::move(hintValue)),
+          needsRoot(needsRootValue),
+          exits(exitsValue),
+          warning(std::move(warningValue)) {}
 };
 
 struct Category {
@@ -113,6 +131,19 @@ std::string trim(std::string value) {
     return value.substr(first, last - first + 1);
 }
 
+std::string shellQuote(std::string_view value) {
+    std::string quoted = "'";
+    for (const char character : value) {
+        if (character == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += character;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
 std::string stripQuotes(std::string value) {
     value = trim(std::move(value));
     if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
@@ -188,6 +219,80 @@ SystemStatus collectSystemStatus() {
 
 Element appTheme(Element element) {
     return element | color(Color::White) | bgcolor(Color::Black);
+}
+
+Element muted(std::string value) {
+    return text(std::move(value)) | color(Color::GrayDark);
+}
+
+Element titleText(std::string value) {
+    return text(std::move(value)) | bold | color(Color::CyanLight);
+}
+
+Element statusChip(std::string label, std::string value, Color valueColor) {
+    return hbox({
+        text(" " + std::move(label) + " ") | dim,
+        text(" " + std::move(value) + " ") | bold | color(valueColor),
+    }) | borderStyled(Color::GrayDark);
+}
+
+Element panel(std::string title, Element body, bool focused = false) {
+    const Color borderColor = focused ? Color::CyanLight : Color::GrayDark;
+    return vbox({
+               hbox({
+                   text(focused ? "> " : "  ") | color(Color::CyanLight),
+                   text(std::move(title)) | bold,
+               }),
+               separatorStyled(LIGHT),
+               std::move(body) | flex,
+           }) |
+           borderStyled(ROUNDED, borderColor);
+}
+
+Element sectionTitle(std::string value) {
+    return text(std::move(value)) | bold | color(Color::GreenLight);
+}
+
+Element keyHint(std::string key, std::string label) {
+    return hbox({
+        text(" " + std::move(key) + " ") | bold | color(Color::Black) | bgcolor(Color::CyanLight),
+        text(" " + std::move(label)) | dim,
+    });
+}
+
+int clampIndex(int index, std::size_t size) {
+    if (size == 0) {
+        return 0;
+    }
+    return std::clamp(index, 0, static_cast<int>(size) - 1);
+}
+
+Element actionBadge(const Action& action) {
+    if (action.exits) {
+        return text(" EXIT ") | bold | color(Color::Black) | bgcolor(Color::RedLight);
+    }
+    if (action.needsRoot) {
+        return text(" ROOT ") | bold | color(Color::Black) | bgcolor(Color::Yellow);
+    }
+    if (action.args.empty()) {
+        return text(" INFO ") | bold | color(Color::Black) | bgcolor(Color::CyanLight);
+    }
+    return text(" SAFE ") | bold | color(Color::Black) | bgcolor(Color::GreenLight);
+}
+
+Element commandPreviewBox(const std::string& command) {
+    if (command.empty()) {
+        return vbox({
+                   muted("No command is attached to this entry."),
+               }) |
+               borderStyled(Color::GrayDark);
+    }
+
+    return vbox({
+               muted("Command preview"),
+               paragraphAlignLeft("$ " + command) | color(Color::Yellow),
+           }) |
+           borderStyled(Color::Yellow);
 }
 
 int decodeExitStatus(int status) {
@@ -280,14 +385,14 @@ bool askReturnToTui(int exitCode) {
 std::vector<std::string> promptCommandArgs(const std::string& prompt,
                                            const std::string& command) {
     const std::string script =
-        "printf '" + prompt + ": '; "
+        "printf '%s: ' " + shellQuote(prompt) + "; "
         "IFS= read -r value; "
         "if [ -z \"$value\" ]; then echo 'No input provided.'; exit 1; fi; "
         "set -f; "
         "IFS=' \t'; "
         "set -- $value; "
         "if [ \"$#\" -eq 0 ]; then echo 'No input provided.'; exit 1; fi; "
-        "printf '$ " + command + "'; "
+        "printf '%s' " + shellQuote("$ " + command) + "; "
         "for arg do printf ' %s' \"$arg\"; done; "
         "printf '\\n'; "
         "exec " + command + " \"$@\"";
@@ -300,13 +405,14 @@ std::vector<std::string> shellArgs(const std::string& script) {
 }
 
 std::vector<std::string> logViewerArgs(const std::string& path) {
+    const std::string quotedPath = shellQuote(path);
     return shellArgs(
-        "if [ ! -r '" + path + "' ]; then "
-        "echo 'Log file not found or not readable: " + path + "'; exit 1; "
+        "if [ ! -r " + quotedPath + " ]; then "
+        "printf '%s\\n' " + shellQuote("Log file not found or not readable: " + path) + "; exit 1; "
         "fi; "
         "pager=${PAGER:-less}; "
-        "if command -v \"$pager\" >/dev/null 2>&1; then exec \"$pager\" '" + path + "'; fi; "
-        "exec cat '" + path + "'"
+        "if command -v \"$pager\" >/dev/null 2>&1; then exec \"$pager\" " + quotedPath + "; fi; "
+        "exec cat " + quotedPath
     );
 }
 
@@ -748,34 +854,62 @@ Element renderMenu(Component categoryMenu,
                    int selectedCategory,
                    int selectedAction,
                    int focusedPane) {
-    const Category& category = categories[static_cast<std::size_t>(selectedCategory)];
-    const Action& action = category.actions[static_cast<std::size_t>(selectedAction)];
+    if (categories.empty()) {
+        return appTheme(vbox({
+                   titleText("ZPM TUI"),
+                   separator(),
+                   paragraphAlignLeft("No categories are available. Rebuild the TUI data and try again.")
+                       | color(Color::RedLight),
+               }) |
+               borderStyled(ROUNDED, Color::RedLight));
+    }
+
+    const int categoryIndex = clampIndex(selectedCategory, categories.size());
+    const Category& category = categories[static_cast<std::size_t>(categoryIndex)];
+    if (category.actions.empty()) {
+        return appTheme(vbox({
+                   titleText("ZPM TUI"),
+                   separator(),
+                   paragraphAlignLeft("The selected category has no actions.")
+                       | color(Color::RedLight),
+               }) |
+               borderStyled(ROUNDED, Color::RedLight));
+    }
+
+    const int actionIndex = clampIndex(selectedAction, category.actions.size());
+    const Action& action = category.actions[static_cast<std::size_t>(actionIndex)];
+    const Dimensions terminalSize = Terminal::Size();
+    const bool compact = terminalSize.dimx > 0 && terminalSize.dimx < 112;
 
     std::vector<Element> details {
-        text(category.title) | bold | color(Color::CyanLight),
-        paragraphAlignLeft(category.hint),
+        hbox({
+            titleText(category.title),
+            filler(),
+            actionBadge(action),
+        }),
+        paragraphAlignLeft(category.hint) | dim,
         separator(),
     };
 
     if (category.title == "Welcome") {
-        details.push_back(text("Navigation") | bold | color(Color::GreenLight));
+        details.push_back(sectionTitle("Navigation"));
         details.push_back(paragraphAlignLeft(
             "Use Left/Right or Tab to switch between Categories and Actions. "
             "Use Up/Down to move inside the focused panel. Enter selects the "
             "highlighted category or action."));
         details.push_back(separator());
-        details.push_back(text("Command flow") | bold | color(Color::GreenLight));
+        details.push_back(sectionTitle("Command flow"));
         details.push_back(paragraphAlignLeft(
             "Actions with a command preview open a confirmation screen first. "
             "Press Enter or r to run, Esc or c to cancel, and q to quit the TUI."));
         details.push_back(separator());
-        details.push_back(text("After a command") | bold | color(Color::GreenLight));
+        details.push_back(sectionTitle("After a command"));
         details.push_back(paragraphAlignLeft(
             "The interface closes before launching the real command, so output, "
             "prompts, passwords, and errors are shown directly by the terminal. "
             "When the command finishes, press b to return to ZPM TUI or q to exit."));
         details.push_back(separator());
-        details.push_back(text("Safe workflow") | bold | color(Color::GreenLight));
+        details.push_back(sectionTitle("Safe workflow"));
         details.push_back(paragraphAlignLeft(
             "For risky operations, start with a dry-run action when available. "
             "Check the command preview before confirming updates, removals, "
@@ -783,14 +917,13 @@ Element renderMenu(Component categoryMenu,
         details.push_back(separator());
     }
 
-    details.push_back(text(action.title) | bold);
-
-    if (!action.commandPreview.empty()) {
-        details.push_back(text(action.commandPreview) | color(Color::Yellow));
-        details.push_back(separator());
-    }
-
+    details.push_back(hbox({
+        text(action.title) | bold,
+        filler(),
+    }));
+    details.push_back(commandPreviewBox(action.commandPreview));
     details.push_back(paragraphAlignLeft(action.hint));
+
     if (!action.args.empty()) {
         details.push_back(separator());
         details.push_back(
@@ -815,60 +948,82 @@ Element renderMenu(Component categoryMenu,
     }
 
     details.push_back(separator());
-    details.push_back(text("System status") | bold);
-    details.push_back(text("Distro") | dim);
-    details.push_back(paragraphAlignLeft(status.distro));
-    details.push_back(text("Package backend") | dim);
-    details.push_back(text(status.backend));
-    details.push_back(text("ZPM version") | dim);
-    details.push_back(text(status.zpmVersion));
-    details.push_back(text("Privileges") | dim);
-    details.push_back(text(status.privileges) | color(status.privileges == "root"
-                                                          ? Color::GreenLight
-                                                          : Color::RedLight));
+    details.push_back(sectionTitle("System status"));
+    details.push_back(hflow({
+        statusChip("Distro", status.distro, Color::White),
+        statusChip("Backend", status.backend, status.backend == "unknown"
+                                            ? Color::RedLight
+                                            : Color::GreenLight),
+        statusChip("ZPM", status.zpmVersion, Color::CyanLight),
+        statusChip("User", status.privileges, status.privileges == "root"
+                                                 ? Color::GreenLight
+                                                 : Color::RedLight),
+    }));
+
+    Element categoriesPanel = panel("Categories",
+                                    categoryMenu->Render() | vscroll_indicator | frame,
+                                    focusedPane == 0);
+    Element actionsPanel = panel("Actions",
+                                 actionMenu->Render() | vscroll_indicator | frame,
+                                 focusedPane == 1);
+    Element detailsPanel = panel("Details", vbox(details) | yframe);
+
+    Element navigation = compact
+                             ? vbox({
+                                   categoriesPanel | size(HEIGHT, LESS_THAN, 10),
+                                   actionsPanel | size(HEIGHT, LESS_THAN, 12),
+                               })
+                             : hbox({
+                                   categoriesPanel | size(WIDTH, EQUAL, 24),
+                                   actionsPanel | size(WIDTH, EQUAL, 32),
+                               });
+
+    Element body = compact
+                       ? vbox({
+                             std::move(navigation),
+                             detailsPanel | flex,
+                         })
+                       : hbox({
+                             std::move(navigation),
+                             detailsPanel | flex,
+                         });
 
     return appTheme(vbox({
                hbox({
-                   text("ZPM TUI") | bold | color(Color::CyanLight),
+                   text(" ZPM TUI ") | bold | color(Color::Black) | bgcolor(Color::CyanLight),
+                   text(" Zielina Package Manager ") | dim,
                    filler(),
-                   text("Left/Right or Tab: panel  Enter: select  q/Esc: exit") | dim,
+                   text(compact ? "Tab: panel  Enter: select  q: exit"
+                                : "Left/Right or Tab: panel  Enter: select  q/Esc: exit")
+                       | dim,
                }),
-               separator(),
                hbox({
-                   vbox({
-                       text(focusedPane == 0 ? "> Categories" : "Categories") | bold,
-                       separator(),
-                       categoryMenu->Render() | vscroll_indicator | frame | flex,
-                   }) | size(WIDTH, EQUAL, 24),
-                   separator(),
-                   vbox({
-                       text(focusedPane == 1 ? "> Actions" : "Actions") | bold,
-                       separator(),
-                       actionMenu->Render() | vscroll_indicator | frame | flex,
-                   }) | size(WIDTH, EQUAL, 28),
-                   separator(),
-                   vbox(details) | flex,
-               }) | flex,
+                   keyHint("Up/Down", "move"),
+                   text("  "),
+                   keyHint("Enter", "select"),
+                   text("  "),
+                   keyHint("Esc", "exit/cancel"),
+               }) | size(HEIGHT, EQUAL, 1),
+               separatorStyled(LIGHT),
+               std::move(body) | flex,
            }) |
-           border);
+           borderStyled(ROUNDED, Color::CyanLight));
 }
 
 Element renderConfirmation(const Action& action) {
     std::vector<Element> content {
         hbox({
-            text("Confirm command") | bold | color(Color::CyanLight),
+            titleText("Confirm command"),
             filler(),
+            actionBadge(action),
+            text("  "),
             text("Enter/r: run  Esc/c: cancel  q: exit") | dim,
         }),
-        separator(),
+        separatorStyled(LIGHT),
         text(action.title) | bold,
     };
 
-    if (!action.commandPreview.empty()) {
-        content.push_back(text("$ " + action.commandPreview) | color(Color::Yellow));
-    }
-
-    content.push_back(separator());
+    content.push_back(commandPreviewBox(action.commandPreview));
     content.push_back(paragraphAlignLeft(action.hint));
 
     if (action.needsRoot) {
@@ -885,12 +1040,12 @@ Element renderConfirmation(const Action& action) {
 
     content.push_back(separator());
     content.push_back(hbox({
-        text("[ Run ]") | bold | color(Color::GreenLight),
+        text(" Run ") | bold | color(Color::Black) | bgcolor(Color::GreenLight),
         text("  "),
-        text("[ Cancel ]") | color(Color::Yellow),
+        text(" Cancel ") | bold | color(Color::Black) | bgcolor(Color::Yellow),
     }));
 
-    return appTheme(vbox(content) | border);
+    return appTheme(vbox(content) | borderStyled(ROUNDED, Color::CyanLight));
 }
 
 } // namespace
@@ -926,6 +1081,15 @@ int main() {
             bool showConfirm = false;
 
             auto syncActionEntries = [&] {
+                if (categories.empty()) {
+                    selectedCategory = 0;
+                    selectedAction = 0;
+                    focusedPane = 0;
+                    actionEntries.clear();
+                    return;
+                }
+                selectedCategory = clampIndex(selectedCategory, categories.size());
+                focusedPane = clampIndex(focusedPane, 2);
                 actionEntries.clear();
                 const Category& category = categories[static_cast<std::size_t>(selectedCategory)];
                 actionEntries.reserve(category.actions.size());
@@ -933,11 +1097,7 @@ int main() {
                     actionEntries.push_back(action.title);
                 }
 
-                if (selectedAction >= static_cast<int>(actionEntries.size())) {
-                    selectedAction = actionEntries.empty()
-                                         ? 0
-                                         : static_cast<int>(actionEntries.size()) - 1;
-                }
+                selectedAction = clampIndex(selectedAction, actionEntries.size());
             };
             syncActionEntries();
 
@@ -952,7 +1112,14 @@ int main() {
 
             MenuOption actionOption = MenuOption::VerticalAnimated();
             actionOption.on_enter = [&] {
+                syncActionEntries();
+                if (categories.empty()) {
+                    return;
+                }
                 const Category& category = categories[static_cast<std::size_t>(selectedCategory)];
+                if (category.actions.empty()) {
+                    return;
+                }
                 const Action& action = category.actions[static_cast<std::size_t>(selectedAction)];
                 if (action.exits) {
                     screen.Exit();
@@ -1006,7 +1173,11 @@ int main() {
                     screen.Exit();
                     return true;
                 }
-                if (event == Event::ArrowRight || event == Event::Tab) {
+                if (event == Event::Tab) {
+                    focusedPane = focusedPane == 0 ? 1 : 0;
+                    return true;
+                }
+                if (event == Event::ArrowRight) {
                     focusedPane = 1;
                     return true;
                 }
