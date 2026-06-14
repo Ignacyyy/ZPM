@@ -12,6 +12,22 @@ Legacy `z*` commands are still installed for compatibility, but new examples and
 
 ---
 
+## Screenshots
+
+### Terminal UI
+
+![ZPM terminal UI](.screenshots/TUI.png)
+
+### System update
+
+![ZPM update command output](.screenshots/ZUPD.png)
+
+### Package removal
+
+![ZPM remove command output](.screenshots/ZRM.png)
+
+---
+
 ## Installation
 
 ### Install from the internet
@@ -155,7 +171,7 @@ When Flatpak or Snap is installed, ZPM can include them in install, remove, sear
 
 | Property | Value |
 |----------|-------|
-| Version | See `VERSION.txt` (`2.1.6` in this tree) |
+| Version | See `VERSION.txt` (`2.1.4` in this tree) |
 | Main CLI | `zpm <command> [options]` |
 | Legacy CLI | `zhome`, `zinst`, `zrm`, `zupd`, `zupgr`, `zlist`, `zsearch`, `zclean`, `zinfo`, `zuninstall`, `zrun` |
 | Supported native PMs | `apt`, `dnf`/`dnf5`, `zypper` |
