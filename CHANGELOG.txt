@@ -1,3 +1,6 @@
+ZPM v2.1.7
+- UI fixes
+
 ZPM v2.1.6
 - hotfix
 
