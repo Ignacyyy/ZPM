@@ -351,6 +351,28 @@ std::vector<std::string> splitLines(const std::string& text) {
     return lines;
 }
 
+bool parseInteger(const std::string& input, int& value) {
+    const std::string cleaned = trim(input);
+    if (cleaned.empty()) {
+        return false;
+    }
+
+    char* end = nullptr;
+    errno = 0;
+    const long parsed = std::strtol(cleaned.c_str(), &end, 10);
+    if (errno != 0 || end == cleaned.c_str() || *end != '\0') {
+        return false;
+    }
+
+    if (parsed < std::numeric_limits<int>::min() ||
+        parsed > std::numeric_limits<int>::max()) {
+        return false;
+    }
+
+    value = static_cast<int>(parsed);
+    return true;
+}
+
 std::vector<std::string> split(const std::string& text, char delimiter) {
     std::vector<std::string> parts;
     std::stringstream ss(text);
@@ -1591,10 +1613,9 @@ std::string chooseSourceMenu(const AppContext& context,
         }
 
         int choice = -1;
-        try {
-            choice = std::stoi(trim(input));
-        } catch (...) {
-            choice = -1;
+        if (!parseInteger(input, choice)) {
+            std::cout << RED << "Invalid choice, try again.\n" << RESET;
+            continue;
         }
 
         if (choice == 0) {
@@ -1611,9 +1632,9 @@ std::string chooseSourceMenu(const AppContext& context,
     }
 }
 
-std::string chooseNativePackage(const AppContext& context,
-                                const ResolveResult& native,
-                                const std::string& query) {
+std::vector<std::string> chooseNativePackages(const AppContext& context,
+                                              const ResolveResult& native,
+                                              const std::string& query) {
     if (native.candidates.empty()) {
         std::cout << YELLOW << "No " << nativeShortLabel(context)
                   << " packages found for '" << query << "'.\n" << RESET;
@@ -1621,7 +1642,7 @@ std::string chooseNativePackage(const AppContext& context,
     }
 
     if (native.candidates.size() == 1) {
-        return native.candidates.front().name;
+        return {native.candidates.front().name};
     }
 
     std::cout << GREEN << "\n" << nativeShortLabel(context)
@@ -1640,34 +1661,48 @@ std::string chooseNativePackage(const AppContext& context,
     std::cout << "  0. Cancel\n";
 
     for (;;) {
-        std::cout << BOLD << "Choose: " << RESET;
+        std::cout << BOLD << "Enter number(s) to install (e.g. 1 3): " << RESET;
 
         std::string input;
         if (!readChoice(input)) {
             return {};
         }
 
-        int choice = -1;
-        try {
-            choice = std::stoi(trim(input));
-        } catch (...) {
-            choice = -1;
+        std::replace(input.begin(), input.end(), ',', ' ');
+        std::stringstream ss(input);
+        std::string token;
+        std::vector<std::string> selected;
+        bool invalid = false;
+
+        while (ss >> token) {
+            int choice = -1;
+            if (!parseInteger(token, choice)) {
+                invalid = true;
+                break;
+            }
+
+            if (choice == 0) {
+                return {};
+            }
+
+            if (choice < 1 || choice > static_cast<int>(native.candidates.size())) {
+                invalid = true;
+                break;
+            }
+
+            addUnique(selected, native.candidates[static_cast<size_t>(choice - 1)].name);
         }
 
-        if (choice == 0) {
-            return {};
-        }
-
-        if (choice >= 1 && choice <= static_cast<int>(native.candidates.size())) {
-            return native.candidates[static_cast<size_t>(choice - 1)].name;
+        if (!invalid && !selected.empty()) {
+            return selected;
         }
 
         std::cout << RED << "Invalid choice, try again.\n" << RESET;
     }
 }
 
-std::string chooseFlatpakPackage(const std::vector<std::string>& packages,
-                                 const std::string& query) {
+std::vector<std::string> chooseFlatpakPackages(const std::vector<std::string>& packages,
+                                               const std::string& query) {
     if (packages.empty()) {
         std::cout << YELLOW << "No Flatpak packages found for '" << query << "'.\n" << RESET;
         return {};
@@ -1680,26 +1715,40 @@ std::string chooseFlatpakPackage(const std::vector<std::string>& packages,
     std::cout << "  0. Cancel\n";
 
     for (;;) {
-        std::cout << BOLD << "Choose: " << RESET;
+        std::cout << BOLD << "Enter number(s) to install (e.g. 1 3): " << RESET;
 
         std::string input;
         if (!readChoice(input)) {
             return {};
         }
 
-        int choice = -1;
-        try {
-            choice = std::stoi(trim(input));
-        } catch (...) {
-            choice = -1;
+        std::replace(input.begin(), input.end(), ',', ' ');
+        std::stringstream ss(input);
+        std::string token;
+        std::vector<std::string> selected;
+        bool invalid = false;
+
+        while (ss >> token) {
+            int choice = -1;
+            if (!parseInteger(token, choice)) {
+                invalid = true;
+                break;
+            }
+
+            if (choice == 0) {
+                return {};
+            }
+
+            if (choice < 1 || choice > static_cast<int>(packages.size())) {
+                invalid = true;
+                break;
+            }
+
+            addUnique(selected, packages[static_cast<size_t>(choice - 1)]);
         }
 
-        if (choice == 0) {
-            return {};
-        }
-
-        if (choice >= 1 && choice <= static_cast<int>(packages.size())) {
-            return packages[static_cast<size_t>(choice - 1)];
+        if (!invalid && !selected.empty()) {
+            return selected;
         }
 
         std::cout << RED << "Invalid choice, try again.\n" << RESET;
@@ -1727,8 +1776,7 @@ std::vector<InstallTarget> resolveTargets(const AppContext& context,
                                                     flatpakResults);
 
         if (source == "native") {
-            const std::string selected = chooseNativePackage(context, native, package);
-            if (!selected.empty()) {
+            for (const std::string& selected : chooseNativePackages(context, native, package)) {
                 targets.push_back({selected, InstallSource::Native});
             }
         } else if (source == "snap") {
@@ -1736,11 +1784,11 @@ std::vector<InstallTarget> resolveTargets(const AppContext& context,
         } else if (source == "flatpak") {
             const bool exactMatch =
                 std::find(flatpakResults.begin(), flatpakResults.end(), package) != flatpakResults.end();
-            const std::string selected = exactMatch
-                ? package
-                : chooseFlatpakPackage(flatpakResults, package);
+            const std::vector<std::string> selectedPackages = exactMatch
+                ? std::vector<std::string>{package}
+                : chooseFlatpakPackages(flatpakResults, package);
 
-            if (!selected.empty()) {
+            for (const std::string& selected : selectedPackages) {
                 targets.push_back({selected, InstallSource::Flatpak});
             }
         }
@@ -1795,11 +1843,44 @@ std::string sourceName(const AppContext& context, InstallSource source) {
     return "Unknown";
 }
 
+std::string joinPackageNames(const std::vector<std::string>& packages,
+                             const std::string& separator) {
+    std::string joined;
+
+    for (const std::string& package : packages) {
+        if (!joined.empty()) {
+            joined += separator;
+        }
+        joined += package;
+    }
+
+    return joined;
+}
+
+std::string joinTargetNames(const std::vector<InstallTarget>& targets,
+                            const std::string& separator) {
+    std::vector<std::string> packages;
+    packages.reserve(targets.size());
+
+    for (const InstallTarget& target : targets) {
+        packages.push_back(target.name);
+    }
+
+    return joinPackageNames(packages, separator);
+}
+
 std::string installInfoText(const AppContext& context,
                             const InstallTarget& target,
                             bool dryRun) {
     return std::string(dryRun ? "simulating " : "installing ") +
            sourceName(context, target.source) + " package: " + target.name;
+}
+
+std::string installBatchInfoText(const AppContext& context,
+                                 const std::vector<InstallTarget>& targets,
+                                 bool dryRun) {
+    return std::string(dryRun ? "simulating " : "installing ") +
+           nativeShortLabel(context) + " packages: " + joinTargetNames(targets, ", ");
 }
 
 bool targetAlreadyInstalled(const AppContext& context, const InstallTarget& target) {
@@ -1813,6 +1894,53 @@ bool targetAlreadyInstalled(const AppContext& context, const InstallTarget& targ
     }
 
     return false;
+}
+
+std::vector<std::string> nativeInstallArgs(const AppContext& context,
+                                           const std::vector<std::string>& packages) {
+    std::vector<std::string> args;
+
+    if (context.packageManager == "apt") {
+        args = {"apt-get", "install", "-y"};
+    } else if (context.packageManager == "zypper") {
+        args = {"zypper", "--non-interactive", "install", "-y"};
+    } else if (context.packageManager == "dnf") {
+        args = {context.dnfCommand, "install", "-y"};
+    }
+
+    args.insert(args.end(), packages.begin(), packages.end());
+    return args;
+}
+
+std::string nativeInstallHeader(const AppContext& context,
+                                const std::vector<std::string>& packages) {
+    const std::string packageNames = joinPackageNames(packages, "_");
+
+    if (context.packageManager == "apt") {
+        return "-----apt_install_" + packageNames + "-----";
+    }
+    if (context.packageManager == "zypper") {
+        return "-----zypper_install_" + packageNames + "-----";
+    }
+    if (context.packageManager == "dnf") {
+        return "-----" + context.dnfCommand + "_install_" + packageNames + "-----";
+    }
+
+    return "-----native_install_" + packageNames + "-----";
+}
+
+std::string nativeBatchProgressLabel(const AppContext& context,
+                                     const std::vector<InstallTarget>& targets,
+                                     int firstIndex,
+                                     int total) {
+    const int lastIndex = firstIndex + static_cast<int>(targets.size()) - 1;
+    std::string range = std::to_string(firstIndex);
+    if (lastIndex != firstIndex) {
+        range += "-" + std::to_string(lastIndex);
+    }
+
+    return range + "/" + std::to_string(total) +
+           " | " + nativeShortLabel(context) + ": " + joinTargetNames(targets, ", ");
 }
 
 bool ensureNativeConsistency(AppContext& context, const InstallProgress& progress) {
@@ -1967,6 +2095,101 @@ InstallStatus installNative(AppContext& context,
     showInstallStep(progress, 8, "finalizing");
     finishInstallStep(progress, "done");
     return InstallStatus::Installed;
+}
+
+std::vector<InstallStatus> installNativeBatch(AppContext& context,
+                                              const std::vector<InstallTarget>& targets,
+                                              const InstallProgress& progress) {
+    std::vector<InstallStatus> statuses(targets.size(), InstallStatus::Failed);
+    std::vector<std::string> pendingPackages;
+    std::vector<std::size_t> pendingIndexes;
+
+    showInstallStep(progress, 1, "checking selected source");
+    showInstallStep(progress, 2, "checking installed state");
+
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+        if (isInstalledNative(context, targets[i].name)) {
+            statuses[i] = InstallStatus::AlreadyInstalled;
+            continue;
+        }
+
+        pendingPackages.push_back(targets[i].name);
+        pendingIndexes.push_back(i);
+    }
+
+    if (pendingPackages.empty()) {
+        finishInstallStep(progress, "already installed");
+        return statuses;
+    }
+
+    if (!ensureNativeConsistency(context, progress)) {
+        if (g_interrupted) {
+            std::fill(statuses.begin(), statuses.end(), InstallStatus::Interrupted);
+        } else {
+            finishInstallStep(progress, "failed");
+        }
+        return statuses;
+    }
+
+    if (!checkNativeRepositories(context, joinPackageNames(pendingPackages, "_"), progress)) {
+        if (g_interrupted) {
+            std::fill(statuses.begin(), statuses.end(), InstallStatus::Interrupted);
+        } else {
+            finishInstallStep(progress, "failed");
+        }
+        return statuses;
+    }
+
+    showInstallStep(progress, 5, "preparing transaction");
+
+    const std::vector<std::string> args = nativeInstallArgs(context, pendingPackages);
+    if (args.empty()) {
+        finishInstallStep(progress, "failed");
+        return statuses;
+    }
+
+    std::vector<std::pair<std::string, std::string>> environment;
+    if (context.packageManager == "apt") {
+        environment.push_back({"DEBIAN_FRONTEND", "noninteractive"});
+    }
+
+    const int exitCode = runLoggedStep(args,
+                                       nativeInstallHeader(context, pendingPackages),
+                                       progress,
+                                       6,
+                                       pendingPackages.size() == 1
+                                           ? "installing package"
+                                           : "installing packages",
+                                       environment);
+    if (g_interrupted) {
+        std::fill(statuses.begin(), statuses.end(), InstallStatus::Interrupted);
+        return statuses;
+    }
+
+    if (exitCode != 0) {
+        finishInstallStep(progress, "failed");
+        return statuses;
+    }
+
+    showInstallStep(progress, 7, "verifying installation");
+    bool verified = true;
+    for (std::size_t i = 0; i < pendingPackages.size(); ++i) {
+        const std::size_t targetIndex = pendingIndexes[i];
+        if (isInstalledNative(context, pendingPackages[i])) {
+            statuses[targetIndex] = InstallStatus::Installed;
+        } else {
+            verified = false;
+        }
+    }
+
+    if (!verified) {
+        finishInstallStep(progress, "verification failed");
+        return statuses;
+    }
+
+    showInstallStep(progress, 8, "finalizing");
+    finishInstallStep(progress, "done");
+    return statuses;
 }
 
 InstallStatus installFlatpak(const AppContext& context,
@@ -2128,6 +2351,57 @@ InstallStatus installTarget(AppContext& context,
     return InstallStatus::Failed;
 }
 
+PackageResult resultForStatus(const AppContext& context,
+                              const InstallTarget& target,
+                              InstallStatus status,
+                              bool& anyFailed) {
+    PackageResult result;
+    result.name = target.name;
+
+    switch (status) {
+        case InstallStatus::AlreadyInstalled:
+            result.message = YELLOW + "Package " + target.name + " is already installed." + RESET;
+            result.success = true;
+            break;
+        case InstallStatus::WouldInstall:
+            result.message = "Package " + target.name + " would be installed from " +
+                             sourceName(context, target.source) + ".";
+            result.success = true;
+            break;
+        case InstallStatus::Installed:
+            result.message = "Package " + target.name + " installed successfully.";
+            result.success = true;
+            break;
+        case InstallStatus::Failed:
+            result.message = RED + "Package " + target.name + " installation failed." + RESET;
+            anyFailed = true;
+            break;
+        case InstallStatus::Interrupted:
+            result.message = YELLOW + "Package " + target.name + " installation interrupted." + RESET;
+            anyFailed = true;
+            break;
+    }
+
+    return result;
+}
+
+void writeInstallStatusLog(const InstallTarget& target, InstallStatus status) {
+    switch (status) {
+        case InstallStatus::AlreadyInstalled:
+            writeLogLine("install: " + target.name + " already installed");
+            break;
+        case InstallStatus::Installed:
+            writeLogLine("install: " + target.name + " installed successfully");
+            break;
+        case InstallStatus::Failed:
+            writeLogLine("install: " + target.name + " failed");
+            break;
+        case InstallStatus::WouldInstall:
+        case InstallStatus::Interrupted:
+            break;
+    }
+}
+
 int runInstallLoop(AppContext& context,
                    const std::vector<InstallTarget>& targets,
                    bool dryRun) {
@@ -2155,6 +2429,66 @@ int runInstallLoop(AppContext& context,
         }
 
         const InstallTarget& target = targets[static_cast<size_t>(i)];
+
+        if (!dryRun && target.source == InstallSource::Native) {
+            int batchEnd = i + 1;
+            while (batchEnd < total &&
+                   targets[static_cast<std::size_t>(batchEnd)].source == InstallSource::Native) {
+                ++batchEnd;
+            }
+
+            if (batchEnd - i > 1) {
+                const std::vector<InstallTarget> batchTargets(targets.begin() + i,
+                                                              targets.begin() + batchEnd);
+                const float startPct = (100.0f * static_cast<float>(i)) /
+                                       static_cast<float>(total);
+                const float endPct = (100.0f * static_cast<float>(batchEnd)) /
+                                     static_cast<float>(total);
+                const std::string label = nativeBatchProgressLabel(context,
+                                                                   batchTargets,
+                                                                   i + 1,
+                                                                   total);
+                const std::string progressText =
+                    "0/" + std::to_string(installStepCount(InstallSource::Native)) +
+                    " | " + label;
+                const InstallProgress progress {
+                    startPct,
+                    endPct,
+                    installStepCount(InstallSource::Native),
+                    label
+                };
+
+                beginInstallStep(startPct,
+                                 progressText,
+                                 infoStep,
+                                 installBatchInfoText(context, batchTargets, false),
+                                 liveLogView);
+
+                const std::vector<InstallStatus> statuses =
+                    installNativeBatch(context, batchTargets, progress);
+
+                const bool interrupted =
+                    std::find(statuses.begin(), statuses.end(), InstallStatus::Interrupted) !=
+                    statuses.end();
+                if (interrupted) {
+                    liveLog.stop();
+                    progressbar_finish("Cancelled!");
+                    std::cout << "\n" << YELLOW << "Cancelled.\n" << RESET;
+                    return 130;
+                }
+
+                for (std::size_t statusIndex = 0; statusIndex < statuses.size(); ++statusIndex) {
+                    const InstallTarget& batchTarget = batchTargets[statusIndex];
+                    const InstallStatus status = statuses[statusIndex];
+                    results.push_back(resultForStatus(context, batchTarget, status, anyFailed));
+                    writeInstallStatusLog(batchTarget, status);
+                }
+
+                i = batchEnd - 1;
+                continue;
+            }
+        }
+
         const float startPct = (100.0f * static_cast<float>(i)) / static_cast<float>(total);
         const float endPct = (100.0f * static_cast<float>(i + 1)) / static_cast<float>(total);
         const std::string progressText = "0/" +
@@ -2163,9 +2497,6 @@ int runInstallLoop(AppContext& context,
                                          std::to_string(total) + " | " +
                                          sourceName(context, target.source) + ": " +
                                          target.name;
-
-        PackageResult result;
-        result.name = target.name;
 
         beginInstallStep(startPct,
                          progressText,
@@ -2188,46 +2519,11 @@ int runInstallLoop(AppContext& context,
             return 130;
         }
 
-        switch (status) {
-            case InstallStatus::AlreadyInstalled:
-                result.message = YELLOW + "Package " + target.name + " is already installed." + RESET;
-                result.success = true;
-                break;
-            case InstallStatus::WouldInstall:
-                result.message = "Package " + target.name + " would be installed from " +
-                                 sourceName(context, target.source) + ".";
-                result.success = true;
-                break;
-            case InstallStatus::Installed:
-                result.message = "Package " + target.name + " installed successfully.";
-                result.success = true;
-                break;
-            case InstallStatus::Failed:
-                result.message = RED + "Package " + target.name + " installation failed." + RESET;
-                anyFailed = true;
-                break;
-            case InstallStatus::Interrupted:
-                break;
-        }
-
         if (!dryRun) {
-            switch (status) {
-                case InstallStatus::AlreadyInstalled:
-                    writeLogLine("install: " + target.name + " already installed");
-                    break;
-                case InstallStatus::Installed:
-                    writeLogLine("install: " + target.name + " installed successfully");
-                    break;
-                case InstallStatus::Failed:
-                    writeLogLine("install: " + target.name + " failed");
-                    break;
-                case InstallStatus::WouldInstall:
-                case InstallStatus::Interrupted:
-                    break;
-            }
+            writeInstallStatusLog(target, status);
         }
 
-        results.push_back(result);
+        results.push_back(resultForStatus(context, target, status, anyFailed));
     }
 
     if (anyFailed) {
