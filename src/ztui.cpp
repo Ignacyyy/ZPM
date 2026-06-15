@@ -1009,7 +1009,7 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
         },
         {
             "Maintenance",
-            "Cleanup, configuration, and local housekeeping.",
+            "Cleanup and local housekeeping.",
             {
                 {
                     "Clean cache",
@@ -1019,24 +1019,6 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                     true,
                     false,
                     "Clean can delete cached package data and leftover files.",
-                },
-                {
-                    "Edit config",
-                    "$SUDO_EDITOR/$VISUAL/$EDITOR /opt/ZPM/zielina.conf",
-                    editConfigArgs(),
-                    "Opens the active ZPM configuration file in a terminal editor.",
-                    true,
-                    false,
-                    "Editing config can change ZPM behavior.",
-                },
-                {
-                    "Edit config via zhome",
-                    "zpm home --edit-config",
-                    {"zpm", "home", "--edit-config"},
-                    "Runs the zhome configuration editor path.",
-                    true,
-                    false,
-                    "Editing config can change ZPM behavior.",
                 },
             },
         },
@@ -1103,9 +1085,27 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
             },
         },
         {
-            "ZPM admin",
-            "Upgrade, restart, and uninstall Zielina Package Manager itself.",
+            "ZPM Admin",
+            "Configuration, upgrade, restart, and uninstall actions for Zielina Package Manager.",
             {
+                {
+                    "Edit config",
+                    "$SUDO_EDITOR/$VISUAL/$EDITOR /opt/ZPM/zielina.conf",
+                    editConfigArgs(),
+                    "Opens the active ZPM configuration file in a terminal editor.",
+                    true,
+                    false,
+                    "Editing config can change ZPM behavior.",
+                },
+                {
+                    "Edit config via zhome",
+                    "zpm home --edit-config",
+                    {"zpm", "home", "--edit-config"},
+                    "Runs the zhome configuration editor path.",
+                    true,
+                    false,
+                    "Editing config can change ZPM behavior.",
+                },
                 {
                     "Upgrade ZPM",
                     "zpm upgrade",
