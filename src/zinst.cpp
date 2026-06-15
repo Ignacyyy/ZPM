@@ -2553,8 +2553,8 @@ int runInstallLoop(AppContext& context,
     for (const PackageResult& result : results) {
         std::cout << result.message << "\n";
     }
+    std::cout << GREEN << (dryRun ? "Dry run complete!\n" : "Installation complete!\n") << RESET;
     if (!dryRun) {
-        std::cout << GREEN << "Installation complete!\n" << RESET;
         std::cout << YELLOW << "[RAPORT] " << RESET << kLogPath << "\n";
     }
 
