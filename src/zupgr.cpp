@@ -2578,6 +2578,7 @@ int handleStable(const Options& options,
             return 0;
         }
 
+        std::cout << RED << "\n" << "Updating ZPM...\n" << RESET;
         return runUpdate(remote.stable, false) ? 0 : 1;
     }
 
