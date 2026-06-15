@@ -315,6 +315,30 @@ bool isValidPackageArgument(const std::string& value) {
            });
 }
 
+std::vector<std::string> splitPackageArgument(const std::string& value) {
+    std::vector<std::string> packages;
+    std::string current;
+
+    auto flush = [&] {
+        const std::string package = trim(current);
+        if (!package.empty()) {
+            packages.push_back(package);
+        }
+        current.clear();
+    };
+
+    for (const unsigned char c : value) {
+        if (std::isspace(c) || c == ',') {
+            flush();
+        } else {
+            current.push_back(static_cast<char>(c));
+        }
+    }
+    flush();
+
+    return packages;
+}
+
 std::vector<std::string> splitLines(const std::string& text) {
     std::vector<std::string> lines;
     std::stringstream ss(text);
@@ -1421,8 +1445,10 @@ void printHelp(const char* progName) {
     std::cout << RED << "Usage: " << RESET << progName << " [options] [packages...]"
               << " or zpm inst/install [options] [packages...]\n"
               << RED << "Options:\n" << RESET
-              << "  (auto)         Picks native PM / Flatpak / Snap per package\n"
-              << "  --dry-run      Simulate program flow; fake packages are allowed\n"
+	              << "  (auto)         Picks native PM / Flatpak / Snap per package\n"
+	              << "  packages       Accepts many names: zinst git curl htop\n"
+	              << "                 Also accepts quoted/comma lists: zinst \"git curl\" or zinst git,curl\n"
+	              << "  --dry-run      Simulate program flow; fake packages are allowed\n"
               << "  --version, -v  Show version information\n"
               << "  --help,    -h  Show this help message\n";
 }
@@ -1448,10 +1474,20 @@ bool parseOptions(int argc, char* argv[], Options& options) {
             options.dryRun = true;
         } else if (startsWith(arg, "-")) {
             errors.push_back("Unknown option: " + arg);
-        } else if (!isValidPackageArgument(arg)) {
-            errors.push_back("Invalid package name: " + arg);
         } else {
-            options.packages.push_back(arg);
+            const std::vector<std::string> packages = splitPackageArgument(arg);
+            if (packages.empty()) {
+                errors.push_back("Invalid package name: " + arg);
+                continue;
+            }
+
+            for (const std::string& package : packages) {
+                if (!isValidPackageArgument(package)) {
+                    errors.push_back("Invalid package name: " + package);
+                    continue;
+                }
+                options.packages.push_back(package);
+            }
         }
     }
 
