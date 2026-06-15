@@ -1608,6 +1608,7 @@
             <div class="feed-line"><span class="ok">ok</span><span>backends detected: apt, dnf, zypper</span></div>
             <div class="feed-line"><span class="warn">pkg</span><span>zsearch firefox - checks distro packages</span></div>
             <div class="feed-line"><span class="path">run</span><span>zrun firefox - launch from one place</span></div>
+            <div class="feed-line"><span class="ok">tui</span><span>ztui - open the full terminal GUI</span></div>
           </div>
           <div class="package-map" aria-label="Package sources">
             <div class="source-stack">
@@ -1620,6 +1621,7 @@
               <div class="command-pill">zsearch</div>
               <div class="command-pill">zinst</div>
               <div class="command-pill">zrun</div>
+              <div class="command-pill">ztui</div>
             </div>
           </div>
         </div>
@@ -1894,7 +1896,7 @@
         feature_clean_desc: "Clean package leftovers with <code>zclean</code> and keep the system tidy.",
         quick_title: "Built for daily terminal work.",
         quick_desc: "The UI stays close to what ZPM is: a focused command-line tool for people who want speed without mental overhead.",
-        stat_commands: "core commands for install, remove, search, info, update, clean and run",
+        stat_commands: "core commands for install, remove, search, info, update, clean, run and terminal GUI",
         stat_cpp: "native core with shell integration for Linux systems",
         stat_license: "license for use, modification and redistribution",
         stat_version: "current version loaded from VERSION.txt when available",
@@ -1966,7 +1968,7 @@
         feature_clean_desc: "Czysc pozostalosci po pakietach przez <code>zclean</code> i trzymaj system w porzadku.",
         quick_title: "Do codziennej pracy w terminalu.",
         quick_desc: "Interfejs trzyma sie tego, czym jest ZPM: konkretnym narzedziem CLI dla osob, ktore chca szybkosci bez zbednego wysilku.",
-        stat_commands: "glownych komend do instalacji, usuwania, szukania, info, aktualizacji, czyszczenia i uruchamiania",
+        stat_commands: "glownych komend do instalacji, usuwania, szukania, info, aktualizacji, czyszczenia, uruchamiania i terminalowego GUI",
         stat_cpp: "natywny rdzen z integracja shell dla systemow Linux",
         stat_license: "licencja pozwalajaca uzywac, modyfikowac i rozpowszechniac",
         stat_version: "wersja pobierana z VERSION.txt, gdy jest dostepna",
@@ -2025,7 +2027,8 @@
       { name: "zclean", file: "zclean.cpp", group: "system", example: "sudo zclean", desc: { en: "Clean package cache and leftovers.", pl: "Czysci cache i pozostalosci po pakietach." } },
       { name: "zhome", file: "zhome.cpp", group: "help", example: "zhome", desc: { en: "Open the full help guide.", pl: "Otwiera pelny przewodnik pomocy." } },
       { name: "zuninstall", file: "zuninstall.cpp", group: "remove", example: "sudo zuninstall", desc: { en: "Uninstall ZPM from the system.", pl: "Odinstalowuje ZPM z systemu." } },
-      { name: "zrun", file: "zrun.cpp", group: "run", example: "zrun firefox", desc: { en: "Launch an installed program through ZPM.", pl: "Uruchamia zainstalowany program przez ZPM." } }
+      { name: "zrun", file: "zrun.cpp", group: "run", example: "zrun firefox", desc: { en: "Launch an installed program through ZPM.", pl: "Uruchamia zainstalowany program przez ZPM." } },
+      { name: "ztui", file: "ztui.cpp", group: "system", example: "sudo ztui", desc: { en: "Open the complete terminal GUI for ZPM.", pl: "Otwiera wszystko w kompleksowym terminalowym GUI." } }
     ];
 
     const state = {
