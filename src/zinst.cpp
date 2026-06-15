@@ -742,7 +742,8 @@ void beginInstallStep(float progress,
                       const std::string& progressText,
                       int& step,
                       const std::string& infoText,
-                      LiveLogView* liveLog = nullptr) {
+                      LiveLogView* liveLog = nullptr,
+                      bool showProgress = true) {
     const bool startProgressbar = step == 0;
 
     {
@@ -769,6 +770,10 @@ void beginInstallStep(float progress,
     }
 
     ++step;
+    if (!showProgress) {
+        return;
+    }
+
     if (startProgressbar) {
         progressbar_start(progress, progressText);
     } else {
@@ -2502,7 +2507,8 @@ int runInstallLoop(AppContext& context,
                          progressText,
                          infoStep,
                          installInfoText(context, target, dryRun),
-                         liveLogView);
+                         liveLogView,
+                         !dryRun);
 
         const InstallStatus status = installTarget(context,
                                                    target,
@@ -2539,6 +2545,9 @@ int runInstallLoop(AppContext& context,
     }
 
     liveLog.stop();
+    if (dryRun) {
+        std::cout << "\n";
+    }
     progressbar_finish(dryRun ? "Dry run done!" : "Done!");
     std::cout << "\n";
     for (const PackageResult& result : results) {

@@ -633,7 +633,8 @@ void beginRemoveStep(float progress,
                      const std::string& progressText,
                      int& step,
                      const std::string& infoText,
-                     LiveLogView* liveLog = nullptr) {
+                     LiveLogView* liveLog = nullptr,
+                     bool showProgress = true) {
     const bool startProgressbar = step == 0;
 
     {
@@ -660,6 +661,10 @@ void beginRemoveStep(float progress,
     }
 
     ++step;
+    if (!showProgress) {
+        return;
+    }
+
     if (startProgressbar) {
         progressbar_start(progress, progressText);
     } else {
@@ -1993,7 +1998,8 @@ int runRemoveLoop(AppContext& context,
                         progressText,
                         infoStep,
                         removeInfoText(context, target, dryRun),
-                        liveLogView);
+                        liveLogView,
+                        !dryRun);
 
         const RemoveStatus status = removeTarget(context,
                                                  target,
@@ -2038,6 +2044,9 @@ int runRemoveLoop(AppContext& context,
     }
 
     liveLog.stop();
+    if (dryRun) {
+        std::cout << "\n";
+    }
     progressbar_finish(dryRun ? "Dry run done!" : "Done!");
     std::cout << "\n";
     for (const PackageResult& result : results) {

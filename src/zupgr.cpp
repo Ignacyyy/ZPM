@@ -633,7 +633,8 @@ private:
 void beginUpgradeStep(UiState state,
                       int& step,
                       const std::string& text,
-                      LiveLogView* liveLog = nullptr) {
+                      LiveLogView* liveLog = nullptr,
+                      bool showProgress = true) {
     const bool startProgressbar = step == 0;
     const int nextStep = step + 1;
 
@@ -661,6 +662,10 @@ void beginUpgradeStep(UiState state,
     }
 
     step = nextStep;
+    if (!showProgress) {
+        return;
+    }
+
     if (startProgressbar) {
         progressbar_start(kUpgradeTotalSteps);
     }
@@ -2463,7 +2468,7 @@ int handleDryRun(const Options& options) {
             return;
         }
 
-        beginUpgradeStep(state, progressStep, infoText);
+        beginUpgradeStep(state, progressStep, infoText, nullptr, false);
         ok = dryRunStep();
     };
 
@@ -2475,13 +2480,13 @@ int handleDryRun(const Options& options) {
     runStep(UiState::CLEANUP, "cleaning");
 
     if (!ok || g_interrupted) {
-        progressbar_set_state(UiState::ERROR, progressStep);
+        std::cout << "\n";
         progressbar_finish("ERROR!");
         std::cout << RED << "Dry run failed or was interrupted.\n" << RESET;
         return g_interrupted ? 130 : 1;
     }
 
-    progressbar_set_state(UiState::DONE, kUpgradeTotalSteps);
+    std::cout << "\n";
     progressbar_finish("Dry run done!");
     return 0;
 }

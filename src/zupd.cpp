@@ -1329,7 +1329,8 @@ void beginProgressStep(UiState state,
                        int& step,
                        int total,
                        const std::string& text,
-                       LiveLogView* liveLog = nullptr) {
+                       LiveLogView* liveLog = nullptr,
+                       bool showProgress = true) {
     const bool startProgressbar = step == 0;
     const int nextStep = step + 1;
 
@@ -1357,6 +1358,10 @@ void beginProgressStep(UiState state,
     }
 
     step = nextStep;
+    if (!showProgress) {
+        return;
+    }
+
     if (startProgressbar) {
         progressbar_start(total);
     }
@@ -1574,10 +1579,19 @@ bool finishAndReport(const Options& options,
     }
 
     if (ok) {
-        progressbar_set_state(UiState::DONE, total);
-        progressbar_finish(options.dryRun ? "Dry run done!" : "DONE!");
+        if (options.dryRun) {
+            std::cout << "\n";
+            progressbar_finish("Dry run done!");
+        } else {
+            progressbar_set_state(UiState::DONE, total);
+            progressbar_finish("DONE!");
+        }
     } else {
-        progressbar_set_state(UiState::ERROR, step);
+        if (options.dryRun) {
+            std::cout << "\n";
+        } else {
+            progressbar_set_state(UiState::ERROR, step);
+        }
         progressbar_finish("ERROR!");
     }
 
@@ -1895,7 +1909,8 @@ bool runUpdateFlow(const Options& options,
                           step,
                           total,
                           "checking system consistency",
-                          liveLogView);
+                          liveLogView,
+                          !options.dryRun);
         if (!checkConsistency()) {
             ok = false;
         }
@@ -1909,7 +1924,8 @@ bool runUpdateFlow(const Options& options,
                           step,
                           total,
                           nativeUpdateTask(nativeState),
-                          liveLogView);
+                          liveLogView,
+                          !options.dryRun);
         const NativeUpdateResult result = updateNative();
 
         if (result == NativeUpdateResult::RestartRequired) {
@@ -1942,7 +1958,8 @@ bool runUpdateFlow(const Options& options,
                           step,
                           total,
                           "updating Flatpak packages",
-                          liveLogView);
+                          liveLogView,
+                          !options.dryRun);
         if (options.dryRun) {
             ok = dryRunStep() && ok;
         } else if (!runCommandOk({"flatpak", "update", "-y"}, "----updating_flatpak----")) {
@@ -1958,7 +1975,8 @@ bool runUpdateFlow(const Options& options,
                           step,
                           total,
                           "updating Snap packages",
-                          liveLogView);
+                          liveLogView,
+                          !options.dryRun);
         if (options.dryRun) {
             ok = dryRunStep() && ok;
         } else if (!runCommandOk({"snap", "refresh"}, "----updating_snap----")) {
@@ -1973,7 +1991,8 @@ bool runUpdateFlow(const Options& options,
                       step,
                       total,
                       "cleaning",
-                      liveLogView);
+                      liveLogView,
+                      !options.dryRun);
     if (!cleanupNative()) {
         ok = false;
     }

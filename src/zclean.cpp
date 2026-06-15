@@ -663,7 +663,8 @@ void beginCleanStep(float progress,
                     const std::string& progressText,
                     int& step,
                     const std::string& infoText,
-                    LiveLogView* liveLog = nullptr) {
+                    LiveLogView* liveLog = nullptr,
+                    bool showProgress = true) {
     const bool startProgressbar = step == 0;
 
     {
@@ -690,6 +691,10 @@ void beginCleanStep(float progress,
     }
 
     ++step;
+    if (!showProgress) {
+        return;
+    }
+
     if (startProgressbar) {
         progressbar_start(progress, progressText);
     } else {
@@ -1704,7 +1709,9 @@ int runDryRunSteps(const std::vector<std::string>& labels) {
         beginCleanStep(startPct,
                        prefix,
                        infoStep,
-                       labels[static_cast<size_t>(i)]);
+                       labels[static_cast<size_t>(i)],
+                       nullptr,
+                       false);
 
         if (!dryRunStep()) {
             progressbar_finish("Dry run interrupted!");
@@ -1716,6 +1723,7 @@ int runDryRunSteps(const std::vector<std::string>& labels) {
         progressbar_update(endPct, prefix + " - done");
     }
 
+    std::cout << "\n";
     progressbar_finish("Dry run done!");
     return 0;
 }
