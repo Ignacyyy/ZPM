@@ -1455,6 +1455,7 @@ bool checkInterrupted(bool& ok) {
 
 bool askConfirm(const Options& options) {
     if (options.yes) {
+        std::cout << "\n" << YELLOW << "Proceed with update?" << RESET << " [y/n]: y\n";
         return true;
     }
 
