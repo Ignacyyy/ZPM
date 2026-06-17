@@ -27,6 +27,27 @@ namespace {
 
 using namespace ftxui;
 
+enum class ActionOptionsKind {
+    None,
+    Update,
+    SearchPackages,
+    ListPackages,
+    UpgradeZpm,
+    HomePages,
+};
+
+enum class PackageSourceFilter {
+    All,
+    Native,
+    Flatpak,
+    Snap,
+};
+
+enum class PagerMode {
+    NoPager,
+    Pager,
+};
+
 struct Action {
     std::string title;
     std::string commandPreview;
@@ -35,6 +56,7 @@ struct Action {
     bool needsRoot = false;
     bool exits = false;
     std::string warning;
+    ActionOptionsKind optionsKind = ActionOptionsKind::None;
 
     Action() = default;
 
@@ -44,14 +66,16 @@ struct Action {
            std::string hintValue,
            bool needsRootValue = false,
            bool exitsValue = false,
-           std::string warningValue = {})
+           std::string warningValue = {},
+           ActionOptionsKind optionsKindValue = ActionOptionsKind::None)
         : title(std::move(titleValue)),
           commandPreview(std::move(commandPreviewValue)),
           args(std::move(argsValue)),
           hint(std::move(hintValue)),
           needsRoot(needsRootValue),
           exits(exitsValue),
-          warning(std::move(warningValue)) {}
+          warning(std::move(warningValue)),
+          optionsKind(optionsKindValue) {}
 };
 
 struct Category {
@@ -66,6 +90,40 @@ struct SystemStatus {
     std::string zpmVersion = "unknown";
     std::string privileges = "root";
 };
+
+struct UpdateOptions {
+    bool full = false;
+    bool yes = false;
+    bool reboot = false;
+    bool shutdown = false;
+};
+
+struct BrowseOptions {
+    PackageSourceFilter source = PackageSourceFilter::All;
+    PagerMode pager = PagerMode::NoPager;
+};
+
+struct UpgradeOptions {
+    bool experimental = false;
+    bool force = false;
+};
+
+struct HomePageOptions {
+    bool defaultPage = true;
+    std::array<bool, 3> pages {};
+};
+
+struct ConfigurableOptions {
+    UpdateOptions update;
+    BrowseOptions browse;
+    UpgradeOptions upgrade;
+    HomePageOptions home;
+};
+
+constexpr int kPaneCategories = 0;
+constexpr int kPaneActions = 1;
+constexpr int kPaneOptions = 2;
+constexpr int kMaxOptionCount = 6;
 
 bool executableAt(const std::string& path) {
     return !path.empty() && access(path.c_str(), X_OK) == 0;
@@ -102,7 +160,10 @@ std::string executableDirectoryFromProc() {
 }
 
 std::string resolveExecutable(const std::string& name) {
-    if (name.find('/') != std::string::npos) {
+    std::string lookupName = name;
+    if (name.rfind("./", 0) == 0 && name.find('/', 2) == std::string::npos) {
+        lookupName = name.substr(2);
+    } else if (name.find('/') != std::string::npos) {
         return name;
     }
 
@@ -117,7 +178,7 @@ std::string resolveExecutable(const std::string& name) {
     };
 
     for (const std::string& directory : candidateDirs) {
-        const std::string candidate = joinPath(directory, name);
+        const std::string candidate = joinPath(directory, lookupName);
         if (executableAt(candidate)) {
             return candidate;
         }
@@ -601,21 +662,245 @@ std::vector<std::string> shellArgs(const std::string& script) {
     return {"sh", "-lc", script};
 }
 
-std::vector<std::string> editConfigArgs() {
-    return shellArgs(
-        "choose_editor() { "
-        "for candidate in \"$SUDO_EDITOR\" \"$VISUAL\" \"$EDITOR\" sensible-editor editor vim vi; do "
-        "[ -n \"$candidate\" ] || continue; "
-        "set -f; set -- $candidate; "
-        "[ \"$#\" -gt 0 ] || continue; "
-        "if command -v \"$1\" >/dev/null 2>&1; then printf '%s\\n' \"$candidate\"; return 0; fi; "
-        "done; "
-        "return 1; "
-        "}; "
-        "editor=$(choose_editor) || { echo 'Error: no terminal text editor found!'; exit 1; }; "
-        "set -f; "
-        "exec $editor /opt/ZPM/zielina.conf"
-    );
+void toggleUpdateOption(UpdateOptions& options, int option) {
+    switch (option) {
+    case 0:
+        options.full = !options.full;
+        break;
+    case 1:
+        options.yes = !options.yes;
+        break;
+    case 2:
+        options.reboot = !options.reboot;
+        if (options.reboot) {
+            options.shutdown = false;
+        }
+        break;
+    case 3:
+        options.shutdown = !options.shutdown;
+        if (options.shutdown) {
+            options.reboot = false;
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+std::string sourceFlag(PackageSourceFilter source) {
+    switch (source) {
+    case PackageSourceFilter::Native:
+        return "--native";
+    case PackageSourceFilter::Flatpak:
+        return "--flatpak";
+    case PackageSourceFilter::Snap:
+        return "--snap";
+    case PackageSourceFilter::All:
+        return {};
+    }
+    return {};
+}
+
+std::string sourceLabel(PackageSourceFilter source) {
+    switch (source) {
+    case PackageSourceFilter::Native:
+        return "native packages";
+    case PackageSourceFilter::Flatpak:
+        return "Flatpak packages";
+    case PackageSourceFilter::Snap:
+        return "Snap packages";
+    case PackageSourceFilter::All:
+        return "all package sources";
+    }
+    return "all package sources";
+}
+
+void appendArg(std::vector<std::string>& args, std::string& preview, const std::string& arg) {
+    if (arg.empty()) {
+        return;
+    }
+    args.push_back(arg);
+    preview += " " + arg;
+}
+
+void toggleHomePageOption(HomePageOptions& options, int option) {
+    if (option == 0) {
+        options.defaultPage = true;
+        options.pages.fill(false);
+        return;
+    }
+
+    const int pageIndex = option - 1;
+    if (pageIndex < 0 || pageIndex >= static_cast<int>(options.pages.size())) {
+        return;
+    }
+
+    options.pages[static_cast<std::size_t>(pageIndex)] =
+        !options.pages[static_cast<std::size_t>(pageIndex)];
+    options.defaultPage = !std::any_of(options.pages.begin(), options.pages.end(),
+                                       [](bool selected) { return selected; });
+}
+
+void setPackageSource(BrowseOptions& options, int option) {
+    switch (option) {
+    case 0:
+        options.source = PackageSourceFilter::All;
+        break;
+    case 1:
+        options.source = PackageSourceFilter::Native;
+        break;
+    case 2:
+        options.source = PackageSourceFilter::Flatpak;
+        break;
+    case 3:
+        options.source = PackageSourceFilter::Snap;
+        break;
+    default:
+        break;
+    }
+}
+
+void toggleActionOption(ConfigurableOptions& options, ActionOptionsKind kind, int option) {
+    switch (kind) {
+    case ActionOptionsKind::Update:
+        toggleUpdateOption(options.update, option);
+        break;
+    case ActionOptionsKind::SearchPackages:
+        setPackageSource(options.browse, option);
+        break;
+    case ActionOptionsKind::ListPackages:
+        if (option <= 3) {
+            setPackageSource(options.browse, option);
+        } else if (option == 4) {
+            options.browse.pager = PagerMode::NoPager;
+        } else if (option == 5) {
+            options.browse.pager = PagerMode::Pager;
+        }
+        break;
+    case ActionOptionsKind::UpgradeZpm:
+        if (option == 0) {
+            options.upgrade.experimental = !options.upgrade.experimental;
+        } else if (option == 1) {
+            options.upgrade.force = !options.upgrade.force;
+        }
+        break;
+    case ActionOptionsKind::HomePages:
+        toggleHomePageOption(options.home, option);
+        break;
+    case ActionOptionsKind::None:
+        break;
+    }
+}
+
+Action applyActionOptions(Action action, const ConfigurableOptions& options) {
+    switch (action.optionsKind) {
+    case ActionOptionsKind::Update: {
+        const UpdateOptions& update = options.update;
+        action.args = {"zpm", "update"};
+        action.commandPreview = "zpm update";
+
+        if (update.full) {
+            action.args.push_back("--full");
+            action.commandPreview += " --full";
+        }
+        if (update.yes) {
+            action.args.push_back("--yes");
+            action.commandPreview += " --yes";
+        }
+        if (update.reboot) {
+            action.args.push_back("--reboot");
+            action.commandPreview += " --reboot";
+        } else if (update.shutdown) {
+            action.args.push_back("--shutdown");
+            action.commandPreview += " --shutdown";
+        }
+
+        action.hint = update.full ? "Runs the full update flow" : "Runs the standard update flow";
+        action.hint += update.yes ? " with automatic confirmations" : " and leaves native prompts visible";
+        if (update.reboot) {
+            action.hint += ", then requests a reboot";
+        } else if (update.shutdown) {
+            action.hint += ", then requests a shutdown";
+        }
+        action.hint += ".";
+
+        if (update.reboot) {
+            action.warning = "This can reboot the machine after updates finish.";
+        } else if (update.shutdown) {
+            action.warning = "This can shut down the machine after updates finish.";
+        } else {
+            action.warning.clear();
+        }
+        return action;
+    }
+    case ActionOptionsKind::SearchPackages: {
+        std::string command = "zpm search";
+        const std::string flag = sourceFlag(options.browse.source);
+        if (!flag.empty()) {
+            command += " " + flag;
+        }
+        action.commandPreview = command + " <query>";
+        action.args = promptCommandArgs("Search query", command);
+        action.hint = "Searches " + sourceLabel(options.browse.source) + ".";
+        return action;
+    }
+    case ActionOptionsKind::ListPackages: {
+        action.args = {"zpm", "list"};
+        action.commandPreview = "zpm list";
+        appendArg(action.args, action.commandPreview, sourceFlag(options.browse.source));
+        appendArg(action.args,
+                  action.commandPreview,
+                  options.browse.pager == PagerMode::Pager ? "--pager" : "--no-pager");
+        action.hint = "Lists " + sourceLabel(options.browse.source);
+        action.hint += options.browse.pager == PagerMode::Pager
+            ? " with the configured pager."
+            : " directly in the terminal.";
+        return action;
+    }
+    case ActionOptionsKind::UpgradeZpm: {
+        action.args = {"zpm", "upgrade"};
+        action.commandPreview = "zpm upgrade";
+        if (options.upgrade.experimental) {
+            appendArg(action.args, action.commandPreview, "--experimental");
+        }
+        if (options.upgrade.force) {
+            appendArg(action.args, action.commandPreview, "--force");
+        }
+        action.hint = options.upgrade.experimental
+            ? "Checks prerelease ZPM updates"
+            : "Checks and installs stable ZPM updates when available";
+        if (options.upgrade.force) {
+            action.hint += " and forces reinstall when needed";
+        }
+        action.hint += ".";
+        if (options.upgrade.experimental || options.upgrade.force) {
+            action.warning = "Review upgrade options before running; this can replace the current ZPM build.";
+        } else {
+            action.warning.clear();
+        }
+        return action;
+    }
+    case ActionOptionsKind::HomePages: {
+        action.args = {"zhome"};
+        action.commandPreview = "zhome";
+        bool anyPage = false;
+        for (std::size_t index = 0; index < options.home.pages.size(); ++index) {
+            if (!options.home.pages[index]) {
+                continue;
+            }
+            anyPage = true;
+            const std::string page = "-p" + std::to_string(index + 1);
+            appendArg(action.args, action.commandPreview, page);
+        }
+        action.hint = anyPage
+            ? "Opens the selected ZPM home pages in order."
+            : "Opens the ZPM homepage/help interface.";
+        return action;
+    }
+    case ActionOptionsKind::None:
+        return action;
+    }
+    return action;
 }
 
 std::vector<std::string> viewLogArgs(const std::string& path) {
@@ -761,32 +1046,14 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
             "Read-only package search, package details, and installed package lists.",
             {
                 {
-                    "Search all sources",
+                    "Search packages",
                     "zpm search <query>",
                     promptCommandArgs("Search query", "zpm search"),
-                    "Searches native packages, Flatpak, and Snap when available.",
+                    "Searches packages from the selected source.",
                     false,
-                },
-                {
-                    "Search native packages",
-                    "zpm search --native <query>",
-                    promptCommandArgs("Native search query", "zpm search --native"),
-                    "Searches only packages from the detected native package manager.",
                     false,
-                },
-                {
-                    "Search Flatpak packages",
-                    "zpm search --flatpak <query>",
-                    promptCommandArgs("Flatpak search query", "zpm search --flatpak"),
-                    "Searches only Flatpak applications.",
-                    false,
-                },
-                {
-                    "Search Snap packages",
-                    "zpm search --snap <query>",
-                    promptCommandArgs("Snap search query", "zpm search --snap"),
-                    "Searches only Snap packages.",
-                    false,
+                    {},
+                    ActionOptionsKind::SearchPackages,
                 },
                 {
                     "Package info",
@@ -796,60 +1063,14 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                     false,
                 },
                 {
-                    "List all packages",
+                    "List packages",
                     "zpm list --no-pager",
                     {"zpm", "list", "--no-pager"},
-                    "Prints installed packages directly in the terminal.",
+                    "Lists installed packages from the selected source.",
                     false,
-                },
-                {
-                    "List native packages",
-                    "zpm list --native --no-pager",
-                    {"zpm", "list", "--native", "--no-pager"},
-                    "Prints installed native packages directly in the terminal.",
                     false,
-                },
-                {
-                    "List Flatpak packages",
-                    "zpm list --flatpak --no-pager",
-                    {"zpm", "list", "--flatpak", "--no-pager"},
-                    "Prints installed Flatpak packages directly in the terminal.",
-                    false,
-                },
-                {
-                    "List Snap packages",
-                    "zpm list --snap --no-pager",
-                    {"zpm", "list", "--snap", "--no-pager"},
-                    "Prints installed Snap packages directly in the terminal.",
-                    false,
-                },
-                {
-                    "List all with pager",
-                    "zpm list --pager",
-                    {"zpm", "list", "--pager"},
-                    "Shows installed packages with the configured pager.",
-                    false,
-                },
-                {
-                    "List native with pager",
-                    "zpm list --native --pager",
-                    {"zpm", "list", "--native", "--pager"},
-                    "Shows installed native packages with the configured pager.",
-                    false,
-                },
-                {
-                    "List Flatpak with pager",
-                    "zpm list --flatpak --pager",
-                    {"zpm", "list", "--flatpak", "--pager"},
-                    "Shows installed Flatpak packages with the configured pager.",
-                    false,
-                },
-                {
-                    "List Snap with pager",
-                    "zpm list --snap --pager",
-                    {"zpm", "list", "--snap", "--pager"},
-                    "Shows installed Snap packages with the configured pager.",
-                    false,
+                    {},
+                    ActionOptionsKind::ListPackages,
                 },
             },
         },
@@ -884,113 +1105,17 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
         },
         {
             "System update",
-            "Normal and full update flows that can change the system.",
+            "Update flow with selectable full, automatic, reboot, and shutdown options.",
             {
                 {
-                    "Update with prompts",
+                    "Update",
                     "zpm update",
                     {"zpm", "update"},
                     "Runs the standard update flow and leaves native prompts visible.",
                     true,
-                },
-                {
-                    "Full update with prompts",
-                    "zpm update --full",
-                    {"zpm", "update", "--full"},
-                    "Runs the full update flow and leaves native prompts visible.",
-                    true,
-                },
-                {
-                    "Automatic update",
-                    "zpm update --yes",
-                    {"zpm", "update", "--yes"},
-                    "Runs the standard update flow with automatic confirmations.",
-                    true,
-                },
-                {
-                    "Automatic full update",
-                    "zpm update --full --yes",
-                    {"zpm", "update", "--full", "--yes"},
-                    "Runs the full update flow with automatic confirmations.",
-                    true,
-                },
-            },
-        },
-        {
-            "Power update",
-            "Update flows that can reboot or shut down the machine afterwards.",
-            {
-                {
-                    "Update then reboot",
-                    "zpm update --reboot",
-                    {"zpm", "update", "--reboot"},
-                    "Runs a standard update and requests a reboot afterwards.",
-                    true,
                     false,
-                    "This can reboot the machine after updates finish.",
-                },
-                {
-                    "Update then shutdown",
-                    "zpm update --shutdown",
-                    {"zpm", "update", "--shutdown"},
-                    "Runs a standard update and requests a shutdown afterwards.",
-                    true,
-                    false,
-                    "This can shut down the machine after updates finish.",
-                },
-                {
-                    "Full update then reboot",
-                    "zpm update --full --reboot",
-                    {"zpm", "update", "--full", "--reboot"},
-                    "Runs a full update and requests a reboot afterwards.",
-                    true,
-                    false,
-                    "This can perform a full update and reboot the machine.",
-                },
-                {
-                    "Full update then shutdown",
-                    "zpm update --full --shutdown",
-                    {"zpm", "update", "--full", "--shutdown"},
-                    "Runs a full update and requests a shutdown afterwards.",
-                    true,
-                    false,
-                    "This can perform a full update and shut down the machine.",
-                },
-                {
-                    "Auto update then reboot",
-                    "zpm update --yes --reboot",
-                    {"zpm", "update", "--yes", "--reboot"},
-                    "Runs automatic update and requests a reboot afterwards.",
-                    true,
-                    false,
-                    "This answers prompts automatically and can reboot the machine.",
-                },
-                {
-                    "Auto update then shutdown",
-                    "zpm update --yes --shutdown",
-                    {"zpm", "update", "--yes", "--shutdown"},
-                    "Runs automatic update and requests a shutdown afterwards.",
-                    true,
-                    false,
-                    "This answers prompts automatically and can shut down the machine.",
-                },
-                {
-                    "Auto full update then reboot",
-                    "zpm update --full --yes --reboot",
-                    {"zpm", "update", "--full", "--yes", "--reboot"},
-                    "Runs automatic full update and requests a reboot afterwards.",
-                    true,
-                    false,
-                    "This answers prompts automatically, performs a full update, and can reboot.",
-                },
-                {
-                    "Auto full update then shutdown",
-                    "zpm update --full --yes --shutdown",
-                    {"zpm", "update", "--full", "--yes", "--shutdown"},
-                    "Runs automatic full update and requests a shutdown afterwards.",
-                    true,
-                    false,
-                    "This answers prompts automatically, performs a full update, and can shut down.",
+                    {},
+                    ActionOptionsKind::Update,
                 },
             },
         },
@@ -1090,18 +1215,9 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
             {
                 {
                     "Edit config",
-                    "$SUDO_EDITOR/$VISUAL/$EDITOR /opt/ZPM/zielina.conf",
-                    editConfigArgs(),
-                    "Opens the active ZPM configuration file in a terminal editor.",
-                    true,
-                    false,
-                    "Editing config can change ZPM behavior.",
-                },
-                {
-                    "Edit config via zhome",
-                    "zpm home --edit-config",
-                    {"zpm", "home", "--edit-config"},
-                    "Runs the zhome configuration editor path.",
+                    "./zhome -ed",
+                    {"./zhome", "-ed"},
+                    "Opens the active ZPM configuration file through zhome.",
                     true,
                     false,
                     "Editing config can change ZPM behavior.",
@@ -1112,31 +1228,9 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                     {"zpm", "upgrade"},
                     "Checks and installs stable ZPM updates when available.",
                     true,
-                },
-                {
-                    "Force ZPM upgrade",
-                    "zpm upgrade --force",
-                    {"zpm", "upgrade", "--force"},
-                    "Forces reinstall even when ZPM appears up to date.",
-                    true,
                     false,
-                    "Force upgrade can reinstall or replace the current ZPM build.",
-                },
-                {
-                    "Experimental ZPM upgrade",
-                    "zpm upgrade --experimental",
-                    {"zpm", "upgrade", "--experimental"},
-                    "Checks prerelease ZPM updates.",
-                    true,
-                },
-                {
-                    "Force experimental upgrade",
-                    "zpm upgrade --experimental --force",
-                    {"zpm", "upgrade", "--experimental", "--force"},
-                    "Forces the prerelease upgrade path.",
-                    true,
-                    false,
-                    "This forces a prerelease upgrade path. Review before running.",
+                    {},
+                    ActionOptionsKind::UpgradeZpm,
                 },
                 {
                     "Restart ZPM TUI",
@@ -1162,38 +1256,13 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
             {
                 {
                     "Homepage",
-                    "zpm home",
-                    {"zpm", "home"},
-                    "Opens the ZPM homepage/help interface.",
+                    "zhome",
+                    {"zhome"},
+                    "Opens the selected ZPM home pages.",
                     false,
-                },
-                {
-                    "Homepage page 1",
-                    "zpm home -p1",
-                    {"zpm", "home", "-p1"},
-                    "Opens PAGE 1: ARM support and config information.",
                     false,
-                },
-                {
-                    "Homepage page 2",
-                    "zpm home -p2",
-                    {"zpm", "home", "-p2"},
-                    "Opens PAGE 2: zpm wrapper commands.",
-                    false,
-                },
-                {
-                    "Homepage page 3",
-                    "zpm home -p3",
-                    {"zpm", "home", "-p3"},
-                    "Opens PAGE 3: ZPM command aliases.",
-                    false,
-                },
-                {
-                    "Homepage all pages",
-                    "zpm home -p1 -p2 -p3",
-                    {"zpm", "home", "-p1", "-p2", "-p3"},
-                    "Opens all ZPM homepage pages in order.",
-                    false,
+                    {},
+                    ActionOptionsKind::HomePages,
                 },
             },
         },
@@ -1248,14 +1317,172 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
     };
 }
 
+Element updateOptionRow(const std::string& label,
+                        const std::string& hint,
+                        bool checked,
+                        bool focused,
+                        Color activeColor,
+                        Box& box) {
+    Element marker = text(checked ? "[x]" : "[ ]") |
+                     bold |
+                     color(checked ? activeColor : Color::GrayLight);
+    Element row = hbox({
+        text(focused ? "> " : "  ") | color(Color::CyanLight),
+        marker,
+        text(" " + label + " ") | bold,
+        filler(),
+        muted(hint),
+    });
+
+    if (focused) {
+        row = row | color(Color::CyanLight);
+    }
+
+    return row | reflect(box);
+}
+
+int optionCountFor(ActionOptionsKind kind) {
+    switch (kind) {
+    case ActionOptionsKind::Update:
+        return 4;
+    case ActionOptionsKind::SearchPackages:
+    case ActionOptionsKind::HomePages:
+        return 4;
+    case ActionOptionsKind::ListPackages:
+        return 6;
+    case ActionOptionsKind::UpgradeZpm:
+        return 2;
+    case ActionOptionsKind::None:
+        return 0;
+    }
+    return 0;
+}
+
+bool hasOptions(const Action& action) {
+    return optionCountFor(action.optionsKind) > 0;
+}
+
+Element renderOptionsPanel(const Action& action,
+                           const ConfigurableOptions& options,
+                           int selectedOption,
+                           bool focused,
+                           std::array<Box, kMaxOptionCount>& boxes) {
+    const int optionCount = optionCountFor(action.optionsKind);
+    selectedOption = clampIndex(selectedOption, static_cast<std::size_t>(optionCount));
+
+    std::vector<Element> rows {
+        sectionTitle("Options"),
+    };
+
+    switch (action.optionsKind) {
+    case ActionOptionsKind::Update:
+        rows.push_back(updateOptionRow("Full update", "--full", options.update.full,
+                                       focused && selectedOption == 0,
+                                       Color::GreenLight, boxes[0]));
+        rows.push_back(updateOptionRow("Automatic confirmations", "--yes", options.update.yes,
+                                       focused && selectedOption == 1,
+                                       Color::GreenLight, boxes[1]));
+        rows.push_back(updateOptionRow("Reboot after update", "--reboot", options.update.reboot,
+                                       focused && selectedOption == 2,
+                                       Color::RedLight, boxes[2]));
+        rows.push_back(updateOptionRow("Shutdown after update", "--shutdown", options.update.shutdown,
+                                       focused && selectedOption == 3,
+                                       Color::RedLight, boxes[3]));
+        rows.push_back(separatorStyled(LIGHT));
+        rows.push_back(paragraphAlignLeft("Reboot and shutdown are mutually exclusive.") | dim);
+        break;
+    case ActionOptionsKind::SearchPackages:
+        rows.push_back(updateOptionRow("All sources", "native + Flatpak + Snap",
+                                       options.browse.source == PackageSourceFilter::All,
+                                       focused && selectedOption == 0,
+                                       Color::GreenLight, boxes[0]));
+        rows.push_back(updateOptionRow("Native only", "--native",
+                                       options.browse.source == PackageSourceFilter::Native,
+                                       focused && selectedOption == 1,
+                                       Color::GreenLight, boxes[1]));
+        rows.push_back(updateOptionRow("Flatpak only", "--flatpak",
+                                       options.browse.source == PackageSourceFilter::Flatpak,
+                                       focused && selectedOption == 2,
+                                       Color::GreenLight, boxes[2]));
+        rows.push_back(updateOptionRow("Snap only", "--snap",
+                                       options.browse.source == PackageSourceFilter::Snap,
+                                       focused && selectedOption == 3,
+                                       Color::GreenLight, boxes[3]));
+        break;
+    case ActionOptionsKind::ListPackages:
+        rows.push_back(updateOptionRow("All sources", "native + Flatpak + Snap",
+                                       options.browse.source == PackageSourceFilter::All,
+                                       focused && selectedOption == 0,
+                                       Color::GreenLight, boxes[0]));
+        rows.push_back(updateOptionRow("Native only", "--native",
+                                       options.browse.source == PackageSourceFilter::Native,
+                                       focused && selectedOption == 1,
+                                       Color::GreenLight, boxes[1]));
+        rows.push_back(updateOptionRow("Flatpak only", "--flatpak",
+                                       options.browse.source == PackageSourceFilter::Flatpak,
+                                       focused && selectedOption == 2,
+                                       Color::GreenLight, boxes[2]));
+        rows.push_back(updateOptionRow("Snap only", "--snap",
+                                       options.browse.source == PackageSourceFilter::Snap,
+                                       focused && selectedOption == 3,
+                                       Color::GreenLight, boxes[3]));
+        rows.push_back(separatorStyled(LIGHT));
+        rows.push_back(updateOptionRow("Print directly", "--no-pager",
+                                       options.browse.pager == PagerMode::NoPager,
+                                       focused && selectedOption == 4,
+                                       Color::CyanLight, boxes[4]));
+        rows.push_back(updateOptionRow("Use pager", "--pager",
+                                       options.browse.pager == PagerMode::Pager,
+                                       focused && selectedOption == 5,
+                                       Color::CyanLight, boxes[5]));
+        break;
+    case ActionOptionsKind::UpgradeZpm:
+        rows.push_back(updateOptionRow("Experimental prerelease", "--experimental",
+                                       options.upgrade.experimental,
+                                       focused && selectedOption == 0,
+                                       Color::YellowLight, boxes[0]));
+        rows.push_back(updateOptionRow("Force reinstall", "--force",
+                                       options.upgrade.force,
+                                       focused && selectedOption == 1,
+                                       Color::RedLight, boxes[1]));
+        break;
+    case ActionOptionsKind::HomePages:
+        rows.push_back(updateOptionRow("Home", "zhome",
+                                       options.home.defaultPage,
+                                       focused && selectedOption == 0,
+                                       Color::GreenLight, boxes[0]));
+        rows.push_back(updateOptionRow("PAGE 1", "ARM + config",
+                                       options.home.pages[0],
+                                       focused && selectedOption == 1,
+                                       Color::GreenLight, boxes[1]));
+        rows.push_back(updateOptionRow("PAGE 2", "wrapper commands",
+                                       options.home.pages[1],
+                                       focused && selectedOption == 2,
+                                       Color::GreenLight, boxes[2]));
+        rows.push_back(updateOptionRow("PAGE 3", "aliases",
+                                       options.home.pages[2],
+                                       focused && selectedOption == 3,
+                                       Color::GreenLight, boxes[3]));
+        break;
+    case ActionOptionsKind::None:
+        break;
+    }
+
+    return vbox(std::move(rows)) |
+           borderStyled(ROUNDED, focused ? Color::CyanLight : Color::GrayDark);
+}
+
 Element renderMenu(Component categoryMenu,
                    Component actionMenu,
                    const SystemStatus& status,
                    const std::vector<Category>& categories,
                    int selectedCategory,
                    int selectedAction,
+                   const ConfigurableOptions& configurableOptions,
+                   int selectedOption,
                    int focusedPane,
                    Box& actionPanelBox,
+                   std::array<Box, kMaxOptionCount>& optionBoxes,
                    const UiAnimationState& animation) {
     animation::RequestAnimationFrame();
 
@@ -1282,7 +1509,8 @@ Element renderMenu(Component categoryMenu,
     }
 
     const int actionIndex = clampIndex(selectedAction, category.actions.size());
-    const Action& action = category.actions[static_cast<std::size_t>(actionIndex)];
+    const Action& selected = category.actions[static_cast<std::size_t>(actionIndex)];
+    const Action action = applyActionOptions(selected, configurableOptions);
     const Dimensions terminalSize = Terminal::Size();
     const bool compact = terminalSize.dimx > 0 && terminalSize.dimx < 112;
 
@@ -1302,8 +1530,9 @@ Element renderMenu(Component categoryMenu,
         details.push_back(sectionTitle("Navigation"));
         details.push_back(paragraphAlignLeft(
             "Use mouse click, wheel scrolling, Up/Down, or j/k to move. "
-            "Use Left/Right, h/l, or Tab to switch between Categories and "
-            "Actions. Enter selects the highlighted category or action."));
+            "Use Left/Right, h/l, or Tab to switch between Categories, Actions, "
+            "and Options when they are available. Enter selects the highlighted action. "
+            "Press ? to jump to Help."));
         details.push_back(separator());
     }
 
@@ -1312,6 +1541,16 @@ Element renderMenu(Component categoryMenu,
         filler(),
     }));
     details.push_back(commandPreviewBox(action.commandPreview));
+
+    if (hasOptions(selected)) {
+        details.push_back(separator());
+        details.push_back(renderOptionsPanel(selected,
+                                             configurableOptions,
+                                             selectedOption,
+                                             focusedPane == kPaneOptions,
+                                             optionBoxes));
+    }
+
     details.push_back(paragraphAlignLeft(action.hint));
 
     if (!action.args.empty()) {
@@ -1357,10 +1596,10 @@ Element renderMenu(Component categoryMenu,
 
     Element categoriesPanel = panel("Categories (" + std::to_string(categories.size()) + ")",
                                     categoryMenu->Render() | vscroll_indicator | frame,
-                                    focusedPane == 0);
+                                    focusedPane == kPaneCategories);
     Element actionsPanel = panel("Actions (" + std::to_string(category.actions.size()) + ")",
                                  actionMenu->Render() | vscroll_indicator | frame,
-                                 focusedPane == 1);
+                                 focusedPane == kPaneActions);
     Element detailsPanel = panel("Details", vbox(details) | yframe);
 
     Element navigation = compact
@@ -1383,27 +1622,35 @@ Element renderMenu(Component categoryMenu,
                              detailsPanel | flex,
                          });
 
+    std::vector<Element> shortcutHints {
+        keyHint("Up/Down", "move"),
+        text("  "),
+        keyHint("Wheel", "scroll"),
+        text("  "),
+        keyHint("Enter", "select"),
+        text("  "),
+        keyHint("?", "help"),
+        text("  "),
+        keyHint("q", "back/confirm exit"),
+        text("  "),
+        keyHint("Esc", "exit/cancel"),
+    };
+    if (hasOptions(selected)) {
+        shortcutHints.push_back(text("  "));
+        shortcutHints.push_back(keyHint("Space", "toggle option"));
+    }
+
     return appTheme(vbox({
                hbox({
                    text(" ZPM ") | bold | color(Color::Black) | bgcolor(Color::CyanLight),
                    text(" TUI ") | bold | color(Color::Black) | bgcolor(Color::GreenLight),
                    text(" " + category.title + " / " + action.title + " ") | bold,
                    filler(),
-                   text(compact ? "q: back/confirm exit  Enter: select"
-                                : "Mouse + wheel  Left/Right/Tab: panel  q/Esc: confirm exit")
+                   text(compact ? "?: help  q: back/confirm exit  Enter: select"
+                                : "Mouse + wheel  Left/Right/Tab: panel  ?: help  q/Esc: confirm exit")
                        | dim,
                }),
-               hbox({
-                   keyHint("Up/Down", "move"),
-                   text("  "),
-                   keyHint("Wheel", "scroll"),
-                   text("  "),
-                   keyHint("Enter", "select"),
-                   text("  "),
-                   keyHint("q", "back/confirm exit"),
-                   text("  "),
-                   keyHint("Esc", "exit/cancel"),
-               }) | size(HEIGHT, EQUAL, 1),
+               hbox(std::move(shortcutHints)) | size(HEIGHT, EQUAL, 1),
                animatedAccent(animation, terminalSize.dimx),
                separatorStyled(LIGHT),
                std::move(body) | flex,
@@ -1486,23 +1733,27 @@ Element renderConfirmation(const Action& action,
     return appTheme(vbox(content) | borderStyled(ROUNDED, Color::CyanLight));
 }
 
-Element renderExitConfirmation(const UiAnimationState& animation) {
+Element renderExitConfirmation(const UiAnimationState& animation,
+                               Box& exitButtonBox,
+                               Box& backButtonBox) {
     animation::RequestAnimationFrame();
 
     std::vector<Element> content {
         hbox({
             titleText("Exit ZPM TUI"),
             filler(),
-            text("Enter/y: exit  Esc/n/q: back") | dim,
+            text("Enter/y/click: exit  Esc/n/q/right click: back") | dim,
         }),
         animatedAccent(animation, Terminal::Size().dimx),
         separatorStyled(LIGHT),
         paragraphAlignLeft("Do you want to close the terminal interface and return to the shell?"),
         separator(),
         hbox({
-            text(" Exit ") | bold | color(Color::Black) | bgcolor(Color::RedLight),
+            confirmButton("EXIT", "Enter / y / click", Color::RedLight,
+                          Color::RedLight, exitButtonBox) | flex,
             text("  "),
-            text(" Back ") | bold | color(Color::Black) | bgcolor(Color::GreenLight),
+            confirmButton("BACK", "Esc / n / q / click", Color::GreenLight,
+                          Color::GreenLight, backButtonBox) | flex,
         }),
     };
 
@@ -1527,7 +1778,9 @@ int main() {
         bool shouldLaunch = false;
         int selectedCategory = 0;
         int selectedAction = 0;
-        int focusedPane = 0;
+        int selectedOption = 0;
+        int focusedPane = kPaneCategories;
+        ConfigurableOptions configurableOptions;
 
         {
             prepareTerminalForTui();
@@ -1545,23 +1798,47 @@ int main() {
             bool showConfirm = false;
             bool showExitConfirm = false;
             Box actionPanelBox;
+            std::array<Box, kMaxOptionCount> optionBoxes;
             Box confirmRunButtonBox;
             Box confirmCancelButtonBox;
+            Box exitConfirmButtonBox;
+            Box exitBackButtonBox;
             auto lastActionClickTime = std::chrono::steady_clock::time_point {};
             int lastActionClickX = -1;
             int lastActionClickY = -1;
             constexpr auto doubleClickWindow = std::chrono::milliseconds(420);
 
+            auto currentOptionsKind = [&]() -> ActionOptionsKind {
+                if (categories.empty()) {
+                    return ActionOptionsKind::None;
+                }
+                const int categoryIndex = clampIndex(selectedCategory, categories.size());
+                const Category& category = categories[static_cast<std::size_t>(categoryIndex)];
+                if (category.actions.empty()) {
+                    return ActionOptionsKind::None;
+                }
+                const int actionIndex = clampIndex(selectedAction, category.actions.size());
+                return category.actions[static_cast<std::size_t>(actionIndex)].optionsKind;
+            };
+
+            auto currentActionHasOptions = [&]() -> bool {
+                return optionCountFor(currentOptionsKind()) > 0;
+            };
+
+            auto availablePaneCount = [&]() {
+                return currentActionHasOptions() ? 3 : 2;
+            };
+
             auto syncActionEntries = [&] {
                 if (categories.empty()) {
                     selectedCategory = 0;
                     selectedAction = 0;
-                    focusedPane = 0;
+                    selectedOption = 0;
+                    focusedPane = kPaneCategories;
                     actionEntries.clear();
                     return;
                 }
                 selectedCategory = clampIndex(selectedCategory, categories.size());
-                focusedPane = clampIndex(focusedPane, 2);
                 actionEntries.clear();
                 const Category& category = categories[static_cast<std::size_t>(selectedCategory)];
                 actionEntries.reserve(category.actions.size());
@@ -1570,6 +1847,9 @@ int main() {
                 }
 
                 selectedAction = clampIndex(selectedAction, actionEntries.size());
+                selectedOption = clampIndex(selectedOption,
+                                            static_cast<std::size_t>(optionCountFor(currentOptionsKind())));
+                focusedPane = clampIndex(focusedPane, availablePaneCount());
             };
             syncActionEntries();
 
@@ -1582,7 +1862,8 @@ int main() {
                 if (category.actions.empty()) {
                     return;
                 }
-                const Action& action = category.actions[static_cast<std::size_t>(selectedAction)];
+                Action action = category.actions[static_cast<std::size_t>(selectedAction)];
+                action = applyActionOptions(std::move(action), configurableOptions);
                 if (action.exits) {
                     showExitConfirm = true;
                     return;
@@ -1596,13 +1877,20 @@ int main() {
 
             auto moveFocusedSelection = [&](int delta) {
                 syncActionEntries();
-                if (focusedPane == 0) {
+                if (focusedPane == kPaneCategories) {
                     const int before = selectedCategory;
                     selectedCategory = clampIndex(selectedCategory + delta, categories.size());
                     if (selectedCategory != before) {
                         selectedAction = 0;
                     }
                     syncActionEntries();
+                    return;
+                }
+
+                if (focusedPane == kPaneOptions && currentActionHasOptions()) {
+                    selectedOption = clampIndex(
+                        selectedOption + delta,
+                        static_cast<std::size_t>(optionCountFor(currentOptionsKind())));
                     return;
                 }
 
@@ -1613,13 +1901,37 @@ int main() {
                 selectedAction = clampIndex(selectedAction + delta, category.actions.size());
             };
 
+            auto focusNextPane = [&] {
+                syncActionEntries();
+                const int panes = availablePaneCount();
+                focusedPane = (focusedPane + 1) % panes;
+            };
+
+            auto focusPreviousPane = [&] {
+                syncActionEntries();
+                const int panes = availablePaneCount();
+                focusedPane = (focusedPane + panes - 1) % panes;
+            };
+
+            auto toggleSelectedOption = [&] {
+                syncActionEntries();
+                if (!currentActionHasOptions()) {
+                    return false;
+                }
+                selectedOption = clampIndex(
+                    selectedOption,
+                    static_cast<std::size_t>(optionCountFor(currentOptionsKind())));
+                toggleActionOption(configurableOptions, currentOptionsKind(), selectedOption);
+                return true;
+            };
+
             MenuOption categoryOption = zpmMenuOption();
             categoryOption.on_change = [&] {
                 selectedAction = 0;
                 syncActionEntries();
             };
             categoryOption.on_enter = [&] {
-                focusedPane = 1;
+                focusedPane = kPaneActions;
             };
 
             MenuOption actionOption = zpmMenuOption();
@@ -1629,7 +1941,10 @@ int main() {
 
             Component categoryMenu = Menu(&categoryEntries, &selectedCategory, categoryOption);
             Component actionMenu = Menu(&actionEntries, &selectedAction, actionOption);
-            Component menuControls = Container::Horizontal({categoryMenu, actionMenu}, &focusedPane);
+            Component optionsFocus = Renderer([] { return text(""); });
+            Component menuControls = Container::Horizontal(
+                {categoryMenu, actionMenu, optionsFocus},
+                &focusedPane);
             Component menuView = Renderer(menuControls, [&] {
                 syncActionEntries();
                 return renderMenu(categoryMenu,
@@ -1638,14 +1953,19 @@ int main() {
                                   categories,
                                   selectedCategory,
                                   selectedAction,
+                                  configurableOptions,
+                                  selectedOption,
                                   focusedPane,
                                   actionPanelBox,
+                                  optionBoxes,
                                   animation);
             });
 
             Component rootRenderer = Renderer(menuView, [&] {
                 if (showExitConfirm) {
-                    return renderExitConfirmation(animation);
+                    return renderExitConfirmation(animation,
+                                                  exitConfirmButtonBox,
+                                                  exitBackButtonBox);
                 }
                 return showConfirm
                     ? renderConfirmation(pendingAction, animation,
@@ -1657,6 +1977,16 @@ int main() {
                 if (showExitConfirm) {
                     if (event.is_mouse()) {
                         const Mouse mouse = event.mouse();
+                        if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                            if (exitConfirmButtonBox.Contain(mouse.x, mouse.y)) {
+                                screen.Exit();
+                                return true;
+                            }
+                            if (exitBackButtonBox.Contain(mouse.x, mouse.y)) {
+                                showExitConfirm = false;
+                                return true;
+                            }
+                        }
                         if (mouse.button == Mouse::Right && mouse.motion == Mouse::Pressed) {
                             showExitConfirm = false;
                             return true;
@@ -1708,7 +2038,7 @@ int main() {
                     }
                     if (event == Event::Character('q')) {
                         showConfirm = false;
-                        focusedPane = 0;
+                        focusedPane = kPaneCategories;
                         return true;
                     }
                     return true;
@@ -1725,6 +2055,21 @@ int main() {
                         return true;
                     }
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                        if (currentActionHasOptions()) {
+                            const int optionCount = optionCountFor(currentOptionsKind());
+                            for (int index = 0; index < optionCount; ++index) {
+                                if (optionBoxes[static_cast<std::size_t>(index)].Contain(mouse.x, mouse.y)) {
+                                    selectedOption = index;
+                                    focusedPane = kPaneOptions;
+                                    toggleActionOption(configurableOptions, currentOptionsKind(), selectedOption);
+                                    lastActionClickTime = {};
+                                    lastActionClickX = -1;
+                                    lastActionClickY = -1;
+                                    return true;
+                                }
+                            }
+                        }
+
                         if (!actionPanelBox.Contain(mouse.x, mouse.y)) {
                             lastActionClickTime = {};
                             lastActionClickX = -1;
@@ -1738,7 +2083,7 @@ int main() {
                         const bool fastEnough =
                             now - lastActionClickTime <= doubleClickWindow;
 
-                        if (focusedPane == 1 && sameSpot && fastEnough) {
+                        if (focusedPane == kPaneActions && sameSpot && fastEnough) {
                             selectCurrentAction();
                             lastActionClickTime = {};
                             lastActionClickX = -1;
@@ -1758,11 +2103,35 @@ int main() {
                     return true;
                 }
                 if (event == Event::Character('q')) {
-                    if (focusedPane == 1) {
-                        focusedPane = 0;
+                    if (focusedPane == kPaneOptions) {
+                        focusedPane = kPaneActions;
+                        return true;
+                    }
+                    if (focusedPane == kPaneActions) {
+                        focusedPane = kPaneCategories;
                         return true;
                     }
                     showExitConfirm = true;
+                    return true;
+                }
+                if (event == Event::Character('?')) {
+                    for (std::size_t index = 0; index < categories.size(); ++index) {
+                        if (categories[index].title == "Help") {
+                            selectedCategory = static_cast<int>(index);
+                            selectedAction = 0;
+                            focusedPane = kPaneActions;
+                            syncActionEntries();
+                            break;
+                        }
+                    }
+                    return true;
+                }
+                if (focusedPane == kPaneOptions && event == Event::ArrowDown) {
+                    moveFocusedSelection(1);
+                    return true;
+                }
+                if (focusedPane == kPaneOptions && event == Event::ArrowUp) {
+                    moveFocusedSelection(-1);
                     return true;
                 }
                 if (event == Event::Character('j')) {
@@ -1774,20 +2143,29 @@ int main() {
                     return true;
                 }
                 if (event == Event::Tab) {
-                    focusedPane = focusedPane == 0 ? 1 : 0;
+                    focusNextPane();
                     return true;
                 }
                 if (event == Event::ArrowRight || event == Event::Character('l')) {
-                    focusedPane = 1;
+                    focusNextPane();
                     return true;
                 }
                 if (event == Event::ArrowLeft || event == Event::Character('h')) {
-                    focusedPane = 0;
+                    focusPreviousPane();
+                    return true;
+                }
+                if (focusedPane == kPaneOptions && event == Event::Return) {
+                    selectCurrentAction();
                     return true;
                 }
                 if (event == Event::Character(' ')) {
-                    if (focusedPane == 0) {
-                        focusedPane = 1;
+                    if (focusedPane == kPaneCategories) {
+                        focusedPane = kPaneActions;
+                    } else if (focusedPane == kPaneOptions) {
+                        toggleSelectedOption();
+                    } else if (currentActionHasOptions()) {
+                        focusedPane = kPaneOptions;
+                        toggleSelectedOption();
                     } else {
                         selectCurrentAction();
                     }
