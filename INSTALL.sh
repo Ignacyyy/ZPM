@@ -9,7 +9,22 @@ readonly REQUIRED_DEPS_ZYPPER=(curl git wget python3 gcc-c++ sudo zip sed gawk c
 readonly REQUIRED_DEPS_DNF=(curl git wget python3 gcc-c++ sudo zip sed gawk coreutils nano unzip ftxui-devel tar)
 ASSUME_YES=false
 
+# ── ROOT CHECK ────────────────────────────────────────────────────────────────
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: This script must be run as root. Use: sudo $0" >&2
+    exit 1
+fi
+
 # ── LOGGING ───────────────────────────────────────────────────────────────────
+rm -f "$LOG" 2>/dev/null || {
+    echo "ERROR: Cannot reset log file: $LOG" >&2
+    exit 1
+}
+: > "$LOG" || {
+    echo "ERROR: Cannot write log file: $LOG" >&2
+    exit 1
+}
+chmod 600 "$LOG" 2>/dev/null || true
 exec > >(tee -a "$LOG") 2>&1
 echo "===== ZPM Manual Installer ====="
 
@@ -31,21 +46,11 @@ info() { echo "[*] $*"; }
 ok()   { echo "[+] $*"; }
 warn() { echo "[!] WARNING: $*"; }
 
-usage() {
-    echo "Usage: $0 [-y|--yes]"
-    echo "  -y, --yes    Automatically answer yes to installer prompts"
-    echo "  -h, --help   Show this help message"
-}
-
 parse_args() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
             -y|--yes)
                 ASSUME_YES=true
-                ;;
-            -h|--help)
-                usage
-                exit 0
                 ;;
             *)
                 die "Unknown option: $1"
@@ -74,11 +79,6 @@ ask() {
 }
 
 parse_args "$@"
-
-# ── ROOT CHECK ────────────────────────────────────────────────────────────────
-if [ "$(id -u)" -ne 0 ]; then
-    die "This script must be run as root. Use: sudo $0"
-fi
 
 # ── PM DETECTION ─────────────────────────────────────────────────────────────
 detect_pm() {
