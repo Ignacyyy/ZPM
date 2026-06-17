@@ -7,6 +7,7 @@ readonly TARGET="/opt/ZPM"
 readonly REQUIRED_DEPS_APT=(curl git wget python3 g++ sudo zip sed gawk coreutils nano unzip libftxui-dev tar)
 readonly REQUIRED_DEPS_ZYPPER=(curl git wget python3 gcc-c++ sudo zip sed gawk coreutils nano unzip ftxui-devel tar)
 readonly REQUIRED_DEPS_DNF=(curl git wget python3 gcc-c++ sudo zip sed gawk coreutils nano unzip ftxui-devel tar)
+ASSUME_YES=false
 
 # ── LOGGING ───────────────────────────────────────────────────────────────────
 exec > >(tee -a "$LOG") 2>&1
@@ -30,8 +31,38 @@ info() { echo "[*] $*"; }
 ok()   { echo "[+] $*"; }
 warn() { echo "[!] WARNING: $*"; }
 
+usage() {
+    echo "Usage: $0 [-y|--yes]"
+    echo "  -y, --yes    Automatically answer yes to installer prompts"
+    echo "  -h, --help   Show this help message"
+}
+
+parse_args() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -y|--yes)
+                ASSUME_YES=true
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                die "Unknown option: $1"
+                ;;
+        esac
+        shift
+    done
+}
+
 ask() {
     local _var="$1" _prompt="$2" _answer
+    if [ "$ASSUME_YES" = true ]; then
+        echo "$_prompt [y/n] y"
+        printf -v "$_var" "y"
+        return
+    fi
+
     while true; do
         read -rp "$_prompt [y/n] " _answer
         case "$_answer" in
@@ -41,6 +72,8 @@ ask() {
         esac
     done
 }
+
+parse_args "$@"
 
 # ── ROOT CHECK ────────────────────────────────────────────────────────────────
 if [ "$(id -u)" -ne 0 ]; then
