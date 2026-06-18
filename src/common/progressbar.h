@@ -305,9 +305,9 @@ inline void writeBounceTrack(int barWidth, std::size_t frame, bool finished) {
     const int position = bouncePosition(frame, barWidth);
     const int after = std::max(barWidth - position - blockWidth, 0);
 
-    std::cout << std::string(static_cast<std::size_t>(position), '=')
+    std::cout << GRAY << std::string(static_cast<std::size_t>(position), '=') << RESET
               << GREEN << std::string(static_cast<std::size_t>(blockWidth), '#') << RESET
-              << std::string(static_cast<std::size_t>(after), '=');
+              << GRAY << std::string(static_cast<std::size_t>(after), '=') << RESET;
 }
 
 inline void drawBar(const Snapshot& snapshot, std::size_t frame, bool finished = false) {
