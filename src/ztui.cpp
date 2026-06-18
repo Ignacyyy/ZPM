@@ -30,6 +30,9 @@ using namespace ftxui;
 enum class ActionOptionsKind {
     None,
     Update,
+    PackageInstall,
+    PackageRemove,
+    PackagePurge,
     SearchPackages,
     ListPackages,
     UpgradeZpm,
@@ -103,6 +106,10 @@ struct BrowseOptions {
     PagerMode pager = PagerMode::NoPager;
 };
 
+struct PackageChangeOptions {
+    bool autoSelect = false;
+};
+
 struct UpgradeOptions {
     bool experimental = false;
     bool force = false;
@@ -115,6 +122,7 @@ struct HomePageOptions {
 
 struct ConfigurableOptions {
     UpdateOptions update;
+    PackageChangeOptions packageChange;
     BrowseOptions browse;
     UpgradeOptions upgrade;
     HomePageOptions home;
@@ -765,6 +773,13 @@ void toggleActionOption(ConfigurableOptions& options, ActionOptionsKind kind, in
     case ActionOptionsKind::Update:
         toggleUpdateOption(options.update, option);
         break;
+    case ActionOptionsKind::PackageInstall:
+    case ActionOptionsKind::PackageRemove:
+    case ActionOptionsKind::PackagePurge:
+        if (option == 0) {
+            options.packageChange.autoSelect = !options.packageChange.autoSelect;
+        }
+        break;
     case ActionOptionsKind::SearchPackages:
         setPackageSource(options.browse, option);
         break;
@@ -831,6 +846,42 @@ Action applyActionOptions(Action action, const ConfigurableOptions& options) {
         } else {
             action.warning.clear();
         }
+        return action;
+    }
+    case ActionOptionsKind::PackageInstall: {
+        std::string command = "zpm install";
+        if (options.packageChange.autoSelect) {
+            command += " --auto";
+        }
+        action.commandPreview = command + " <packages...>";
+        action.args = promptCommandArgs("Packages to install", command);
+        action.hint = options.packageChange.autoSelect
+            ? "Installs packages with automatic native, Flatpak, then Snap selection."
+            : "Installs packages and asks when multiple sources or results are available.";
+        return action;
+    }
+    case ActionOptionsKind::PackageRemove: {
+        std::string command = "zpm remove";
+        if (options.packageChange.autoSelect) {
+            command += " --auto";
+        }
+        action.commandPreview = command + " <packages...>";
+        action.args = promptCommandArgs("Packages to remove", command);
+        action.hint = options.packageChange.autoSelect
+            ? "Removes packages with automatic native, Flatpak, then Snap selection."
+            : "Removes packages and asks when multiple installed sources or matches are available.";
+        return action;
+    }
+    case ActionOptionsKind::PackagePurge: {
+        std::string command = "zpm remove --purge";
+        if (options.packageChange.autoSelect) {
+            command += " --auto";
+        }
+        action.commandPreview = command + " <packages...>";
+        action.args = promptCommandArgs("Packages to purge", command);
+        action.hint = options.packageChange.autoSelect
+            ? "Purges native APT packages with automatic source and match selection."
+            : "Purges packages through APT when available and asks before ambiguous matches.";
         return action;
     }
     case ActionOptionsKind::SearchPackages: {
@@ -1084,6 +1135,9 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                     promptCommandArgs("Packages to install", "zpm install"),
                     "Installs packages using native PM, Flatpak, or Snap detection.",
                     true,
+                    false,
+                    {},
+                    ActionOptionsKind::PackageInstall,
                 },
                 {
                     "Remove packages",
@@ -1091,6 +1145,9 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                     promptCommandArgs("Packages to remove", "zpm remove"),
                     "Removes packages using native PM, Flatpak, or Snap detection.",
                     true,
+                    false,
+                    {},
+                    ActionOptionsKind::PackageRemove,
                 },
                 {
                     "APT purge packages",
@@ -1100,6 +1157,7 @@ std::vector<Category> buildCategories(const SystemStatus& status) {
                     true,
                     false,
                     purgeWarning,
+                    ActionOptionsKind::PackagePurge,
                 },
             },
         },
@@ -1345,6 +1403,10 @@ int optionCountFor(ActionOptionsKind kind) {
     switch (kind) {
     case ActionOptionsKind::Update:
         return 4;
+    case ActionOptionsKind::PackageInstall:
+    case ActionOptionsKind::PackageRemove:
+    case ActionOptionsKind::PackagePurge:
+        return 1;
     case ActionOptionsKind::SearchPackages:
     case ActionOptionsKind::HomePages:
         return 4;
@@ -1390,6 +1452,16 @@ Element renderOptionsPanel(const Action& action,
                                        Color::RedLight, boxes[3]));
         rows.push_back(separatorStyled(LIGHT));
         rows.push_back(paragraphAlignLeft("Reboot and shutdown are mutually exclusive.") | dim);
+        break;
+    case ActionOptionsKind::PackageInstall:
+    case ActionOptionsKind::PackageRemove:
+    case ActionOptionsKind::PackagePurge:
+        rows.push_back(updateOptionRow("Automatic selection", "--auto",
+                                       options.packageChange.autoSelect,
+                                       focused && selectedOption == 0,
+                                       Color::GreenLight, boxes[0]));
+        rows.push_back(separatorStyled(LIGHT));
+        rows.push_back(paragraphAlignLeft("Auto prefers native packages, then Flatpak, then Snap.") | dim);
         break;
     case ActionOptionsKind::SearchPackages:
         rows.push_back(updateOptionRow("All sources", "native + Flatpak + Snap",
