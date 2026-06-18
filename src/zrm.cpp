@@ -46,6 +46,7 @@ struct Options {
     bool showVersion = false;
     bool purge = false;
     bool dryRun = false;
+    bool autoSelect = false;
     std::vector<std::string> packages;
 };
 
@@ -1325,7 +1326,8 @@ void printHelp(const char* progName) {
     std::cout << RED << "Usage: " << RESET << progName << " [options] [packages...]"
               << " or zpm rm/remove [options] [packages...]\n"
               << RED << "Options:\n" << RESET
-              << "  (auto)         Picks native PM / Flatpak / Snap per package\n"
+              << "  --auto         Pick the best installed source/result without menus\n"
+              << "  --yes,    -y  Alias for --auto\n"
               << "  --purge, -p    APT purge instead of remove (APT only)\n"
               << "  --dry-run      Simulate remove flow; fake packages are allowed\n"
               << "  --version, -v  Show version information\n"
@@ -1349,6 +1351,8 @@ bool parseOptions(int argc, char* argv[], Options& options) {
             options.showHelp = true;
         } else if (arg == "--version" || arg == "-v") {
             options.showVersion = true;
+        } else if (arg == "--auto" || arg == "--yes" || arg == "-y") {
+            options.autoSelect = true;
         } else if (arg == "--purge" || arg == "-p") {
             options.purge = true;
         } else if (arg == "--dry-run") {
@@ -1363,7 +1367,7 @@ bool parseOptions(int argc, char* argv[], Options& options) {
     }
 
     if ((options.showHelp || options.showVersion) &&
-        (options.purge || options.dryRun || !options.packages.empty())) {
+        (options.autoSelect || options.purge || options.dryRun || !options.packages.empty())) {
         errors.push_back("--help and --version can only be combined with each other.");
     }
 
@@ -1608,9 +1612,36 @@ std::vector<FlatpakPackage> chooseFlatpakToRemove(const std::vector<FlatpakPacka
     }
 }
 
+void printAutoRemoveSelection(const AppContext& context,
+                              const RemoveTarget& target,
+                              const std::string& query) {
+    std::string source;
+    switch (target.source) {
+        case RemoveSource::Native:
+            source = nativeShortLabel(context);
+            if (context.packageManager == "apt" && target.purge) {
+                source += " purge";
+            }
+            break;
+        case RemoveSource::Flatpak:
+            source = "Flatpak [" + flatpakScopeName(target.flatpakFlag) + "]";
+            break;
+        case RemoveSource::Snap:
+            source = "Snap";
+            break;
+    }
+
+    std::cout << GREEN << "Auto-selected " << source << ": " << target.name;
+    if (target.name != query) {
+        std::cout << " for '" << query << "'";
+    }
+    std::cout << RESET << "\n";
+}
+
 std::vector<RemoveTarget> resolveRemoveTargets(const AppContext& context,
                                                const std::vector<std::string>& packages,
-                                               bool purge) {
+                                               bool purge,
+                                               bool autoSelect) {
     std::vector<RemoveTarget> targets;
 
     for (const std::string& package : packages) {
@@ -1623,6 +1654,34 @@ std::vector<RemoveTarget> resolveRemoveTargets(const AppContext& context,
         const std::vector<FlatpakPackage> flatpakMatches =
             context.hasFlatpak ? findFlatpakMatches(context, package)
                                : std::vector<FlatpakPackage>{};
+
+        if (autoSelect) {
+            if (!nativeMatches.empty()) {
+                RemoveTarget target {nativeMatches.front(), RemoveSource::Native, purge, {}};
+                printAutoRemoveSelection(context, target, package);
+                targets.push_back(target);
+                continue;
+            }
+
+            if (!flatpakMatches.empty()) {
+                const FlatpakPackage& app = flatpakMatches.front();
+                RemoveTarget target {app.name, RemoveSource::Flatpak, false, app.flag};
+                printAutoRemoveSelection(context, target, package);
+                targets.push_back(target);
+                continue;
+            }
+
+            if (!snapMatches.empty()) {
+                RemoveTarget target {snapMatches.front(), RemoveSource::Snap, false, {}};
+                printAutoRemoveSelection(context, target, package);
+                targets.push_back(target);
+                continue;
+            }
+
+            std::cout << YELLOW << "Package '" << package
+                      << "' is not installed anywhere.\n" << RESET;
+            continue;
+        }
 
         const std::string source = chooseRemoveMenu(context,
                                                     package,
@@ -2208,9 +2267,14 @@ int main(int argc, char* argv[]) {
         options.purge = false;
     }
 
+    if (options.autoSelect) {
+        std::cout << "\n";
+    }
+
     std::vector<RemoveTarget> targets = resolveRemoveTargets(context,
                                                              options.packages,
-                                                             options.purge);
+                                                             options.purge,
+                                                             options.autoSelect);
     if (g_interrupted) {
         return 130;
     }
@@ -2225,8 +2289,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::cout << "\n" << RED << "Auto mode: " << context.packageManager
-              << " / Flatpak / Snap per package\n" << RESET;
+    std::cout << "\n" << RED
+              << (options.autoSelect ? "Auto mode: " : "Interactive mode: ")
+              << context.packageManager << " / Flatpak / Snap per package\n" << RESET;
     std::cout << "Removing packages...\n\n";
 
     return runRemoveLoop(context, targets, false);
