@@ -45,6 +45,7 @@ struct Options {
     bool showHelp = false;
     bool showVersion = false;
     bool dryRun = false;
+    bool autoSelect = false;
     std::vector<std::string> packages;
 };
 
@@ -1119,7 +1120,38 @@ std::vector<std::string> searchFlatpak(const AppContext& context, const std::str
         }
     }
 
-    std::sort(filtered.begin(), filtered.end());
+    auto flatpakIdTail = [](const std::string& appId) {
+        const std::size_t dot = appId.rfind('.');
+        return dot == std::string::npos ? appId : appId.substr(dot + 1);
+    };
+
+    auto flatpakRank = [&](const std::string& appId) {
+        const std::string appLower = toLower(appId);
+        const std::string tailLower = toLower(flatpakIdTail(appId));
+        const std::string queryLower = toLower(query);
+
+        if (appLower == queryLower || tailLower == queryLower) {
+            return 0;
+        }
+        if (startsWith(tailLower, queryLower)) {
+            return 1;
+        }
+        if (startsWith(appLower, queryLower)) {
+            return 2;
+        }
+        return 3;
+    };
+
+    std::stable_sort(filtered.begin(),
+                     filtered.end(),
+                     [&](const std::string& left, const std::string& right) {
+                         const int leftRank = flatpakRank(left);
+                         const int rightRank = flatpakRank(right);
+                         if (leftRank != rightRank) {
+                             return leftRank < rightRank;
+                         }
+                         return toLower(left) < toLower(right);
+                     });
     return filtered;
 }
 
@@ -1472,10 +1504,11 @@ void printHelp(const char* progName) {
     std::cout << RED << "Usage: " << RESET << progName << " [options] [packages...]"
               << " or zpm inst/install [options] [packages...]\n"
               << RED << "Options:\n" << RESET
-	              << "  (auto)         Picks native PM / Flatpak / Snap per package\n"
-	              << "  packages       Accepts many names: zinst git curl htop\n"
-	              << "                 Also accepts quoted/comma lists: zinst \"git curl\" or zinst git,curl\n"
-	              << "  --dry-run      Simulate program flow; fake packages are allowed\n"
+              << "  --auto         Pick the best source/result without menus\n"
+              << "  --yes,    -y  Alias for --auto\n"
+              << "  packages       Accepts many names: zinst git curl htop\n"
+              << "                 Also accepts quoted/comma lists: zinst \"git curl\" or zinst git,curl\n"
+              << "  --dry-run      Simulate program flow; fake packages are allowed\n"
               << "  --version, -v  Show version information\n"
               << "  --help,    -h  Show this help message\n";
 }
@@ -1497,6 +1530,8 @@ bool parseOptions(int argc, char* argv[], Options& options) {
             options.showHelp = true;
         } else if (arg == "--version" || arg == "-v") {
             options.showVersion = true;
+        } else if (arg == "--auto" || arg == "--yes" || arg == "-y") {
+            options.autoSelect = true;
         } else if (arg == "--dry-run") {
             options.dryRun = true;
         } else if (startsWith(arg, "-")) {
@@ -1519,7 +1554,7 @@ bool parseOptions(int argc, char* argv[], Options& options) {
     }
 
     if ((options.showHelp || options.showVersion) &&
-        (options.dryRun || !options.packages.empty())) {
+        (options.autoSelect || options.dryRun || !options.packages.empty())) {
         errors.push_back("--help and --version can only be combined with each other.");
     }
 
@@ -1760,8 +1795,65 @@ std::vector<std::string> chooseFlatpakPackages(const std::vector<std::string>& p
     }
 }
 
+std::vector<std::string> autoNativePackages(const ResolveResult& native,
+                                            const std::string& query) {
+    if (native.candidates.empty()) {
+        return {};
+    }
+
+    const auto exact = exactNativeCandidate(native.candidates, query);
+    if (exact != native.candidates.end()) {
+        return {exact->name};
+    }
+
+    return {native.candidates.front().name};
+}
+
+std::vector<std::string> autoFlatpakPackages(const std::vector<std::string>& packages,
+                                             const std::string& query) {
+    if (packages.empty()) {
+        return {};
+    }
+
+    const std::string queryLower = toLower(query);
+    const auto exact = std::find_if(packages.begin(),
+                                    packages.end(),
+                                    [&](const std::string& package) {
+                                        return toLower(package) == queryLower;
+                                    });
+    if (exact != packages.end()) {
+        return {*exact};
+    }
+
+    return {packages.front()};
+}
+
+void printAutoInstallSelection(const AppContext& context,
+                               const InstallTarget& target,
+                               const std::string& query) {
+    std::string source;
+    switch (target.source) {
+        case InstallSource::Native:
+            source = nativeShortLabel(context);
+            break;
+        case InstallSource::Flatpak:
+            source = "Flatpak";
+            break;
+        case InstallSource::Snap:
+            source = "Snap";
+            break;
+    }
+
+    std::cout << GREEN << "Auto-selected " << source << ": " << target.name;
+    if (target.name != query) {
+        std::cout << " for '" << query << "'";
+    }
+    std::cout << RESET << "\n";
+}
+
 std::vector<InstallTarget> resolveTargets(const AppContext& context,
-                                          const std::vector<std::string>& packages) {
+                                          const std::vector<std::string>& packages,
+                                          bool autoSelect) {
     std::vector<InstallTarget> targets;
 
     for (const std::string& package : packages) {
@@ -1773,6 +1865,37 @@ std::vector<InstallTarget> resolveTargets(const AppContext& context,
         const bool snapAvailable = snapPackageExists(context, package);
         const std::vector<std::string> flatpakResults =
             context.hasFlatpak ? searchFlatpak(context, package) : std::vector<std::string>{};
+
+        if (autoSelect) {
+            if (native.exists) {
+                for (const std::string& selected : autoNativePackages(native, package)) {
+                    InstallTarget target {selected, InstallSource::Native};
+                    printAutoInstallSelection(context, target, package);
+                    targets.push_back(target);
+                }
+                continue;
+            }
+
+            if (!flatpakResults.empty()) {
+                for (const std::string& selected : autoFlatpakPackages(flatpakResults, package)) {
+                    InstallTarget target {selected, InstallSource::Flatpak};
+                    printAutoInstallSelection(context, target, package);
+                    targets.push_back(target);
+                }
+                continue;
+            }
+
+            if (snapAvailable) {
+                InstallTarget target {package, InstallSource::Snap};
+                printAutoInstallSelection(context, target, package);
+                targets.push_back(target);
+                continue;
+            }
+
+            std::cout << YELLOW << "No source available for '" << package << "'."
+                      << RESET << "\n";
+            continue;
+        }
 
         const std::string source = chooseSourceMenu(context,
                                                     package,
@@ -2653,7 +2776,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::vector<InstallTarget> targets = resolveTargets(context, options.packages);
+    if (options.autoSelect) {
+        std::cout << "\n";
+    }
+
+    std::vector<InstallTarget> targets =
+        resolveTargets(context, options.packages, options.autoSelect);
     if (g_interrupted) {
         return 130;
     }
@@ -2668,8 +2796,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::cout << "\n" << RED << "Auto mode: " << context.packageManager
-              << " / Flatpak / Snap per package\n" << RESET;
+    std::cout << "\n" << RED
+              << (options.autoSelect ? "Auto mode: " : "Interactive mode: ")
+              << context.packageManager << " / Flatpak / Snap per package\n" << RESET;
     std::cout << "Installing packages...\n\n";
 
     return runInstallLoop(context, targets, false);
