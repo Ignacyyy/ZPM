@@ -7,11 +7,11 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstddef>
-#include <iomanip>
 #include <iostream>
 #include <mutex>
 #include <string>
 #include <sys/ioctl.h>
+#include <termios.h>
 #include <thread>
 #include <unistd.h>
 
@@ -38,10 +38,11 @@ namespace zpm::progressbar_detail {
 
 constexpr std::chrono::milliseconds kFrameInterval{80};
 constexpr int kDefaultTerminalWidth = 80;
-constexpr int kMinFullBarWidth = 3;
+constexpr int kMinFullBarWidth = 8;
 constexpr int kMaxBarWidth = 40;
-constexpr int kFullColumnsWithoutBar = 21;
+constexpr int kFullColumnsWithoutBar = 12;
 constexpr int kTaskSeparatorColumns = 3;
+constexpr int kBounceBlockWidth = 3;
 constexpr char kSpinnerFrames[] = {'|', '/', '-', '\\'};
 
 struct Snapshot {
@@ -164,77 +165,172 @@ inline std::mutex& outputMutex() {
     return *mutex;
 }
 
-inline void writeStatusIcon(int percent, char spinnerChar) {
-    if (percent >= 100) {
+class TerminalGuard {
+public:
+    TerminalGuard() = default;
+
+    TerminalGuard(const TerminalGuard&) = delete;
+    TerminalGuard& operator=(const TerminalGuard&) = delete;
+
+    ~TerminalGuard() {
+        restore(false);
+    }
+
+    void activate() noexcept {
+        hideCursor();
+
+        if (inputGuardActive_ || !::isatty(STDIN_FILENO)) {
+            return;
+        }
+
+        termios current {};
+        if (::tcgetattr(STDIN_FILENO, &current) != 0) {
+            return;
+        }
+
+        originalTermios_ = current;
+        current.c_lflag &= ~ECHO;
+
+#ifdef ECHONL
+        current.c_lflag &= ~ECHONL;
+#endif
+
+        if (::tcsetattr(STDIN_FILENO, TCSANOW, &current) != 0) {
+            return;
+        }
+
+        inputGuardActive_ = true;
+    }
+
+    void restore(bool flushInput = true) noexcept {
+        if (inputGuardActive_) {
+            if (flushInput) {
+                ::tcflush(STDIN_FILENO, TCIFLUSH);
+            }
+
+            ::tcsetattr(STDIN_FILENO, TCSANOW, &originalTermios_);
+            inputGuardActive_ = false;
+        }
+
+        showCursor();
+    }
+
+private:
+    void hideCursor() noexcept {
+        if (cursorHidden_ || !::isatty(STDOUT_FILENO)) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> outputLock(outputMutex());
+        std::cout << "\033[?25l" << std::flush;
+        cursorHidden_ = true;
+    }
+
+    void showCursor() noexcept {
+        if (!cursorHidden_) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> outputLock(outputMutex());
+        std::cout << "\033[?25h" << std::flush;
+        cursorHidden_ = false;
+    }
+
+    termios originalTermios_ {};
+    bool inputGuardActive_ = false;
+    bool cursorHidden_ = false;
+};
+
+inline char spinnerFrame(std::size_t frame) noexcept {
+    return kSpinnerFrames[frame % (sizeof(kSpinnerFrames) / sizeof(kSpinnerFrames[0]))];
+}
+
+inline void writeStatusIcon(bool finished, char spinnerChar) {
+    if (finished) {
         std::cout << GREEN << "[+]" << RESET;
     } else {
-        std::cout << YELLOW << '[' << spinnerChar << ']' << RESET;
+        std::cout << GREEN << '[' << spinnerChar << ']' << RESET;
     }
 }
 
-inline void drawCompactBar(const Snapshot& snapshot,
-                           int percent,
+inline int bouncePosition(std::size_t frame, int barWidth) noexcept {
+    const int blockWidth = std::min(kBounceBlockWidth, std::max(barWidth, 0));
+    const int travel = std::max(barWidth - blockWidth, 0);
+    if (travel == 0) {
+        return 0;
+    }
+
+    const int period = travel * 2;
+    const int offset = static_cast<int>(frame % static_cast<std::size_t>(period));
+    return offset <= travel ? offset : period - offset;
+}
+
+inline void writeBounceTrack(int barWidth, std::size_t frame, bool finished);
+
+inline void drawCompactBar(const Snapshot&,
                            int terminalColumns,
-                           char spinnerChar) {
+                           std::size_t frame,
+                           bool finished) {
     std::lock_guard<std::mutex> outputLock(outputMutex());
     std::cout << "\r\033[K";
+    const char spinnerChar = spinnerFrame(frame);
 
     if (terminalColumns < 4) {
-        std::cout << (percent >= 100 ? GREEN : YELLOW)
-                  << (percent >= 100 ? '+' : spinnerChar)
+        std::cout << (finished ? GREEN : YELLOW)
+                  << (finished ? '+' : spinnerChar)
                   << RESET << "\033[K" << std::flush;
         return;
     }
 
-    const std::string percentText = std::to_string(percent) + "%";
-    if (terminalColumns < 8) {
-        std::cout << YELLOW << percentText << RESET << "\033[K" << std::flush;
-        return;
-    }
+    const int barWidth = std::max(terminalColumns - kFullColumnsWithoutBar, 1);
+    std::cout << YELLOW << '[' << RESET;
+    writeBounceTrack(barWidth, frame, finished);
+    std::cout << YELLOW << ']' << RESET;
 
-    const int baseColumns = static_cast<int>(percentText.size()) + 4;
-    const int taskMaxLength =
-        std::max(0, terminalColumns - baseColumns - kTaskSeparatorColumns);
-    const std::string task = sanitizeTask(snapshotTask(snapshot), taskMaxLength);
-
-    std::cout << YELLOW << percentText << ' ' << RESET;
-    writeStatusIcon(percent, spinnerChar);
-
-    if (!task.empty()) {
-        std::cout << " | " << task;
+    if (terminalColumns >= 8) {
+        std::cout << ' ';
+        writeStatusIcon(finished, spinnerChar);
     }
 
     std::cout << "\033[K" << std::flush;
 }
 
-inline void drawBar(const Snapshot& snapshot, char spinnerChar) {
-    const float progress = snapshotProgress(snapshot);
-    const int percent = static_cast<int>(progress);
+inline void writeBounceTrack(int barWidth, std::size_t frame, bool finished) {
+    const int blockWidth = std::min(kBounceBlockWidth, std::max(barWidth, 0));
+    if (finished) {
+        std::cout << GREEN << std::string(static_cast<std::size_t>(barWidth), '#') << RESET;
+        return;
+    }
+
+    const int position = bouncePosition(frame, barWidth);
+    const int after = std::max(barWidth - position - blockWidth, 0);
+
+    std::cout << YELLOW << std::string(static_cast<std::size_t>(position), '=') << RESET
+              << GREEN << std::string(static_cast<std::size_t>(blockWidth), '#') << RESET
+              << YELLOW << std::string(static_cast<std::size_t>(after), '=') << RESET;
+}
+
+inline void drawBar(const Snapshot& snapshot, std::size_t frame, bool finished = false) {
     const int termWidth = terminalWidth();
+    const char spinnerChar = spinnerFrame(frame);
 
     if (termWidth < kFullColumnsWithoutBar + kMinFullBarWidth) {
-        drawCompactBar(snapshot, percent, termWidth, spinnerChar);
+        drawCompactBar(snapshot, termWidth, frame, finished);
         return;
     }
 
     const int maxBarWidth = std::min(kMaxBarWidth, termWidth - kFullColumnsWithoutBar);
     const int barWidth = std::clamp(termWidth / 3, kMinFullBarWidth, maxBarWidth);
-    const int filledWidth = std::clamp(static_cast<int>((progress / 100.0f) * barWidth),
-                                       0,
-                                       barWidth);
-    const int emptyWidth = barWidth - filledWidth;
 
     const int taskMaxLength =
         std::max(0, termWidth - barWidth - kFullColumnsWithoutBar - kTaskSeparatorColumns);
     const std::string task = sanitizeTask(snapshotTask(snapshot), taskMaxLength);
 
     std::lock_guard<std::mutex> outputLock(outputMutex());
-    std::cout << "\r\033[K" << YELLOW << "Progress: [" << RESET
-              << GREEN << std::string(static_cast<std::size_t>(filledWidth), '#') << RESET
-              << std::string(static_cast<std::size_t>(emptyWidth), ' ')
-              << YELLOW << "] " << std::setw(3) << percent << "% " << RESET;
-
-    writeStatusIcon(percent, spinnerChar);
+    std::cout << "\r\033[K" << YELLOW << "Progress: [" << RESET;
+    writeBounceTrack(barWidth, frame, finished);
+    std::cout << YELLOW << "] " << RESET;
+    writeStatusIcon(finished, spinnerChar);
 
     if (!task.empty()) {
         std::cout << " | " << task;
@@ -275,7 +371,7 @@ public:
 
         stateChanged_.notify_all();
         if (renderFallback) {
-            drawBar(fallback, ' ');
+            drawBar(fallback, 0);
         }
     }
 
@@ -307,7 +403,7 @@ public:
 
         stateChanged_.notify_all();
         if (renderFallback) {
-            drawBar(fallback, ' ');
+            drawBar(fallback, 0);
         }
     }
 
@@ -329,7 +425,7 @@ public:
         }
 
         stopThread();
-        drawBar(Snapshot{UiState::CUSTOM, 100.0f, 0, 1, task}, ' ');
+        drawBar(Snapshot{UiState::CUSTOM, 100.0f, 0, 1, task}, 0, true);
 
         std::lock_guard<std::mutex> outputLock(outputMutex());
         std::cout << '\n';
@@ -351,12 +447,14 @@ private:
             return true;
         }
 
+        terminalGuard_.activate();
         running_ = true;
         try {
             worker_ = std::thread(&ProgressBarController::run, this);
             return true;
         } catch (...) {
             running_ = false;
+            terminalGuard_.restore(false);
             return false;
         }
     }
@@ -380,6 +478,8 @@ private:
         if (workerToJoin.joinable()) {
             workerToJoin.join();
         }
+
+        terminalGuard_.restore();
     }
 
     void run() {
@@ -388,12 +488,10 @@ private:
 
         while (running_) {
             const Snapshot snapshot = snapshotLocked();
-            const char spinnerChar =
-                kSpinnerFrames[frame++ % (sizeof(kSpinnerFrames) / sizeof(kSpinnerFrames[0]))];
             dirty_ = false;
 
             lock.unlock();
-            drawBar(snapshot, spinnerChar);
+            drawBar(snapshot, frame++);
             lock.lock();
 
             stateChanged_.wait_for(lock, kFrameInterval, [this] {
@@ -412,6 +510,7 @@ private:
     int step_ = 0;
     int totalSteps_ = 1;
     std::string task_;
+    TerminalGuard terminalGuard_;
 };
 
 inline ProgressBarController& controller() {
