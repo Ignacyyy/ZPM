@@ -1327,7 +1327,7 @@ void printHelp(const char* progName) {
               << " or zpm rm/remove [options] [packages...]\n"
               << RED << "Options:\n" << RESET
               << "  --auto         Pick the best installed source/result without menus\n"
-              << "  --yes,    -y  Alias for --auto\n"
+              << "  --yes,    -y   Alias for --auto\n"
               << "  --purge, -p    APT purge instead of remove (APT only)\n"
               << "  --dry-run      Simulate remove flow; fake packages are allowed\n"
               << "  --version, -v  Show version information\n"
