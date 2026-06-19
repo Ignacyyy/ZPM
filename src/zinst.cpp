@@ -1505,12 +1505,12 @@ void printHelp(const char* progName) {
               << " or zpm inst/install [options] [packages...]\n"
               << RED << "Options:\n" << RESET
               << "  --auto         Pick the best source/result without menus\n"
-              << "  --yes,    -y   Alias for --auto\n"
+              << "  --yes, -y      Alias for --auto\n"
               << "  packages       Accepts many names: zinst git curl htop\n"
               << "                 Also accepts quoted/comma lists: zinst \"git curl\" or zinst git,curl\n"
               << "  --dry-run      Simulate program flow; fake packages are allowed\n"
               << "  --version, -v  Show version information\n"
-              << "  --help,    -h  Show this help message\n";
+              << "  --help, -h     Show this help message\n";
 }
 
 void printVersion() {
