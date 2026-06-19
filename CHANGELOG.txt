@@ -1,6 +1,7 @@
 ZPM v2.1.8
 - Add auto mode for zpm install and zrm remove programs.
 - Fix UI bugs
+- New progressbar look
 
 ZPM v2.1.7
 - UI fixes
