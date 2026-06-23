@@ -503,18 +503,29 @@ public:
 
     void drawAtCursorLocked() {
         const std::vector<std::string> lines = displayLines();
-        const int textColumns = std::max(0,
-                                         zpm::progressbar_detail::terminalWidth() -
-                                             kLiveLogPrefixColumns);
+        const int terminalColumns = zpm::progressbar_detail::terminalWidth();
+        const std::string header =
+            zpm::progressbar_detail::sanitizeTask("[ZPM-LOG]", terminalColumns);
+        const std::string rowPrefix =
+            terminalColumns >= kLiveLogPrefixColumns ? "> "
+                                                     : (terminalColumns > 0 ? ">" : "");
+        const int textColumns =
+            std::max(0, terminalColumns - static_cast<int>(rowPrefix.size()));
 
         std::cout << "\r\033[K\n"
-                  << "\r\033[K" << CYAN << "[ZPM-LOG]" << RESET << "\n";
+                  << "\r\033[K";
+        if (!header.empty()) {
+            std::cout << CYAN << header << RESET;
+        }
+        std::cout << "\n";
 
         for (int row = 0; row < kLiveLogLines; ++row) {
             std::cout << "\r\033[K";
             if (row < static_cast<int>(lines.size())) {
-                std::cout << CYAN << "> " << RESET
-                          << zpm::progressbar_detail::sanitizeTask(lines[static_cast<std::size_t>(row)],
+                if (!rowPrefix.empty()) {
+                    std::cout << CYAN << rowPrefix << RESET;
+                }
+                std::cout << zpm::progressbar_detail::sanitizeTask(lines[static_cast<std::size_t>(row)],
                                                                    textColumns);
             }
             std::cout << "\n";
@@ -676,12 +687,16 @@ void beginCleanStep(float progress,
             std::cout << "\r\033[K";
         }
 
-        const int textColumns = std::max(0,
-                                         zpm::progressbar_detail::terminalWidth() - 4);
+        const int terminalColumns = zpm::progressbar_detail::terminalWidth();
+        const std::string prefix =
+            zpm::progressbar_detail::sanitizeTask("[>] ", terminalColumns);
+        const int textColumns =
+            std::max(0, terminalColumns - static_cast<int>(prefix.size()));
 
-        std::cout << CYAN << "[>]" << RESET << " "
-                  << zpm::progressbar_detail::sanitizeTask(infoText, textColumns)
-                  << "\n";
+        if (!prefix.empty()) {
+            std::cout << CYAN << prefix << RESET;
+        }
+        std::cout << zpm::progressbar_detail::sanitizeTask(infoText, textColumns) << "\n";
 
         if (liveLog != nullptr) {
             liveLog->drawAtCursorLocked();
