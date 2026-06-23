@@ -1,3 +1,6 @@
+ZPm v2.1.9
+-hotfix
+
 ZPM v2.1.8
 - Add auto mode for zpm install and zrm remove programs.
 - Fix UI bugs
