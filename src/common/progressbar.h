@@ -40,7 +40,10 @@ constexpr std::chrono::milliseconds kFrameInterval{80};
 constexpr int kDefaultTerminalWidth = 80;
 constexpr int kMinFullBarWidth = 8;
 constexpr int kMaxBarWidth = 40;
-constexpr int kFullColumnsWithoutBar = 12;
+constexpr int kProgressPrefixColumns = 11; // "Progress: ["
+constexpr int kProgressSuffixColumns = 5;  // "] " + "[x]"
+constexpr int kFullColumnsWithoutBar =
+    kProgressPrefixColumns + kProgressSuffixColumns;
 constexpr int kTaskSeparatorColumns = 3;
 constexpr int kBounceBlockWidth = 3;
 constexpr char kSpinnerFrames[] = {'|', '/', '-', '\\'};
@@ -282,12 +285,14 @@ inline void drawCompactBar(const Snapshot&,
         return;
     }
 
-    const int barWidth = std::max(terminalColumns - kFullColumnsWithoutBar, 1);
+    const bool showStatusIcon = terminalColumns >= 8;
+    const int statusColumns = showStatusIcon ? 4 : 0;
+    const int barWidth = std::max(terminalColumns - 2 - statusColumns, 1);
     std::cout << YELLOW << '[' << RESET;
     writeBounceTrack(barWidth, frame, finished);
     std::cout << YELLOW << ']' << RESET;
 
-    if (terminalColumns >= 8) {
+    if (showStatusIcon) {
         std::cout << ' ';
         writeStatusIcon(finished, spinnerChar);
     }
